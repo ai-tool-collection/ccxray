@@ -372,7 +372,7 @@ function writeTargetToUrlParams(target, params) {
   }
   if (target.kind === 'session') {
     params.set('target', 'session');
-    params.set('s', target.sessionId.slice(0, 8));
+    params.set('s', formatSessionUrlToken(target.sessionId));
     return;
   }
   if (target.kind === 'turn' || target.kind === 'step') {
@@ -382,7 +382,7 @@ function writeTargetToUrlParams(target, params) {
     if (entry) {
       const proj = _projectNameForEntry(entry);
       if (proj) params.set('p', proj);
-      if (entry.sessionId) params.set('s', entry.sessionId.slice(0, 8));
+      if (entry.sessionId) params.set('s', formatSessionUrlToken(entry.sessionId));
       if (entry.displayNum) params.set('t', entry.displayNum);
     }
     if (target.kind === 'turn' && target.section) params.set('sec', target.section);
