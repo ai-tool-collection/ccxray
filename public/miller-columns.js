@@ -5,6 +5,10 @@ const sessionsMap = new Map(); // sid → { id, firstTs, firstId, count, model, 
 const projectsMap = new Map(); // projectName → { name, totalCost, sessionIds, firstId, lastId }
 const sessionStatusMap = new Map(); // sid → { active: bool, lastSeenAt: number|null }
 
+function isHttpStatusOk(status) {
+  return status === 101 || (status >= 200 && status < 300);
+}
+
 // ── Toast notifications ──
 function showToast(message, duration) {
   duration = duration || 5000;
@@ -368,7 +372,7 @@ function writeTargetToUrlParams(target, params) {
   }
   if (target.kind === 'session') {
     params.set('target', 'session');
-    params.set('s', target.sessionId.slice(0, 8));
+    params.set('s', formatSessionUrlToken(target.sessionId));
     return;
   }
   if (target.kind === 'turn' || target.kind === 'step') {
@@ -378,7 +382,7 @@ function writeTargetToUrlParams(target, params) {
     if (entry) {
       const proj = _projectNameForEntry(entry);
       if (proj) params.set('p', proj);
-      if (entry.sessionId) params.set('s', entry.sessionId.slice(0, 8));
+      if (entry.sessionId) params.set('s', formatSessionUrlToken(entry.sessionId));
       if (entry.displayNum) params.set('t', entry.displayNum);
     }
     if (target.kind === 'turn' && target.section) params.set('sec', target.section);
@@ -1418,8 +1422,8 @@ function clearAll() { // kept for console use if needed
 }
 
 function renderSessionItem(sess, sid) {
-  const shortSid = sid === 'direct-api' ? 'direct API' : sid.slice(0, 8);
-  const tooltip = sid === 'direct-api' ? 'direct API' : sid;
+  const shortSid = formatSessionIdLabel(sid);
+  const tooltip = formatSessionTooltip(null, sid);
   const shortModel = (sess.model || '?').replace('claude-', '').replace(/-[0-9]{8}$/, '');
   const costStr = sess.totalCost > 0 ? '$' + sess.totalCost.toFixed(2) : '—';
   const dateStr = sess.lastId ? formatRelativeTime(sess.lastId) : (sess.firstId ? formatEntryDate(sess.firstId) : escapeHtml(sess.firstTs || ''));
@@ -2008,7 +2012,7 @@ function syncUrlFromState() {
   if (typeof activeTab !== 'undefined' && activeTab !== 'dashboard') params.set('view', activeTab);
   const projName = selectedProjectName || (selectedSessionId && sessionsMap.get(selectedSessionId) && getProjectName(sessionsMap.get(selectedSessionId).cwd));
   if (projName) params.set('p', projName);
-  if (selectedSessionId) params.set('s', selectedSessionId.slice(0, 8));
+  if (selectedSessionId) params.set('s', formatSessionUrlToken(selectedSessionId));
   if (selectedTurnIdx >= 0) {
     const e = allEntries[selectedTurnIdx];
     const turnEl = e ? colTurns.querySelector('.turn-item[data-entry-idx="' + selectedTurnIdx + '"]') : null;
@@ -2195,7 +2199,7 @@ function renderSectionsCol(idx) {
   const usage = e.usage || {};
   const inTok = usage.input_tokens || '?';
   const outTok = usage.output_tokens || '?';
-  const statusClass = e.status >= 200 && e.status < 300 ? 'status-ok' : 'status-err';
+  const statusClass = isHttpStatusOk(e.status) ? 'status-ok' : 'status-err';
   const resEvents = Array.isArray(e.res) ? e.res : [];
   const stopReason = e.stopReason || (Array.isArray(resEvents) ? (resEvents.find(ev => ev.type === 'message_delta')?.delta?.stop_reason || '') : '');
   const turnCost = e.cost;
