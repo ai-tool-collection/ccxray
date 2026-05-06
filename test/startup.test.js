@@ -1655,8 +1655,19 @@ describe('Proxy loop startup guard', () => {
 
   it('does NOT exit when ANTHROPIC_BASE_URL loops but running codex (different upstream)', async () => {
     const proxyPort = await findFreePort();
+
+    // Create a stub 'codex' binary so the server can launch it without ENOENT in CI
+    // (real codex may not be installed in the test environment)
+    const stubBinDir = path.join(TEST_HOME, 'stub-bin');
+    fs.mkdirSync(stubBinDir, { recursive: true });
+    const stubCodex = path.join(stubBinDir, 'codex');
+    fs.writeFileSync(stubCodex, '#!/bin/sh\nsleep 60\n', { mode: 0o755 });
+
     const proxyChild = spawnServer(['--port', String(proxyPort), 'codex'], {
-      env: { ANTHROPIC_BASE_URL: `http://localhost:${proxyPort}` },
+      env: {
+        ANTHROPIC_BASE_URL: `http://localhost:${proxyPort}`,
+        PATH: `${stubBinDir}${path.delimiter}${process.env.PATH}`,
+      },
     });
 
     try {
