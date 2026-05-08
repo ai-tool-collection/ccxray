@@ -155,6 +155,18 @@ function getToolPreview(toolUse) {
   }
 }
 
+function getResponseEventPayload(ev) {
+  return ev && ev.data && typeof ev.data === 'object' ? ev.data : ev;
+}
+
+function getResponseEventItemId(payload, fallbackIndex) {
+  return payload.item_id || payload.output_item_id || payload.call_id || payload.id || payload.item?.id || String(fallbackIndex ?? '');
+}
+
+function getResponseFunctionCallName(item) {
+  return item?.name || item?.function?.name || item?.tool_name || item?.type || 'function_call';
+}
+
 function buildMergedSteps(messages, resEvents) {
   if ((!messages || !messages.length) && (!resEvents || !resEvents.length)) return [];
 
@@ -276,9 +288,12 @@ function buildMergedSteps(messages, resEvents) {
     let curThinkingStart = null;
     let curThinkingEnd = null;
     const curToolUses = [];  // { index, name, id, inputChunks[] }
+    const openAIToolUseById = new Map();
     let curText = '';
 
-    for (const ev of resEvents) {
+    for (let eventIndex = 0; eventIndex < resEvents.length; eventIndex++) {
+      const ev = resEvents[eventIndex];
+      const payload = getResponseEventPayload(ev);
       if (ev.type === 'content_block_start') {
         if (ev.content_block?.type === 'thinking') {
           curThinking = '';
@@ -300,6 +315,58 @@ function buildMergedSteps(messages, resEvents) {
         } else if (ev.delta?.type === 'text_delta') {
           curText += ev.delta.text || '';
         }
+      } else if (ev.type === 'response.output_text.delta') {
+        curText += ev.delta || payload.delta || '';
+      } else if (ev.type === 'response.output_text.done' && !curText) {
+        curText += ev.text || payload.text || '';
+      } else if (ev.type === 'response.reasoning_text.delta') {
+        if (curThinking === null) {
+          curThinking = '';
+          curThinkingStart = ev._ts || null;
+        }
+        curThinking += ev.delta || payload.delta || '';
+      } else if (ev.type === 'response.reasoning_summary_part.added') {
+        if (curThinking === null) {
+          curThinking = '';
+          curThinkingStart = ev._ts || null;
+        }
+        const part = payload.part || ev.part || {};
+        curThinking += part.text || payload.text || ev.text || '';
+      } else if (ev.type === 'response.reasoning_summary_text.delta') {
+        if (curThinking === null) {
+          curThinking = '';
+          curThinkingStart = ev._ts || null;
+        }
+        curThinking += ev.delta || payload.delta || '';
+      } else if (ev.type === 'response.output_item.added') {
+        const item = payload.item || ev.item || {};
+        if (item.type === 'function_call' || item.type === 'tool_call') {
+          const id = getResponseEventItemId(payload, eventIndex);
+          const toolUse = {
+            index: payload.output_index ?? eventIndex,
+            name: getResponseFunctionCallName(item),
+            id,
+            inputChunks: [],
+          };
+          if (item.arguments) toolUse.inputChunks.push(typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments));
+          openAIToolUseById.set(id, toolUse);
+          curToolUses.push(toolUse);
+        }
+      } else if (ev.type === 'response.function_call_arguments.delta') {
+        const id = getResponseEventItemId(payload, payload.output_index ?? eventIndex);
+        const tu = openAIToolUseById.get(id) || curToolUses.find(t => t.index === payload.output_index);
+        if (tu) tu.inputChunks.push(ev.delta || payload.delta || '');
+      } else if (ev.type === 'response.output_item.done') {
+        const item = payload.item || ev.item || {};
+        if (item.type === 'function_call' || item.type === 'tool_call') {
+          const id = getResponseEventItemId(payload, eventIndex);
+          const tu = openAIToolUseById.get(id) || curToolUses.find(t => t.index === payload.output_index);
+          if (tu && item.arguments && !tu.inputChunks.length) {
+            tu.inputChunks.push(typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments));
+          }
+        }
+      } else if (ev.type === 'response.completed' || ev.type === 'response.done') {
+        if (curThinkingStart && !curThinkingEnd) curThinkingEnd = ev._ts || null;
       } else if (ev.type === 'content_block_stop') {
         if (curThinkingStart && !curThinkingEnd) curThinkingEnd = ev._ts || null;
       }

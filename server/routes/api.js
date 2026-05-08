@@ -90,6 +90,7 @@ function handleApiRoutes(clientReq, clientRes) {
       if (ent.sharedFile) {
         try {
           const sys = JSON.parse(await config.storage.readShared(ent.sharedFile));
+          if (typeof sys === 'string') return sys;
           return Array.isArray(sys) && sys[2] ? (sys[2].text || '') : '';
         } catch {}
       }

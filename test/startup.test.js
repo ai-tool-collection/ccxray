@@ -863,6 +863,61 @@ describe('OpenAI Responses raw capture', () => {
     assert.equal(finalEvent.type, 'response.completed');
     assert.equal(finalEvent.data.response.output[0].content[0].text, 'stream ok');
   });
+
+  it('groups Codex turns by session_id header and marks OpenAI subagents', async () => {
+    const sessionId = 'codex-session-header-001';
+    const mainBody = JSON.stringify({
+      model: 'gpt-5.5',
+      instructions: 'You are Codex. Keep responses short.',
+      input: 'main turn',
+    });
+    const subagentBody = JSON.stringify({
+      model: 'gpt-5.5',
+      instructions: 'You are a worker agent for Codex. Execute the requested task.',
+      input: 'worker turn',
+    });
+
+    await sendOpenAIResponsesRequest(proxyPort, mainBody, '/v1/responses?trace=session-main', { session_id: sessionId });
+    await sendOpenAIResponsesRequest(proxyPort, subagentBody, '/v1/responses?trace=session-worker', {
+      session_id: sessionId,
+      'x-openai-subagent': 'worker',
+    });
+    await new Promise(r => setTimeout(r, 500));
+
+    const indexEntries = fs.readFileSync(path.join(TEST_HOME, 'logs', 'index.ndjson'), 'utf8')
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line))
+      .filter(e => e.sessionId === sessionId);
+
+    assert.equal(indexEntries.length, 2);
+    assert.equal(indexEntries[0].isSubagent, false);
+    assert.equal(indexEntries[0].sessionInferred, false);
+    assert.equal(indexEntries[1].isSubagent, true);
+    assert.equal(indexEntries[1].sessionInferred, false);
+  });
+
+  it('captures Codex instructions in the System Prompt version index', async () => {
+    const sessionId = 'codex-system-prompt-001';
+    const requestBody = JSON.stringify({
+      model: 'gpt-5.5',
+      instructions: 'You are an explorer agent for Codex. Inspect the codebase and report findings.',
+      input: 'inspect prompt index',
+    });
+
+    await sendOpenAIResponsesRequest(proxyPort, requestBody, '/v1/responses?trace=sysprompt', {
+      session_id: sessionId,
+      'x-openai-subagent': 'explorer',
+    });
+    await new Promise(r => setTimeout(r, 500));
+
+    const data = await httpGet(proxyPort, '/_api/sysprompt/versions');
+    const explorer = data.versions.find(v => v.agentKey === 'explorer');
+    assert.ok(explorer, 'expected Codex explorer prompt version');
+    assert.equal(explorer.agentLabel, 'Codex Explorer');
+    assert.ok(explorer.coreHash);
+    assert.ok(explorer.b2Len > 0);
+  });
 });
 
 // ── Intercept lifecycle E2E ──────────────────────────────────────────
@@ -1555,11 +1610,11 @@ function sendProxyRequest(port, body) {
   });
 }
 
-function sendOpenAIResponsesRequest(port, body, urlPath = '/v1/responses') {
+function sendOpenAIResponsesRequest(port, body, urlPath = '/v1/responses', extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request(`http://localhost:${port}${urlPath}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), Authorization: 'Bearer test-key' },
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), Authorization: 'Bearer test-key', ...extraHeaders },
     }, res => {
       let data = '';
       res.on('data', c => { data += c; });
