@@ -597,6 +597,7 @@ function handleSSEResponse(ctx, proxyRes, clientRes) {
     entry._writePromise = Promise.all([ctx.reqWritePromise, resWritePromise].filter(Boolean));
     store.entries.push(entry);
     store.trimEntries();
+    store.propagateLoadedSkills(entry, sessionId);
     broadcast(entry);
 
     // Persist to index (fire-and-forget after broadcast)
@@ -869,6 +870,7 @@ function handleNonSSEResponse(ctx, proxyRes, clientRes) {
     entry._writePromise = Promise.all([ctx.reqWritePromise, resWritePromise].filter(Boolean));
     store.entries.push(entry);
     store.trimEntries();
+    store.propagateLoadedSkills(entry, sessionId);
     broadcast(entry);
 
     const indexLine = JSON.stringify({

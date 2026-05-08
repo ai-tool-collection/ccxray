@@ -142,6 +142,7 @@ function handleApiRoutes(clientReq, clientRes) {
         if (entry.req) entry.tokens = tokenizeRequest(entry.req);
         if (entry.elapsed === '?') { entry.req = null; entry.res = null; entry._loaded = false; }
       }
+      store.propagateLoadedSkills(entry, entry.sessionId);
       clientRes.writeHead(200, { 'Content-Type': 'application/json' });
       clientRes.end(JSON.stringify(entry.tokens));
     })().catch(e => {
