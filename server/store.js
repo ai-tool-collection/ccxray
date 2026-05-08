@@ -225,6 +225,27 @@ function setRateLimitState(state) { rateLimitState = state; }
 function getInterceptTimeout() { return interceptTimeout; }
 function setInterceptTimeout(val) { interceptTimeout = val; }
 function getCurrentSessionId() { return currentSessionId; }
+
+// Keep loadedSkills consistent across session turns: post-compaction turns lose the
+// skills system-reminder from their messages, so we cache the value in sessionMeta.
+function propagateLoadedSkills(entry, sessionId) {
+  if (!entry.tokens?.contextBreakdown || !sessionId) return;
+  const sm = sessionMeta[sessionId] || (sessionMeta[sessionId] = {});
+  const skills = entry.tokens.contextBreakdown.loadedSkills;
+  if (skills?.length) {
+    if (!sm.loadedSkills?.length) sm.loadedSkills = skills;
+  } else {
+    if (!sm.loadedSkills?.length) {
+      const peer = entries.find(
+        e => e !== entry && e.sessionId === sessionId &&
+             e.tokens?.contextBreakdown?.loadedSkills?.length > 0
+      );
+      if (peer) sm.loadedSkills = peer.tokens.contextBreakdown.loadedSkills;
+    }
+    if (sm.loadedSkills?.length) entry.tokens.contextBreakdown.loadedSkills = sm.loadedSkills;
+  }
+}
+
 function setRestoreState(patch) {
   Object.assign(restoreState, patch);
   restoreState.entryCount = entries.length;
@@ -258,4 +279,5 @@ module.exports = {
   setSessionTitle,
   getSessionTitle,
   attributeTitleGen,
+  propagateLoadedSkills,
 };

@@ -142,23 +142,7 @@ function handleApiRoutes(clientReq, clientRes) {
         if (entry.req) entry.tokens = tokenizeRequest(entry.req);
         if (entry.elapsed === '?') { entry.req = null; entry.res = null; entry._loaded = false; }
       }
-      if (entry.tokens?.contextBreakdown && entry.sessionId) {
-        const skills = entry.tokens.contextBreakdown.loadedSkills;
-        const sm = store.sessionMeta[entry.sessionId] || (store.sessionMeta[entry.sessionId] = {});
-        if (skills?.length) {
-          if (!sm.loadedSkills?.length) sm.loadedSkills = skills;
-        } else {
-          // Try sessionMeta first; if still empty, scan already-computed entries in same session
-          if (!sm.loadedSkills?.length) {
-            const peer = store.entries.find(
-              e => e !== entry && e.sessionId === entry.sessionId &&
-                   e.tokens?.contextBreakdown?.loadedSkills?.length > 0
-            );
-            if (peer) sm.loadedSkills = peer.tokens.contextBreakdown.loadedSkills;
-          }
-          if (sm.loadedSkills?.length) entry.tokens.contextBreakdown.loadedSkills = sm.loadedSkills;
-        }
-      }
+      store.propagateLoadedSkills(entry, entry.sessionId);
       clientRes.writeHead(200, { 'Content-Type': 'application/json' });
       clientRes.end(JSON.stringify(entry.tokens));
     })().catch(e => {
