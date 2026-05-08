@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.9.2
+
+### Added
+
+- **Interactive status bar** in the System Prompt panel — navigation shortcuts (`←`, `→`, `Space`, `j`, `k`) are now clickable buttons, making the panel usable without a keyboard.
+
+### Fixed
+
+- Expand button (`⊞`) added to the Timeline section header, consistent with other collapsible sections.
+
+## 1.9.1
+
+_No changelog entry (patch release)._
+
 ## 1.9.0
 
 ### Added
