@@ -597,6 +597,13 @@ function handleSSEResponse(ctx, proxyRes, clientRes) {
     entry._writePromise = Promise.all([ctx.reqWritePromise, resWritePromise].filter(Boolean));
     store.entries.push(entry);
     store.trimEntries();
+    // Propagate loadedSkills to/from session level so post-compaction turns still know installed count
+    if (entry.tokens?.contextBreakdown) {
+      const skills = entry.tokens.contextBreakdown.loadedSkills;
+      const sm = store.sessionMeta[sessionId] || (store.sessionMeta[sessionId] = {});
+      if (skills?.length) { if (!sm.loadedSkills?.length) sm.loadedSkills = skills; }
+      else if (sm.loadedSkills?.length) entry.tokens.contextBreakdown.loadedSkills = sm.loadedSkills;
+    }
     broadcast(entry);
 
     // Persist to index (fire-and-forget after broadcast)
@@ -869,6 +876,12 @@ function handleNonSSEResponse(ctx, proxyRes, clientRes) {
     entry._writePromise = Promise.all([ctx.reqWritePromise, resWritePromise].filter(Boolean));
     store.entries.push(entry);
     store.trimEntries();
+    if (entry.tokens?.contextBreakdown && provider === 'anthropic') {
+      const skills = entry.tokens.contextBreakdown.loadedSkills;
+      const sm = store.sessionMeta[sessionId] || (store.sessionMeta[sessionId] = {});
+      if (skills?.length) { if (!sm.loadedSkills?.length) sm.loadedSkills = skills; }
+      else if (sm.loadedSkills?.length) entry.tokens.contextBreakdown.loadedSkills = sm.loadedSkills;
+    }
     broadcast(entry);
 
     const indexLine = JSON.stringify({
