@@ -2299,18 +2299,18 @@ function renderSectionsCol(idx) {
     || loadedSkills.length > 0
     || tc['Skill'] > 0;
   if (hasSkillsInContext) {
-    const skillsLoaded = (sb?.pluginSkills > 0 || sb?.customSkills > 0)
-      ? ((sb.pluginSkills > 0 ? 1 : 0) + (sb.customSkills > 0 ? 1 : 0))
-      : loadedSkills.length;
+    // loadedSkills.length is reliable after server-side session propagation fix
+    const skillsLoaded = loadedSkills.length;
     let skillBadge;
     if (!e.reqLoaded && tc['Skill'] > 0) {
       skillBadge = '…';
-    } else if (skillsLoaded > 0) {
-      skillBadge = skillsLoaded + ' skills' + (skillTotal > 0 ? ' · ' + skillTotal + '×' : '');
     } else if (skillTotal > 0) {
-      skillBadge = skillTotal + '×';
+      const triggeredCount = Object.keys(skillCalls).length;
+      skillBadge = skillsLoaded > 0
+        ? triggeredCount + '/' + skillsLoaded + ' · ' + skillTotal + '×'
+        : skillTotal + '×';
     } else {
-      skillBadge = '';
+      skillBadge = skillsLoaded > 0 ? skillsLoaded + ' skills' : '';
     }
     html += renderSectionItem({ name: 'skills', label: 'Skills', color: 'var(--purple)', badge: skillBadge });
   }
@@ -2629,22 +2629,23 @@ function renderDetailCol() {
       // Loaded skills (from system-reminder in messages)
       const detailLoadedSkills = tok.contextBreakdown?.loadedSkills || [];
       let html2 = '';
-      if (detailLoadedSkills.length) {
-        const loadedTags = detailLoadedSkills.map(name => {
-          const cnt = sc[name] || 0;
-          return '<span class="tool-tag" style="border-color:var(--purple);opacity:' + (cnt > 0 ? '1' : '0.45') + '">'
-            + escapeHtml(name)
-            + (cnt > 1 ? ' <span style="font-size:9px;background:var(--purple);color:#fff;border-radius:3px;padding:0 3px;margin-left:3px">' + cnt + 'x</span>' : '')
-            + '</span>';
-        }).join('');
-        html2 += '<div class="detail-content"><div class="tool-grid">' + loadedTags + '</div></div>';
-      } else if (sortedInvoked.length) {
+      if (sortedInvoked.length) {
         const tags = sortedInvoked.map(([name, cnt]) =>
           '<span class="tool-tag" style="border-color:var(--purple)">' + escapeHtml(name) +
           (cnt > 1 ? ' <span style="font-size:9px;background:var(--purple);color:#fff;border-radius:3px;padding:0 3px;margin-left:3px">' + cnt + 'x</span>' : '') +
           '</span>'
         ).join('');
         html2 += '<div class="detail-content"><div class="tool-grid">' + tags + '</div></div>';
+        const notInvoked = detailLoadedSkills.filter(n => !sc[n]);
+        if (notInvoked.length) {
+          html2 += '<details style="margin-top:8px"><summary style="color:var(--dim);cursor:pointer;font-size:11px">'
+            + notInvoked.length + ' available (not triggered)</summary>'
+            + '<div class="tool-grid" style="margin-top:6px">'
+            + notInvoked.map(name => '<span class="tool-tag" style="border-color:var(--purple);opacity:0.35">' + escapeHtml(name) + '</span>').join('')
+            + '</div></details>';
+        }
+      } else if (detailLoadedSkills.length) {
+        html2 += '<div class="col-empty">0 invocations · ' + detailLoadedSkills.length + ' skills available</div>';
       } else {
         html2 += '<div class="col-empty">0 invocations</div>';
       }
