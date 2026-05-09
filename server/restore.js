@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const config = require('./config');
 const store = require('./store');
 const { calculateCost } = require('./pricing');
-const { extractAgentType, splitB2IntoBlocks } = require('./system-prompt');
+const { extractAgentType, extractPromptAgentType, splitB2IntoBlocks } = require('./system-prompt');
 const { normalizeOpenAIResponseSummary } = require('./forward');
 const { readSettings, serializeStars } = require('./settings');
 const { computeRetentionSets, isProtectedByStar } = require('./helpers');
@@ -198,21 +198,25 @@ async function buildVersionIndex() {
   const sysHashToAgentKey = new Map();
 
   for (const filename of sharedFiles) {
-    if (!filename.startsWith('sys_')) continue;
+    if (!filename.startsWith('sys_') && !filename.startsWith('openai_instructions_')) continue;
     try {
       const sys = JSON.parse(await config.storage.readShared(filename));
-      if (!Array.isArray(sys) || sys.length < 3) continue;
-      const b0 = sys[0]?.text || '';
-      const b2 = sys[2]?.text || '';
+      const isOpenAI = filename.startsWith('openai_instructions_');
+      if (!isOpenAI && (!Array.isArray(sys) || sys.length < 3)) continue;
+      const b0 = isOpenAI ? '' : (sys[0]?.text || '');
+      const b2 = isOpenAI ? (typeof sys === 'string' ? sys : JSON.stringify(sys, null, 2)) : (sys[2]?.text || '');
       const m = b0.match(/cc_version=(\S+?)[; ]/);
-      const ver = m ? m[1] : null;
-      const { key: agentKey, label: agentLabel } = extractAgentType(sys);
-      const sysHash = filename.replace(/^sys_/, '').replace(/\.json$/, '');
+      const { key: agentKey, label: agentLabel } = isOpenAI
+        ? extractPromptAgentType('openai', { instructions: b2 })
+        : extractAgentType(sys);
+      const sysHash = filename.replace(/^sys_/, '').replace(/^openai_instructions_/, '').replace(/\.json$/, '');
       if (sysHash && agentKey) sysHashToAgentKey.set(sysHash, agentKey);
-      if (ver && b2.length >= 500) {
-        const coreText = splitB2IntoBlocks(b2).coreInstructions || '';
+      if (b2.length >= (isOpenAI ? 1 : 500)) {
+        const coreText = isOpenAI ? b2 : (splitB2IntoBlocks(b2).coreInstructions || '');
         const coreLen = coreText.length;
         const coreHash = crypto.createHash('md5').update(coreText).digest('hex').slice(0, 12);
+        const ver = isOpenAI ? coreHash : (m ? m[1] : null);
+        if (!ver) continue;
         const idxKey = `${agentKey}::${coreHash}`;
         const existing = store.versionIndex.get(idxKey);
         if (!existing || b2.length > existing.b2Len) {

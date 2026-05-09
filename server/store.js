@@ -55,6 +55,7 @@ function extractCwd(req) {
 }
 
 function extractSessionId(req) {
+  if (typeof req?.metadata?.session_id === 'string') return req.metadata.session_id;
   const uid = req?.metadata?.user_id || '';
   // New format: user_id is JSON like {"session_id":"xxx-yyy"}
   const jsonMatch = uid.match(/"session_id"\s*:\s*"([a-f0-9-]+)"/);
