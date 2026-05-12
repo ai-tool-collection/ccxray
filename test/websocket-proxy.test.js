@@ -111,12 +111,13 @@ describe('OpenAI Responses WebSocket proxy', () => {
     fs.rmSync(testHome, { recursive: true, force: true });
   });
 
-  async function startProxy() {
+  async function startProxy(extraEnv = {}) {
     proxyChild = spawnServer(['--port', String(proxyPort)], {
       CCXRAY_HOME: testHome,
       OPENAI_TEST_HOST: 'localhost',
       OPENAI_TEST_PORT: String(upstreamPort),
       OPENAI_TEST_PROTOCOL: 'http',
+      ...extraEnv,
     });
     await waitForPort(proxyPort);
   }
@@ -211,5 +212,76 @@ describe('OpenAI Responses WebSocket proxy', () => {
     const entry = await waitForIndexEntry(path.join(testHome, 'logs'), e => e.sessionId === sessionId);
     assert.equal(entry.status, 401);
     assert.match(entry.responseMetadata.error.message, /rejected handshake: 401/);
+  });
+
+  it('routes /v1/realtime WebSocket upgrades to the OpenAI upstream', async () => {
+    const received = { url: null, text: null };
+    upstreamWss = new WebSocket.Server({ server: upstreamServer, path: '/v1/realtime' });
+    upstreamWss.on('connection', (ws, req) => {
+      received.url = req.url;
+      ws.on('message', data => {
+        received.text = data.toString();
+        ws.send('realtime-ok');
+      });
+    });
+    await startProxy();
+
+    const sessionId = '019e0ab2-bcc2-7b72-a1bf-980edc2ea945';
+    const ws = new WebSocket(`ws://localhost:${proxyPort}/v1/realtime?model=gpt-realtime`, {
+      headers: {
+        'openai-beta': 'realtime=v1',
+        session_id: sessionId,
+      },
+    });
+    const messages = [];
+    ws.on('message', data => messages.push(data.toString()));
+    await new Promise((resolve, reject) => {
+      ws.on('open', resolve);
+      ws.on('error', reject);
+    });
+    ws.send('hello realtime');
+    await new Promise(resolve => setTimeout(resolve, 200));
+    ws.close(1000, 'done');
+    await new Promise(resolve => ws.on('close', resolve));
+
+    assert.equal(received.url, '/v1/realtime?model=gpt-realtime');
+    assert.equal(received.text, 'hello realtime');
+    assert.ok(messages.includes('realtime-ok'));
+
+    const entry = await waitForIndexEntry(path.join(testHome, 'logs'), e => e.sessionId === sessionId);
+    assert.equal(entry.provider, 'openai');
+    assert.equal(entry.responseMetadata.transport, 'websocket');
+    assert.equal(entry.responseMetadata.endpoint, '/v1/realtime');
+    const reqLog = JSON.parse(fs.readFileSync(path.join(testHome, 'logs', `${entry.id}_req.json`), 'utf8'));
+    assert.equal(reqLog.url, '/v1/realtime?model=gpt-realtime');
+    assert.equal(reqLog.endpoint, '/v1/realtime');
+  });
+
+  it('closes idle WebSocket pairs and records a timeout entry', async () => {
+    upstreamWss = new WebSocket.Server({ server: upstreamServer, path: '/v1/responses' });
+    upstreamWss.on('connection', () => {});
+    await startProxy({ CCXRAY_WS_IDLE_TIMEOUT_MS: '100' });
+
+    const sessionId = '019e0ab2-bcc2-7b72-a1bf-980edc2ea946';
+    const ws = new WebSocket(`ws://localhost:${proxyPort}/v1/responses`, {
+      headers: {
+        'openai-beta': 'responses_websockets=2026-02-06',
+        session_id: sessionId,
+      },
+    });
+    await new Promise((resolve, reject) => {
+      ws.on('open', resolve);
+      ws.on('error', reject);
+    });
+    const close = await new Promise(resolve => {
+      ws.on('close', (code, reason) => resolve({ code, reason: reason.toString() }));
+    });
+
+    assert.equal(close.code, 1011);
+    assert.equal(close.reason, 'idle timeout');
+
+    const entry = await waitForIndexEntry(path.join(testHome, 'logs'), e => e.sessionId === sessionId);
+    assert.equal(entry.status, 504);
+    assert.match(entry.responseMetadata.error.message, /idle timeout/);
   });
 });

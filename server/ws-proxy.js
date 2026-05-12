@@ -39,13 +39,19 @@ const wss = new WebSocket.Server({
   },
 });
 
+const DEFAULT_IDLE_TIMEOUT_MS = parseInt(process.env.CCXRAY_WS_IDLE_TIMEOUT_MS || '60000', 10);
+const IDLE_TIMEOUT_MS = Number.isFinite(DEFAULT_IDLE_TIMEOUT_MS) && DEFAULT_IDLE_TIMEOUT_MS > 0
+  ? DEFAULT_IDLE_TIMEOUT_MS
+  : 60000;
+const OPENAI_WS_PATHS = new Set(['/v1/responses', '/v1/realtime']);
+
 function isUpgradeRequest(req) {
   return String(req.headers.upgrade || '').toLowerCase() === 'websocket';
 }
 
-function isOpenAIResponsesWebSocket(req, upstream) {
+function isOpenAIWebSocket(req, upstream) {
   const pathname = (req.url || '').split('?')[0];
-  return upstream?.provider === 'openai' && pathname === '/v1/responses' && isUpgradeRequest(req);
+  return upstream?.provider === 'openai' && OPENAI_WS_PATHS.has(pathname) && isUpgradeRequest(req);
 }
 
 function writeSocketResponse(socket, statusCode, reason) {
@@ -143,6 +149,7 @@ async function recordWebSocketEntry(ctx, result) {
     capture: 'transport-only',
     method: ctx.req.method,
     url: ctx.req.url,
+    endpoint: ctx.endpoint,
     headers: {
       openaiBeta: ctx.req.headers['openai-beta'] || null,
       sessionId: ctx.sessionId,
@@ -167,6 +174,7 @@ async function recordWebSocketEntry(ctx, result) {
   const responseMetadata = {
     transport: 'websocket',
     capture: 'transport-only',
+    endpoint: ctx.endpoint,
     frameCounts: ctx.frameCounts,
     byteCounts: ctx.byteCounts,
     close: result.close || null,
@@ -254,7 +262,7 @@ async function recordWebSocketEntry(ctx, result) {
 
 function handleWebSocketUpgrade(req, socket, head) {
   const upstream = config.getUpstreamForRequestAndHeaders(req.url, req.headers);
-  if (!isOpenAIResponsesWebSocket(req, upstream)) {
+  if (!isOpenAIWebSocket(req, upstream)) {
     writeSocketResponse(socket, 404, 'Not Found');
     return true;
   }
@@ -271,6 +279,7 @@ function handleWebSocketUpgrade(req, socket, head) {
   const turnMetadata = parseCodexTurnMetadata(req.headers);
   const agentType = getOpenAIAgentTypeFromHeaders(req.headers);
   const cwd = getWorkspaceCwd(turnMetadata);
+  const endpoint = (req.url || '').split('?')[0];
 
   if (!store.sessionMeta[sessionId]) store.sessionMeta[sessionId] = {};
   store.sessionMeta[sessionId].provider = 'openai';
@@ -294,6 +303,7 @@ function handleWebSocketUpgrade(req, socket, head) {
       sessionId,
       agentType,
       turnMetadata,
+      endpoint,
       sessionInferred: detected.inferred || !getCodexSessionId(req.headers, null),
       frameCounts: { clientToUpstream: 0, upstreamToClient: 0 },
       byteCounts: { clientToUpstream: 0, upstreamToClient: 0 },
@@ -301,10 +311,21 @@ function handleWebSocketUpgrade(req, socket, head) {
     const clientQueue = [];
     const upstreamQueue = [];
     let finalized = false;
+    let idleTimer = null;
+
+    function refreshIdleTimer() {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        closeBoth(1011, 'idle timeout');
+        finalize({ status: 504, error: { message: `WebSocket idle timeout after ${IDLE_TIMEOUT_MS}ms` } });
+      }, IDLE_TIMEOUT_MS);
+      if (typeof idleTimer.unref === 'function') idleTimer.unref();
+    }
 
     function finalize(result) {
       if (finalized) return;
       finalized = true;
+      clearTimeout(idleTimer);
       store.activeRequests[sessionId] = Math.max(0, (store.activeRequests[sessionId] || 1) - 1);
       if (store.sessionMeta[sessionId]) store.sessionMeta[sessionId].lastStopReason = null;
       broadcastSessionStatus(sessionId);
@@ -323,28 +344,35 @@ function handleWebSocketUpgrade(req, socket, head) {
     }
 
     clientWs.on('message', (data, isBinary) => {
+      refreshIdleTimer();
       ctx.frameCounts.clientToUpstream += 1;
       ctx.byteCounts.clientToUpstream += frameSize(data);
       sendOrBuffer(upstreamWs, upstreamQueue, data, isBinary);
     });
     upstreamWs.on('message', (data, isBinary) => {
+      refreshIdleTimer();
       ctx.frameCounts.upstreamToClient += 1;
       ctx.byteCounts.upstreamToClient += frameSize(data);
       sendOrBuffer(clientWs, clientQueue, data, isBinary);
     });
     clientWs.on('ping', data => {
+      refreshIdleTimer();
       if (upstreamWs.readyState === WebSocket.OPEN) upstreamWs.ping(data, undefined, () => {});
     });
     upstreamWs.on('ping', data => {
+      refreshIdleTimer();
       if (clientWs.readyState === WebSocket.OPEN) clientWs.ping(data, undefined, () => {});
     });
     clientWs.on('pong', data => {
+      refreshIdleTimer();
       if (upstreamWs.readyState === WebSocket.OPEN) upstreamWs.pong(data, undefined, () => {});
     });
     upstreamWs.on('pong', data => {
+      refreshIdleTimer();
       if (clientWs.readyState === WebSocket.OPEN) clientWs.pong(data, undefined, () => {});
     });
     upstreamWs.on('open', () => {
+      refreshIdleTimer();
       flushQueue(upstreamWs, upstreamQueue);
       flushQueue(clientWs, clientQueue);
     });
@@ -376,5 +404,5 @@ function handleWebSocketUpgrade(req, socket, head) {
 module.exports = {
   handleWebSocketUpgrade,
   buildWebSocketHeaders,
-  isOpenAIResponsesWebSocket,
+  isOpenAIWebSocket,
 };
