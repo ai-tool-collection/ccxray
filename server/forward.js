@@ -477,7 +477,7 @@ function handleSSEResponse(ctx, proxyRes, clientRes) {
         console.log(`\x1b[90m   Context HUD: injecting into session ${reqSessionId.slice(0, 8)}\x1b[0m`);
         _hudLoggedSessions.add(reqSessionId);
       }
-      const maxCtx = config.getMaxContext(parsedBody?.model, parsedBody?.system);
+      const maxCtx = config.inferMaxContext(parsedBody?.model, parsedBody?.system, usage);
       const pct = (totalCtx / maxCtx * 100).toFixed(1);
       const newIdx = maxBlockIndex + 1;
       const costInfo = calculateCost(usage, parsedBody?.model);
@@ -550,7 +550,7 @@ function handleSSEResponse(ctx, proxyRes, clientRes) {
 
     const sessionId = reqSessionId;
     const costInfo = calculateCost(usage, parsedBody?.model);
-    const maxContext = config.getMaxContext(parsedBody?.model, parsedBody?.system);
+    const maxContext = config.inferMaxContext(parsedBody?.model, parsedBody?.system, usage);
     const isSubagent = !store.extractCwd(parsedBody);
     const titleGenTitle = resolveTitleGenTitle(parsedBody, events, startTime);
     const title = titleGenTitle
@@ -813,7 +813,8 @@ function handleNonSSEResponse(ctx, proxyRes, clientRes) {
     }
     const resWritePromise = config.storage.write(id, '_res.json', typeof resData === 'string' ? resData : JSON.stringify(resData))
       .catch(e => console.error('Write res.json failed:', e.message));
-    const maxContext = provider === 'anthropic' ? config.getMaxContext(parsedBody?.model, parsedBody?.system) : null;
+    const nonSSEUsage = provider === 'anthropic' && resData && typeof resData === 'object' && !Array.isArray(resData) ? (resData.usage || null) : null;
+    const maxContext = provider === 'anthropic' ? config.inferMaxContext(parsedBody?.model, parsedBody?.system, nonSSEUsage) : null;
     const isSubagent = provider === 'openai'
       ? Boolean(ctx.isSubagent)
       : provider === 'anthropic' && !store.extractCwd(parsedBody);

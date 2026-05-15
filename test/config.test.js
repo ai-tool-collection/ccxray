@@ -440,3 +440,69 @@ describe('model context fallback', () => {
     assert.equal(getMaxContext('gpt-5.2-codex-20260401', null), 400_000);
   });
 });
+
+// ── inferMaxContext: usage-aware Anthropic 1M plan detection ─────────
+// The [1m] suffix only appears in Claude Code's system prompt. For requests
+// without that prompt (title-gen, some subagent paths) the model field is
+// bare "claude-opus-4-7", which falls back to 200K — but a Max-plan user
+// may actually be on 1M context. When observed usage exceeds the base
+// context, infer the higher tier so the dashboard "X / Y (Z%)" stays
+// self-consistent instead of showing "636K / 200K (318%)" or clamping the
+// bar to 100% while the textual number overflows.
+describe('inferMaxContext', () => {
+  const { inferMaxContext } = require('../server/config');
+
+  it('returns base context when usage is null/undefined', () => {
+    assert.equal(inferMaxContext('claude-opus-4-7', null, null), 200_000);
+    assert.equal(inferMaxContext('claude-opus-4-7', null, undefined), 200_000);
+  });
+
+  it('returns base context when usage fits inside it', () => {
+    const usage = { input_tokens: 50_000, cache_read_input_tokens: 100_000 };
+    assert.equal(inferMaxContext('claude-opus-4-7', null, usage), 200_000);
+  });
+
+  it('returns 1M when system prompt carries the [1m] suffix (existing path)', () => {
+    const system = [{ type: 'text', text: 'The exact model ID is claude-opus-4-7[1m].' }];
+    const usage = { input_tokens: 600_000 };
+    assert.equal(inferMaxContext('claude-opus-4-7', system, usage), 1_000_000);
+  });
+
+  it('bumps Claude 200K to 1M when usage exceeds base and system is missing', () => {
+    // Reproduces the real-world bug: bare model, no system prompt, big usage.
+    const usage = { input_tokens: 632_129 };
+    assert.equal(inferMaxContext('claude-opus-4-7', null, usage), 1_000_000);
+  });
+
+  it('bumps Claude 200K to 1M for any claude-* model when usage exceeds base', () => {
+    const usage = {
+      input_tokens: 80_000,
+      cache_creation_input_tokens: 50_000,
+      cache_read_input_tokens: 130_000, // sum 260K > 200K
+    };
+    assert.equal(inferMaxContext('claude-sonnet-4-6', null, usage), 1_000_000);
+    assert.equal(inferMaxContext('claude-haiku-4-5', null, usage), 1_000_000);
+  });
+
+  it('does not bump OpenAI models when usage exceeds the OpenAI base', () => {
+    // No known intermediate "1M plan" for non-gpt-4.1 OpenAI models.
+    const usage = { input_tokens: 500_000 };
+    assert.equal(inferMaxContext('gpt-5', null, usage), 400_000);
+    assert.equal(inferMaxContext('gpt-5.1-codex', null, usage), 400_000);
+  });
+
+  it('returns the known 1M for gpt-4.1 regardless of usage', () => {
+    const usage = { input_tokens: 700_000 };
+    assert.equal(inferMaxContext('gpt-4.1', null, usage), 1_000_000);
+  });
+
+  it('does not bump when usage exactly equals base (boundary case)', () => {
+    const usage = { input_tokens: 200_000 };
+    assert.equal(inferMaxContext('claude-opus-4-7', null, usage), 200_000);
+  });
+
+  it('handles usage with only cache_read tokens', () => {
+    const usage = { cache_read_input_tokens: 300_000 };
+    assert.equal(inferMaxContext('claude-opus-4-7', null, usage), 1_000_000);
+  });
+});

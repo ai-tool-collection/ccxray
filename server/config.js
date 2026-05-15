@@ -238,6 +238,26 @@ function getMaxContext(model, system) {
   return DEFAULT_CONTEXT;
 }
 
+// Usage-aware refinement of getMaxContext. The [1m] marker only appears in
+// Claude Code's system prompt; requests without that prompt (title-gen,
+// some subagent paths) report a bare model name and fall back to 200K — but
+// a Max-plan user may actually be on 1M. When observed usage exceeds the
+// base, bump Claude models up to 1M so the dashboard "X / Y (Z%)" stays
+// self-consistent. Non-Claude models are not bumped because we have no
+// reliable next tier to escalate to.
+function inferMaxContext(model, system, usage) {
+  const base = getMaxContext(model, system);
+  if (!usage) return base;
+  const used = (usage.input_tokens || 0)
+    + (usage.cache_creation_input_tokens || 0)
+    + (usage.cache_read_input_tokens || 0);
+  if (used <= base) return base;
+  const effective = extractModelFromSystem(system) || model || '';
+  const stripped = effective.replace(/\[.*\]/, '');
+  if (stripped.startsWith('claude-') && base < 1_000_000) return 1_000_000;
+  return base;
+}
+
 // Ensure logs dir exists; migrate from legacy location if needed
 if (!fs.existsSync(LOGS_DIR)) {
   fs.mkdirSync(LOGS_DIR, { recursive: true });
@@ -278,6 +298,7 @@ module.exports = {
   MODEL_CONTEXT_FALLBACK,
   DEFAULT_CONTEXT,
   getMaxContext,
+  inferMaxContext,
   parseBaseUrl,
   resolveProviderUpstream,
   getProviderForRequest,

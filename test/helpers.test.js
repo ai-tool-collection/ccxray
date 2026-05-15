@@ -18,6 +18,7 @@ const {
   entryHasCredential,
   classifyToolSource,
   buildToolSources,
+  printContextBar,
 } = require('../server/helpers');
 
 describe('helpers', () => {
@@ -92,6 +93,68 @@ describe('helpers', () => {
         cache_read_input_tokens: 300,
       });
       assert.equal(total, 600);
+    });
+  });
+
+  // Terminal HUD that prints in the proxy stdout. The original user symptom
+  // was a line like "Context [bar] 100% (212,625 / 200,000)" — bar clamped
+  // to 100% while the textual numerator overflows the denominator. The fix
+  // routes printContextBar through inferMaxContext so the denominator gets
+  // bumped to 1M when usage exceeds the base for claude-* models without
+  // the [1m] marker in system prompt.
+  describe('printContextBar — usage-aware HUD output', () => {
+    function captureStdout(fn) {
+      const lines = [];
+      const orig = console.log;
+      console.log = (...args) => { lines.push(args.join(' ')); };
+      try { fn(); } finally { console.log = orig; }
+      // Strip ANSI color codes so assertions are stable
+      return lines.map(l => l.replace(/\x1b\[[0-9;]*m/g, ''));
+    }
+
+    it('reproduces the reported symptom without the fix-path would show 100% — now shows real ratio', () => {
+      // Exactly the entry the user pointed at: cache_read 212044 + creation 580
+      // + input 1 = 212,625 total > 200,000 base.
+      const out = captureStdout(() => {
+        printContextBar(
+          { cache_read_input_tokens: 212044, cache_creation_input_tokens: 580, input_tokens: 1 },
+          'claude-opus-4-7',
+          null,
+        );
+      });
+      const joined = out.join('\n');
+      // Denominator must be 1M (bumped), not 200K (the bug).
+      assert.match(joined, /1,000,000/);
+      assert.doesNotMatch(joined, /\/ 200,000/);
+      // Percentage must reflect the real ratio (~21%), not the clamped 100%.
+      assert.match(joined, /\b21%/);
+      assert.doesNotMatch(joined, /\b100%/);
+    });
+
+    it('keeps 200K denominator when Claude usage genuinely fits inside 200K', () => {
+      const out = captureStdout(() => {
+        printContextBar(
+          { input_tokens: 50_000, cache_read_input_tokens: 30_000 },
+          'claude-opus-4-7',
+          null,
+        );
+      });
+      const joined = out.join('\n');
+      assert.match(joined, /\/ 200,000/);
+      assert.doesNotMatch(joined, /1,000,000/);
+    });
+
+    it('does not bump OpenAI models even when usage exceeds their base', () => {
+      const out = captureStdout(() => {
+        printContextBar(
+          { input_tokens: 500_000 }, // > 400K base for gpt-5
+          'gpt-5',
+          null,
+        );
+      });
+      const joined = out.join('\n');
+      assert.match(joined, /\/ 400,000/);
+      assert.doesNotMatch(joined, /1,000,000/);
     });
   });
 
