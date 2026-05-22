@@ -367,9 +367,13 @@ function totalContextTokens(usage) {
 }
 
 function printContextBar(usage, model, system) {
-  const { getMaxContext } = require('./config');
+  const { inferMaxContext } = require('./config');
   if (!usage) return;
-  const maxCtx = getMaxContext(model, system);
+  // Use inferMaxContext (not getMaxContext) so the terminal HUD bumps
+  // claude-opus-* / claude-sonnet-* to 1M when observed usage exceeds 200K
+  // but the [1m] marker isn't present in the system prompt — otherwise the
+  // bar clamps to "100% (X / 200,000)" while X overflows the max.
+  const maxCtx = inferMaxContext(model, system, usage);
   const used = totalContextTokens(usage);
   if (!used) return;
   const pct = Math.min(100, (used / maxCtx) * 100);

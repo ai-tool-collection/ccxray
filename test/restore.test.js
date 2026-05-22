@@ -88,3 +88,92 @@ describe('restoreFromLogs', () => {
     assert.equal(entry.res, null);
   });
 });
+
+// Restored entries must re-apply usage-aware context inference, otherwise
+// historical index lines that captured maxContext=200000 for Claude 1M-plan
+// turns (where no system prompt was sent so the [1m] marker couldn't be
+// extracted) keep displaying "636K / 200K (clamped to 100%)" forever.
+describe('restoreFromLogs — maxContext re-inference for legacy entries', () => {
+  const config = require('../server/config');
+  const store = require('../server/store');
+  const { restoreFromLogs } = require('../server/restore');
+  const tmpDir = path.join(os.tmpdir(), 'ccxray-restore-infer-' + Date.now());
+  let realStorage;
+  let realRestoreDays;
+
+  before(async () => {
+    realStorage = config.storage;
+    realRestoreDays = config.RESTORE_DAYS;
+    // Bypass the RESTORE_DAYS date-window filter. The synthetic entries below
+    // use hardcoded 2026-05-14 ids that become "older than the cutoff" as time
+    // passes from when this suite was written, and would otherwise be silently
+    // dropped from store.entries — making the suite green at write time and
+    // red a few days later.
+    config.RESTORE_DAYS = 0;
+    const tmpStorage = require('../server/storage/local').createLocalStorage(tmpDir);
+    await tmpStorage.init();
+    config.storage = tmpStorage;
+  });
+
+  after(() => {
+    config.storage = realStorage;
+    config.RESTORE_DAYS = realRestoreDays;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('bumps stored maxContext=200000 to 1M when restored usage exceeds it', async () => {
+    store.entries.length = 0;
+    const id = '2026-05-14T13-27-40-199';
+    // Reproduces the real-world bug pattern: bare model, no [1m] marker
+    // captured at write time, but usage clearly exceeds 200K.
+    await config.storage.appendIndex(JSON.stringify({
+      id, ts: '13:27:40', sessionId: 'sess-1',
+      provider: 'anthropic', agent: 'claude',
+      model: 'claude-opus-4-7',
+      usage: { input_tokens: 632129, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+      maxContext: 200000,
+      isSSE: true, status: 200, receivedAt: 1779000000000,
+    }) + '\n');
+
+    await restoreFromLogs();
+    const entry = store.entries.find(e => e.id === id);
+    assert.ok(entry, 'expected restored entry');
+    assert.equal(entry.maxContext, 1_000_000);
+  });
+
+  it('keeps stored maxContext=1000000 even when current usage is small (no downgrade)', async () => {
+    store.entries.length = 0;
+    const id = '2026-05-14T14-00-00-000';
+    await config.storage.appendIndex(JSON.stringify({
+      id, ts: '14:00:00', sessionId: 'sess-2',
+      provider: 'anthropic', agent: 'claude',
+      model: 'claude-opus-4-7',
+      usage: { input_tokens: 50000 },
+      maxContext: 1_000_000, // originally detected correctly via [1m] in system
+      isSSE: true, status: 200, receivedAt: 1779000000000,
+    }) + '\n');
+
+    await restoreFromLogs();
+    const entry = store.entries.find(e => e.id === id);
+    assert.ok(entry);
+    assert.equal(entry.maxContext, 1_000_000);
+  });
+
+  it('leaves OpenAI entries untouched (no Claude bump)', async () => {
+    store.entries.length = 0;
+    const id = '2026-05-14T15-00-00-000';
+    await config.storage.appendIndex(JSON.stringify({
+      id, ts: '15:00:00', sessionId: 'sess-3',
+      provider: 'openai', agent: 'codex',
+      model: 'gpt-5',
+      usage: { input_tokens: 500000 }, // exceeds 400K base
+      maxContext: null,
+      isSSE: true, status: 200, receivedAt: 1779000000000,
+    }) + '\n');
+
+    await restoreFromLogs();
+    const entry = store.entries.find(e => e.id === id);
+    assert.ok(entry);
+    assert.equal(entry.maxContext, null);
+  });
+});

@@ -139,6 +139,17 @@ async function restoreFromLogs() {
       } catch {}
     }
 
+    // Re-apply usage-aware context inference. Historical index lines may
+    // carry maxContext=200000 for Claude 1M-plan turns whose original request
+    // had no system prompt (e.g. title-gen, some subagent paths) — without
+    // this, the dashboard would show "600K / 200K (clamped to 100%)" for
+    // entries that predate the inferMaxContext fix. Math.max keeps previously
+    // correct 1M values when current usage happens to fit inside 200K.
+    if (meta.provider === 'anthropic') {
+      const inferred = config.inferMaxContext(meta.model, null, meta.usage);
+      meta.maxContext = Math.max(meta.maxContext || 0, inferred);
+    }
+
     store.entries.push({ ...meta, req: null, res: null, _loaded: false });
 
     // Track earliest timestamp per sysHash for version dating
