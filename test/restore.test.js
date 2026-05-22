@@ -99,9 +99,17 @@ describe('restoreFromLogs — maxContext re-inference for legacy entries', () =>
   const { restoreFromLogs } = require('../server/restore');
   const tmpDir = path.join(os.tmpdir(), 'ccxray-restore-infer-' + Date.now());
   let realStorage;
+  let realRestoreDays;
 
   before(async () => {
     realStorage = config.storage;
+    realRestoreDays = config.RESTORE_DAYS;
+    // Bypass the RESTORE_DAYS date-window filter. The synthetic entries below
+    // use hardcoded 2026-05-14 ids that become "older than the cutoff" as time
+    // passes from when this suite was written, and would otherwise be silently
+    // dropped from store.entries — making the suite green at write time and
+    // red a few days later.
+    config.RESTORE_DAYS = 0;
     const tmpStorage = require('../server/storage/local').createLocalStorage(tmpDir);
     await tmpStorage.init();
     config.storage = tmpStorage;
@@ -109,6 +117,7 @@ describe('restoreFromLogs — maxContext re-inference for legacy entries', () =>
 
   after(() => {
     config.storage = realStorage;
+    config.RESTORE_DAYS = realRestoreDays;
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
