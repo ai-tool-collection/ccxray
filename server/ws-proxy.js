@@ -6,6 +6,7 @@ const store = require('./store');
 const helpers = require('./helpers');
 const { broadcast, broadcastSessionStatus } = require('./sse-broadcast');
 const { AUTH_TOKEN } = require('./auth');
+const { stripAuthParams } = require('./url-sanitize');
 const {
   detectOpenAISession,
   getCodexSessionId,
@@ -194,7 +195,7 @@ async function recordWebSocketEntry(ctx, result) {
     transport: 'websocket',
     capture: 'transport-only',
     method: ctx.req.method,
-    url: ctx.req.url,
+    url: stripAuthParams(ctx.req.url),
     endpoint: ctx.endpoint,
     headers: {
       openaiBeta: ctx.req.headers['openai-beta'] || null,
@@ -231,7 +232,7 @@ async function recordWebSocketEntry(ctx, result) {
     ts: ctx.ts,
     sessionId: ctx.sessionId,
     method: ctx.req.method,
-    url: ctx.req.url,
+    url: stripAuthParams(ctx.req.url),
     provider: 'openai',
     agent: 'codex',
     req: reqLog,
@@ -337,7 +338,7 @@ function handleWebSocketUpgrade(req, socket, head) {
   if (detected.isNewSession) store.printSessionBanner(sessionId);
 
   wss.handleUpgrade(req, socket, head, clientWs => {
-    const upstreamUrl = getWebSocketUrl(upstream, req.url);
+    const upstreamUrl = getWebSocketUrl(upstream, stripAuthParams(req.url));
     const upstreamWs = new WebSocket(upstreamUrl, getWebSocketProtocols(req.headers), {
       headers: buildWebSocketHeaders(req.headers, upstream),
     });
