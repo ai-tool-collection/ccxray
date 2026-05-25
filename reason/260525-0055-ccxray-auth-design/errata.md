@@ -67,11 +67,33 @@ codex \
   ...args
 ```
 
-Open question (resolve before Commit 1.4):
+**Spike resolved (2026-05-25).** Codex v0.133.0-alpha.1 hard-rejects any attempt to override builtin providers:
 
-- Forcing `model_provider="ccxray"` switches Codex to API-key mode, which **bypasses ChatGPT OAuth login**. Users on `chatgpt_base_url` will lose their OAuth session. Need to investigate whether builtin providers (`openai`, `chatgpt`) accept a partial `http_headers` override without losing their other fields. If they do not, we either (a) replicate the full provider config for each, or (b) require `OPENAI_API_KEY` and document that ccxray on ChatGPT auth needs an additional setup step. The current ccxray launcher in `server/providers.js` already does `-c chatgpt_base_url=...` alongside `openai_base_url=...`; the header-injection version must preserve both paths.
+```
+$ codex exec -c 'model_providers.openai.http_headers={"X-Test"="v"}' ...
+Error: model_providers contains reserved built-in provider IDs: `openai`.
+Built-in providers cannot be overridden. Rename your custom provider
+(for example, `openai-custom`).
+```
 
-Affected commits: **1.4** (warn-only launcher injection), **2.1** (mandatory enforcement).
+Probed all plausible shortcut keys (`openai_http_headers`, `chatgpt_http_headers`, `default_http_headers`, etc.) — none exist. Only `chatgpt_base_url` and `openai_base_url` are top-level builtin shortcuts; there is no header equivalent.
+
+**Decision: spawn-time auth-mode detection in `server/providers.js`.**
+
+ccxray's Codex launcher detects which Codex auth path the user is on and chooses:
+
+- **API-key Codex** (env `OPENAI_API_KEY` set): inject `-c 'model_providers.ccxray={…, http_headers={"X-Ccxray-Auth"="…"}}'` + `-c 'model_provider="ccxray"'`. Header enforcement active end-to-end.
+- **ChatGPT-OAuth Codex** (no `OPENAI_API_KEY`): skip the `model_provider` override entirely (would break OAuth login). Continue with `-c 'openai_base_url=…'` and `-c 'chatgpt_base_url=…'` as today. **The upstream domain's `X-Ccxray-Auth` requirement does not apply to this path** — ccxray's upstream verifier additionally accepts loopback-unauth requests that look like Codex-on-ChatGPT (presence of `chatgpt-account-id` + JWT-shaped `Authorization`).
+
+Why this is acceptable for the threat model:
+
+- The only attacker class who can reach this path is a same-machine process on a different UID. Same-UID attackers are already trusted (they can read `~/.ccxray/local-secret`).
+- Such an attacker cannot exfiltrate credentials: they would have to supply their own `Authorization` + `chatgpt-account-id`, which they cannot forge without having already compromised the ccxray user's ChatGPT session (a same-UID attack).
+- Residual risk reduces to **cost amplification / log pollution by other-UID local attackers**, not credential theft. The mitigation primitive is to bind ccxray to a Unix socket (out of scope of this migration; deferred as a future hardening item) or run ccxray under a dedicated UID.
+
+Affected commits:
+- **1.4** (warn-only launcher injection): detect API-key vs ChatGPT-OAuth mode and inject accordingly. WS gate accepts loopback-unauth for ChatGPT-shaped requests with a warn log.
+- **2.1** (enforcement): block bearer + `?token=` on `/v1/*`; **except** retain loopback-unauth allowance for the ChatGPT-OAuth Codex path, gated by a single helper `isLoopbackChatGPTCodex(req)` that checks (a) `req.socket.localAddress` is loopback, (b) `Authorization` is JWT-shaped, (c) `chatgpt-account-id` header present.
 
 ---
 
@@ -111,7 +133,7 @@ This is a credential-leak surface in Codex itself, not in ccxray. It is unrelate
 | Commit | Original plan | Revised plan |
 |---|---|---|
 | 1.3 | Inline `document.cookie.includes('ccxray_s=')` probe | `GET /_auth/status` probe (+10 LOC, new endpoint in `server/routes/auth.js`) |
-| 1.4 | `-c request_headers='X-Ccxray-Auth=…'` for Codex | `-c 'model_providers.ccxray={…, http_headers={…}}'` + `-c 'model_provider="ccxray"'`; **plus a spike before Commit 1.4 to resolve the ChatGPT-OAuth-bypass question above** |
+| 1.4 | `-c request_headers='X-Ccxray-Auth=…'` for Codex | API-key Codex: `-c 'model_providers.ccxray={…, http_headers={…}}'` + `-c 'model_provider="ccxray"'`. ChatGPT-OAuth Codex: skip `model_provider` override; upstream verifier accepts loopback-unauth for that path. Spike completed; no further investigation needed before Commit 1.4 |
 | 2.3 | peer-UID via `socket._handle.getpeereid` | Filesystem mode `0600` socket + `0700` parent dir as the real gate; no Node-API peer-credential check |
 | Docs | Threat table claims "None" residuals | Use "low residual risk if X is implemented as specified" |
 | Docs | `ccxray_session` (in `overview.md`) | Standardize on `ccxray_s` |
