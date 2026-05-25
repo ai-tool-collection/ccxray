@@ -129,6 +129,8 @@ const HOP_BY_HOP_HEADERS = new Set([
   'upgrade',
 ]);
 
+const CCXRAY_INTERNAL_HEADERS = ['x-ccxray-auth', 'x-ccxray-bootstrap'];
+
 function buildForwardHeaders(clientHeaders, upstream) {
   const fwdHeaders = { ...clientHeaders };
   const connectionTokens = String(clientHeaders.connection || '')
@@ -138,6 +140,7 @@ function buildForwardHeaders(clientHeaders, upstream) {
 
   for (const header of HOP_BY_HOP_HEADERS) delete fwdHeaders[header];
   for (const header of connectionTokens) delete fwdHeaders[header];
+  for (const header of CCXRAY_INTERNAL_HEADERS) delete fwdHeaders[header];
   delete fwdHeaders.host;
   delete fwdHeaders['accept-encoding'];
   fwdHeaders.host = upstream.host;
