@@ -40,8 +40,12 @@ if (portIdx !== -1) {
   explicitPort = true;
   process.argv.splice(portIdx, 2);
 }
-const hubMode = process.argv.includes('--hub-mode');
+let hubMode = process.argv.includes('--hub-mode');
 if (hubMode) process.argv.splice(process.argv.indexOf('--hub-mode'), 1);
+if (hubMode && process.platform === 'win32') {
+  console.error('\x1b[31mHub mode requires Unix sockets (macOS/Linux). On Windows, use --port for standalone mode.\x1b[0m');
+  process.exit(1);
+}
 const allowUpstreamLoop = process.argv.includes('--allow-upstream-loop') || process.env.CCXRAY_ALLOW_UPSTREAM_LOOP === '1';
 if (process.argv.includes('--allow-upstream-loop')) process.argv.splice(process.argv.indexOf('--allow-upstream-loop'), 1);
 const noBrowser = process.argv.includes('--no-browser');
@@ -500,26 +504,36 @@ function spawnStandaloneAgent(port, command, args) {
 if (process.argv[2] === 'open') {
   const lock = hub.readHubLock();
   const port = lock?.port || config.PORT;
-  const http = require('http');
-  const body = JSON.stringify({});
-  const reqOpts = {
-    hostname: 'localhost',
-    port,
-    path: '/_api/hub/bootstrap-token',
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-    timeout: 3000,
-  };
-  const req = http.request(reqOpts, res => {
-    let buf = '';
-    res.on('data', c => { buf += c; });
-    res.on('end', () => {
-      if (res.statusCode !== 200) {
-        console.error(`\x1b[31mFailed to mint bootstrap token: HTTP ${res.statusCode}\x1b[0m`);
-        process.exit(1);
-      }
+
+  (async () => {
+    try {
       let token;
-      try { token = JSON.parse(buf).token; } catch {}
+      if (lock?.sockPath) {
+        const res = await hub.hubSocketRequest(lock.sockPath, { cmd: 'bootstrap-token' });
+        token = res?.token;
+      } else {
+        // Fallback to HTTP for standalone mode (no hub socket)
+        token = await new Promise((resolve, reject) => {
+          const body = JSON.stringify({});
+          const req = http.request({
+            hostname: 'localhost', port,
+            path: '/_api/hub/bootstrap-token', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+            timeout: 3000,
+          }, res => {
+            let buf = '';
+            res.on('data', c => { buf += c; });
+            res.on('end', () => {
+              if (res.statusCode !== 200) return resolve(null);
+              try { resolve(JSON.parse(buf).token); } catch { resolve(null); }
+            });
+          });
+          req.on('error', reject);
+          req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+          req.end(body);
+        });
+      }
+
       if (!token) {
         console.error('\x1b[31mHub did not return a token. Run "ccxray status" to check.\x1b[0m');
         process.exit(1);
@@ -533,15 +547,12 @@ if (process.argv[2] === 'open') {
         exec(`${cmd} ${JSON.stringify(url)}`);
       }
       process.exit(0);
-    });
-  });
-  req.on('error', err => {
-    console.error(`\x1b[31mCannot reach ccxray on port ${port}: ${err.message}\x1b[0m`);
-    console.error('\x1b[90mStart ccxray first (e.g. "ccxray claude") and try again.\x1b[0m');
-    process.exit(1);
-  });
-  req.on('timeout', () => { req.destroy(); });
-  req.end(body);
+    } catch (err) {
+      console.error(`\x1b[31mCannot reach ccxray on port ${port}: ${err.message}\x1b[0m`);
+      console.error('\x1b[90mStart ccxray first (e.g. "ccxray claude") and try again.\x1b[0m');
+      process.exit(1);
+    }
+  })();
   return; // prevent falling through to startup
 }
 
@@ -557,36 +568,50 @@ if (process.argv[2] === 'status') {
     hub.deleteHubLock();
     process.exit(1);
   }
-  hub.checkHubHealth(lock.port).then(ok => {
-    if (!ok) {
-      console.log(`Hub pid ${lock.pid} alive but not responding on port ${lock.port}.`);
-      console.log(`Check ${hub.HUB_LOG_PATH}`);
-      process.exit(1);
-    }
-    const http = require('http');
-    http.get(`http://localhost:${lock.port}/_api/hub/status`, res => {
-      let data = '';
-      res.on('data', c => { data += c; });
-      res.on('end', () => {
-        try {
-          const s = JSON.parse(data);
-          console.log(`Hub: http://localhost:${s.port} (pid ${s.pid}, uptime ${s.uptime}s, v${s.version})`);
-          if (s.clients.length === 0) {
-            console.log('No connected clients.');
-          } else {
-            console.log(`Connected clients (${s.clients.length}):`);
-            s.clients.forEach((c, i) => {
-              console.log(`  [${i + 1}] pid ${c.pid} — ${c.cwd} (since ${c.connectedAt})`);
+
+  (async () => {
+    try {
+      let s;
+      if (lock.sockPath) {
+        const health = await hub.hubSocketRequest(lock.sockPath, { cmd: 'health' }, 2000);
+        if (!health || !health.ok) {
+          console.log(`Hub pid ${lock.pid} alive but socket not responding.`);
+          console.log(`Check ${hub.HUB_LOG_PATH}`);
+          process.exit(1);
+        }
+        s = await hub.hubSocketRequest(lock.sockPath, { cmd: 'status' });
+      } else {
+        const ok = await hub.checkHubHealth(lock.port);
+        if (!ok) {
+          console.log(`Hub pid ${lock.pid} alive but not responding on port ${lock.port}.`);
+          console.log(`Check ${hub.HUB_LOG_PATH}`);
+          process.exit(1);
+        }
+        s = await new Promise((resolve, reject) => {
+          http.get(`http://localhost:${lock.port}/_api/hub/status`, res => {
+            let data = '';
+            res.on('data', c => { data += c; });
+            res.on('end', () => {
+              try { resolve(JSON.parse(data)); } catch { reject(new Error(data)); }
             });
-          }
-        } catch { console.log(data); }
-        process.exit(0);
-      });
-    }).on('error', err => {
+          }).on('error', reject);
+        });
+      }
+      console.log(`Hub: http://localhost:${s.port} (pid ${s.pid}, uptime ${s.uptime}s, v${s.version})`);
+      if (s.clients.length === 0) {
+        console.log('No connected clients.');
+      } else {
+        console.log(`Connected clients (${s.clients.length}):`);
+        s.clients.forEach((c, i) => {
+          console.log(`  [${i + 1}] pid ${c.pid} — ${c.cwd} (since ${c.connectedAt})`);
+        });
+      }
+      process.exit(0);
+    } catch (err) {
       console.error(`Failed to query hub: ${err.message}`);
       process.exit(1);
-    });
-  });
+    }
+  })();
   return; // prevent falling through to startup
 }
 
@@ -609,7 +634,7 @@ async function startClientMode(lock) {
   }
 
   try {
-    const reg = await hub.registerClient(lock.port, process.pid, process.cwd());
+    const reg = await hub.registerClient(lock, process.pid, process.cwd());
     if (!reg) {
       console.error('\x1b[31mHub rejected client registration.\x1b[0m');
       process.exit(1);
@@ -634,13 +659,13 @@ async function startClientMode(lock) {
 
   // Monitor hub health and auto-recover
   hub.startHubMonitor(lock.pid, lock.port, (newLock) => {
-    // Re-register with new hub
-    hub.registerClient(newLock.port, process.pid, process.cwd()).catch(() => {});
+    // Re-register with new hub (newLock has sockPath from lockfile)
+    hub.registerClient(newLock, process.pid, process.cwd()).catch(() => {});
   });
 
   // Spawn agent pointing to hub
   spawnAgent(agentCommand, lock.port, agentArgs, (code) => {
-    hub.unregisterClient(lock.port, process.pid).finally(() => {
+    hub.unregisterClient(lock, process.pid).finally(() => {
       process.exit(code);
     });
   });
@@ -750,14 +775,19 @@ async function startServer() {
 
   runPostListenStartupTasks();
 
-  // Hub mode only: write lockfile as readiness signal, start client lifecycle
+  // Hub mode only: create socket, write lockfile as readiness signal, start client lifecycle
   // Do NOT write lockfile in agent mode with --port (that's independent mode)
   if (hubMode) {
     hub.setHubPort(actualPort);
+    // Ensure hub dir has correct permissions + clean up stale socket
+    try { fs.chmodSync(hub.HUB_DIR, 0o700); } catch {}
+    await hub.cleanupStaleSocket();
+    await hub.createHubSocket();
+    // Write lockfile after BOTH http + socket are ready (readiness signal)
     hub.writeHubLock(actualPort, process.pid);
     hub.startDeadClientCheck();
     hub.setOnShutdown(() => gracefulExit(0));
-    const cleanup = () => { hub.deleteHubLock(); gracefulExit(0); };
+    const cleanup = () => hub.shutdownHub(); // closes socket + deletes lockfile + gracefulExit via onShutdown
     process.on('SIGTERM', cleanup);
     process.on('SIGINT', cleanup);
   } else if (!agentMode) {
@@ -816,6 +846,15 @@ async function startServer() {
       } else {
         console.error(`\x1b[31mStartup failed: ${err.message}\x1b[0m`);
       }
+      process.exit(1);
+    }
+    return;
+  }
+
+  // Windows: hub mode requires Unix sockets; fall back to standalone
+  if (process.platform === 'win32') {
+    try { await startServer(); } catch (err) {
+      console.error(`\x1b[31mStartup failed: ${err.message}\x1b[0m`);
       process.exit(1);
     }
     return;

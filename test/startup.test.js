@@ -117,10 +117,9 @@ describe('S4: standalone mode', () => {
     assert.ok(html.includes('<!DOCTYPE html') || html.includes('<html'));
   });
 
-  it('serves hub status', async () => {
-    const data = await httpGet(port, '/_api/hub/status');
-    assert.equal(data.app, 'ccxray');
-    assert.ok(data.version);
+  it('hub routes return 410 (moved to socket)', async () => {
+    const res = await httpGetFull(port, '/_api/hub/status');
+    assert.equal(res.status, 410);
   });
 });
 
@@ -181,13 +180,17 @@ describe('S6: hub mode startup', () => {
     assert.deepEqual(data, { ok: true });
   });
 
-  it('accepts client registration', async () => {
-    const data = await httpPost(port, '/_api/hub/register', { pid: 77777, cwd: '/test' });
-    assert.equal(data.ok, true);
-    assert.equal(data.firstClient, true);
+  it('accepts client registration via socket', async () => {
+    const lockPath = path.join(TEST_HOME, 'hub.json');
+    const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    assert.ok(lock.sockPath, 'lockfile should contain sockPath');
+    const hub = require('../server/hub');
+    const res = await hub.hubSocketRequest(lock.sockPath, { cmd: 'register', pid: 77777, cwd: '/test' });
+    assert.equal(res.ok, true);
+    assert.equal(res.firstClient, true);
 
     // Cleanup
-    await httpPost(port, '/_api/hub/unregister', { pid: 77777 });
+    await hub.hubSocketRequest(lock.sockPath, { cmd: 'unregister', pid: 77777 });
   });
 });
 
@@ -1681,6 +1684,20 @@ function httpGetRaw(port, urlPath) {
       let data = '';
       res.on('data', c => { data += c; });
       res.on('end', () => resolve(data));
+    }).on('error', reject);
+  });
+}
+
+function httpGetFull(port, urlPath) {
+  return new Promise((resolve, reject) => {
+    http.get(`http://localhost:${port}${urlPath}`, res => {
+      let data = '';
+      res.on('data', c => { data += c; });
+      res.on('end', () => {
+        let body;
+        try { body = JSON.parse(data); } catch { body = data; }
+        resolve({ status: res.statusCode, body });
+      });
     }).on('error', reject);
   });
 }
