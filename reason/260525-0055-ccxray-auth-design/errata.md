@@ -139,3 +139,24 @@ This is a credential-leak surface in Codex itself, not in ccxray. It is unrelate
 | Docs | `ccxray_session` (in `overview.md`) | Standardize on `ccxray_s` |
 
 No commit is added or removed. The total surface remains 8 commits across Phases 1–3.
+
+---
+
+## 5. Phase 2 reorder (depandabot audit, 2026-05-26)
+
+**Trigger:** depandabot audit (`docs/depandabot/2026-05-26-phase-2-auth-adjustments.md`) found that the proposed `isLoopbackChatGPTCodex` dual-loopback check (`localAddress` + `remoteAddress`) replicates a known-broken pattern (OpenClaw GHSA-xc7w-v5x6-cc87). Behind a same-host reverse proxy both addresses are `127.0.0.1` — the check adds code without adding security.
+
+**Decision:** Reorder Phase 2 so Unix socket hub IPC (originally 2.3) lands **before** upstream enforcement (originally 2.1). Once ccxray binds to a Unix socket, the multi-UID attack surface is closed by filesystem permissions and the ChatGPT-OAuth carve-out doesn't need IP-based checks at all.
+
+**Revised Phase 2 order:**
+
+| New # | Old # | Content |
+|-------|-------|---------|
+| 2.1 | 2.3 | Unix socket hub IPC + HTTP `/_hub/*` → 410 (single commit, not split) |
+| 2.2 | 2.1 | Upstream domain enforcement — `verifyUpstream` flips from warn to reject. ChatGPT-OAuth carve-out scoped as a standalone feature with its own test matrix, not a footnote. No loopback IP checks. |
+| 2.3 | 2.2 | Dashboard enforcement + ephemeral mode default |
+
+**What was dropped:**
+- Dual-direction loopback check (`localAddress` + `remoteAddress`) in `isLoopbackChatGPTCodex` — security theater per OpenClaw CVE precedent.
+- Splitting the Unix socket commit into 3 sub-commits — unnecessary for 533 LOC.
+- Framing the enforce flip as "just a flag" — the ChatGPT-OAuth carve-out is a real auth exemption needing proper test coverage.
