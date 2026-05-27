@@ -361,6 +361,40 @@ function verifyDashboard(req, res) {
   return true;
 }
 
+// ─── Upstream credential taxonomy (Phase 2.2) ────────────────────────
+//
+// Single source of truth for "is this /v1/* request allowed upstream?",
+// shared by verifyUpstream (HTTP) and ws-proxy isAuthorized (WS). Returns
+// 'ok' | 'chatgpt-oauth' | 'reject'.
+//
+// X-Ccxray-Auth carries base64url(K_upstream) — the value the launchers in
+// server/providers.js inject. We constant-time compare it to the locally
+// derived K_upstream, so this behaves identically whether the root secret
+// comes from AUTH_TOKEN or the ephemeral local-secret file.
+
+// JWT-shaped: "Bearer <header>.<payload>.<sig>" with a non-trivial header.
+function isJwtShaped(authHeader) {
+  if (!authHeader || typeof authHeader !== 'string') return false;
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) return false;
+  const parts = token.split('.');
+  return parts.length === 3 && parts[0].length > 10;
+}
+
+function verifyUpstreamCredential(headers) {
+  const headerVal = headers['x-ccxray-auth'];
+  if (headerVal) {
+    // Header present → it must be the real K_upstream. A forged value rejects
+    // outright; it is never rescued by the ChatGPT-OAuth carve-out below.
+    const { K_upstream } = getSecrets();
+    return compareSecret(headerVal, K_upstream.toString('base64url')) ? 'ok' : 'reject';
+  }
+  // ChatGPT-OAuth carve-out (errata §1.3): codex-on-ChatGPT cannot inject
+  // X-Ccxray-Auth, so accept its native markers instead.
+  if (headers['chatgpt-account-id'] && isJwtShaped(headers['authorization'])) return 'chatgpt-oauth';
+  return 'reject';
+}
+
 function verifyUpstream(req, res) {
   const ok = authMiddleware(req, res);
   if (!ok) return false;
@@ -409,6 +443,9 @@ module.exports = {
   dispatch,
   verifyDashboard,
   verifyUpstream,
+  // Phase 2.2: shared upstream credential taxonomy (wired into verifyUpstream
+  // in 2.2b and ws-proxy isAuthorized in 2.2c).
+  verifyUpstreamCredential,
   // Phase 1.3 additions
   mintBootstrapToken,
   redeemBootstrap,
