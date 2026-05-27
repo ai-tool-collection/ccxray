@@ -74,19 +74,19 @@
 
 ## 4. Dashboard enforcement + ephemeral mode (commit 2.3 — ships in 2.0.0, bundled with 2.2 per design 決策 5)
 
-- [ ] 4.1 `verifyDashboard`: reject if no valid cookie and no valid X-Ccxray-Auth (flip dashboard from allow-all)
-- [ ] 4.2 Keep `Authorization: Bearer <AUTH_TOKEN>` acceptance on dashboard (permanent per spec)
-- [ ] 4.3 Ephemeral mode default: when AUTH_TOKEN unset, dashboard auth still required (via local-secret)
-- [ ] 4.4 Escape hatch **rework to loopback-guarded** (design 決策 7): 2.2 shipped a blunt header-level bypass in `verifyUpstreamCredential`; move the check to the gate functions (`verifyUpstream` / WS `isAuthorized` / `verifyDashboard`) so it bypasses ONLY when `req.socket.remoteAddress` is loopback, and apply it to the dashboard gate too. Removes the blunt `process.env` check from `verifyUpstreamCredential`.
-- [x] 4.5 Startup banner when CCXRAY_LOOPBACK_NO_AUTH=1 is active (loud warning) — **shipped in 2.2** (`server/index.js`).
+- [x] 4.1 `verifyDashboard`: reject if no valid cookie and no valid X-Ccxray-Auth (flip dashboard from allow-all). Shared `_isDashboardAuthenticated` predicate (also backs `/_auth/status`). 2.3 (`5d23154`).
+- [x] 4.2 Keep `Authorization: Bearer <AUTH_TOKEN>` acceptance on dashboard (permanent per spec). 2.3 (`5d23154`).
+- [x] 4.3 Ephemeral mode default: when AUTH_TOKEN unset, dashboard auth still required (via local-secret). 2.3 (`5d23154`).
+- [x] 4.4 Escape hatch **reworked to loopback-guarded** (design 決策 7): `isLoopbackBypass(req)` lives in the gate functions (`verifyUpstream` / WS `isAuthorized` / `verifyDashboard`), bypasses ONLY when `req.socket.remoteAddress` is loopback; blunt `process.env` check removed from `verifyUpstreamCredential`. 2.3 (`a95ae89`).
+- [x] 4.5 Startup banner when CCXRAY_LOOPBACK_NO_AUTH=1 is active (loud warning) — **shipped in 2.2** (`server/index.js`); comment/message updated for the loopback guard in `a95ae89`.
 - [x] 4.4-note RESOLVED (decision B, 2026-05-27): keep the loopback guard (4.10). ccxray binds `0.0.0.0`, so blunt bypass would expose the LAN; guard limits blast radius. Reverse-proxy gap documented (design 決策 7), not closed. spec.md "Explicit loopback opt-in" scenario already matches.
-- [ ] 4.5a `/_auth/bootstrap-token` HTTP endpoint → require auth (codex R3 P1 deferred from 2.1)
-- [ ] ~~4.6 `package.json` version bump to 2.1.0~~ → dropped; 2.3 ships in 2.0.0 (already bumped in 2.2d). Extend the existing 2.0.0 CHANGELOG entry with dashboard enforcement instead.
-- [ ] 4.7 TDD: dashboard without cookie → 401
-- [ ] 4.8 TDD: dashboard with cookie → 200
-- [ ] 4.9 TDD: CCXRAY_LOOPBACK_NO_AUTH=1 + loopback request → bypass works (upstream + dashboard)
-- [ ] 4.10 TDD: non-loopback request with CCXRAY_LOOPBACK_NO_AUTH → still rejected (gate-level loopback guard)
-- [ ] 4.11 Smoke test: fresh CCXRAY_HOME, no AUTH_TOKEN → dashboard requires ccxray open
+- [x] 4.5a `/_auth/bootstrap-token` HTTP endpoint → require auth (codex R3 P1 deferred from 2.1). Gated via `verifyDashboard`; `ccxray open` HTTP fallback now sends `X-Ccxray-Auth`. 2.3 (`d6addda`).
+- [x] ~~4.6 `package.json` version bump to 2.1.0~~ → dropped; 2.3 ships in 2.0.0 (already bumped in 2.2d). Extended the existing 2.0.0 CHANGELOG entry with dashboard enforcement + loopback-guarded hatch + bootstrap-token gate instead.
+- [x] 4.7 TDD: dashboard without cookie → 401 (`auth-dispatcher.test.js`). Also new e2e `auth-dashboard-shell.e2e.test.js`: shell public, data 401.
+- [x] 4.8 TDD: dashboard with cookie → 200 (`auth-dispatcher.test.js`).
+- [x] 4.9 TDD: CCXRAY_LOOPBACK_NO_AUTH=1 + loopback request → bypass works (upstream + dashboard) (`auth-dispatcher.test.js`).
+- [x] 4.10 TDD: non-loopback request with CCXRAY_LOOPBACK_NO_AUTH → still rejected (gate-level loopback guard) (`auth-dispatcher.test.js`, `isLoopbackBypass` matrix).
+- [x] 4.11 Smoke test: fresh CCXRAY_HOME, no AUTH_TOKEN → dashboard requires ccxray open (full mint→redeem→cookie→data chain + real `ccxray open` CLI fallback verified).
 
 ## 5. PR + review (single 2.0.0 PR bundling 2.1 + 2.2 + 2.3 per design 決策 5)
 

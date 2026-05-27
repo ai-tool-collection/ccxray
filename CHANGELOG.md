@@ -14,9 +14,17 @@
 
 - **ChatGPT-OAuth Codex carve-out (unchanged behavior, now load-bearing).** Codex on a ChatGPT login cannot inject `X-Ccxray-Auth`, so a request presenting `chatgpt-account-id` plus a JWT-shaped `Authorization` is accepted on the upstream path without the header.
 
+- **Dashboard auth is now enforced.** The dashboard's data endpoints (`/_api/*`, `/_events`, intercept, costs) now require one of: a valid `ccxray_s` session cookie, `Authorization: Bearer <AUTH_TOKEN>` (permanent), or a valid `X-Ccxray-Auth`. The previous allow-all behavior is gone — including the "no `AUTH_TOKEN` ⇒ open to everyone" default. With `AUTH_TOKEN` unset, the gate is derived from `~/.ccxray/local-secret`, so a fresh install must authenticate the browser before the dashboard shows any data.
+
+  **Migration:** run `ccxray open` once per browser. It mints a one-time bootstrap URL (`http://localhost:<port>/#k=<token>`, 60s, single-use); opening it sets an `HttpOnly; SameSite=Strict` session cookie (24h). The static shell and client assets still load without auth (they carry no conversation data) so the bootstrap page can run — only the data endpoints are gated. Scripts/CI can reach `/_api/*` with `-H "X-Ccxray-Auth: $(ccxray secret upstream)"`. Legacy `?token=<AUTH_TOKEN>` still works on the dashboard with an `X-Ccxray-Deprecation` header (removed in a future release).
+
 ### Added
 
-- **`CCXRAY_LOOPBACK_NO_AUTH=1` escape hatch** — opt-in bypass of the upstream auth gate for local development. A loud startup banner is printed whenever it is active. It is a blunt bypass (no loopback-IP check, which would be unreliable behind a same-host reverse proxy); the banner is the safeguard.
+- **`CCXRAY_LOOPBACK_NO_AUTH=1` escape hatch** — opt-in bypass of the auth gate (both `/v1/*` upstream and the dashboard) for local development. A loud startup banner is printed whenever it is active. The bypass is **loopback-guarded**: it applies only when the request's `remoteAddress` is loopback, so setting the flag on a `0.0.0.0`-bound proxy does not expose `/v1/*` or recorded conversations to the LAN. A same-host reverse proxy presents `127.0.0.1` and defeats the guard — documented, not closed; the banner remains the backstop.
+
+### Security
+
+- **`/_auth/bootstrap-token` is auth-gated.** Minting a browser bootstrap token now requires the same credential as the dashboard, closing a same-host (incl. other-UID) loopback mint→redeem path that could obtain a session without the local secret. `ccxray open` sends the credential automatically.
 
 ## 1.9.3
 
