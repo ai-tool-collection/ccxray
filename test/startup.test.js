@@ -149,6 +149,23 @@ describe('S5: status subcommand', () => {
   });
 });
 
+// ── S5a: secret upstream subcommand ──────────────────────────────
+
+describe('S5a: secret upstream subcommand', () => {
+  it('prints base64url upstream token and exits 0', async () => {
+    const { stdout, code } = await spawnAndCollect(['secret', 'upstream']);
+    assert.equal(code, 0, `expected exit 0, got ${code}`);
+    const token = stdout.trim();
+    assert.ok(/^[A-Za-z0-9_-]{20,}$/.test(token), `expected base64url token, got: ${token}`);
+  });
+
+  it('prints same token on repeated calls (deterministic from local-secret)', async () => {
+    const { stdout: a } = await spawnAndCollect(['secret', 'upstream']);
+    const { stdout: b } = await spawnAndCollect(['secret', 'upstream']);
+    assert.equal(a.trim(), b.trim());
+  });
+});
+
 // ── S6: hub mode startup ───────────────────────────────────────────
 
 describe('S6: hub mode startup', () => {

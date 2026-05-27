@@ -39,8 +39,8 @@
 
 ## 2. `ccxray secret upstream` CLI command (commit 2.1 附帶)
 
-- [ ] 2.0 Add `secret upstream` subcommand to CLI section in `server/index.js` (~10 LOC wrapping `getUpstreamToken()`)
-- [ ] 2.0.1 TDD: `ccxray secret upstream` prints base64url token to stdout and exits 0
+- [x] 2.0 Add `secret upstream` subcommand to CLI section in `server/index.js` (~10 LOC wrapping `getUpstreamToken()`)
+- [x] 2.0.1 TDD: `ccxray secret upstream` prints base64url token to stdout and exits 0
 
 ## 3. Upstream enforcement (commit 2.2, semver-major → 2.0.0)
 
