@@ -389,8 +389,7 @@ describe('discoverHub with socket', () => {
 
   it('discovers hub via socket when sockPath present in lockfile', async () => {
     sockServer = await hub.createHubSocket();
-    // writeHubLock now includes sockPath
-    hub.writeHubLock(5577, process.pid);
+    hub.writeHubLock(5577, process.pid, undefined, hub.SOCK_PATH);
     const lock = hub.readHubLock();
     assert.ok(lock.sockPath, 'lockfile should contain sockPath');
 
@@ -401,12 +400,7 @@ describe('discoverHub with socket', () => {
   });
 
   it('returns null when sockPath in lockfile but socket not responding', async () => {
-    // Write lockfile with sockPath but no socket server running
-    hub.writeHubLock(5577, process.pid);
-    // Manually poke sockPath into lockfile (since no socket server, writeHubLock might not add it)
-    const lock = JSON.parse(fs.readFileSync(hub.HUB_LOCK_PATH, 'utf8'));
-    lock.sockPath = hub.SOCK_PATH;
-    fs.writeFileSync(hub.HUB_LOCK_PATH, JSON.stringify(lock));
+    hub.writeHubLock(5577, process.pid, undefined, hub.SOCK_PATH);
 
     const result = await hub.discoverHub();
     assert.equal(result, null);
@@ -418,11 +412,19 @@ describe('discoverHub with socket', () => {
 describe('writeHubLock sockPath field', () => {
   after(() => { hub.deleteHubLock(); });
 
-  it('lockfile includes sockPath', () => {
-    const lock = hub.writeHubLock(5577, process.pid);
+  it('lockfile includes sockPath when explicitly passed', () => {
+    const lock = hub.writeHubLock(5577, process.pid, undefined, hub.SOCK_PATH);
     assert.equal(lock.sockPath, hub.SOCK_PATH);
     const read = hub.readHubLock();
     assert.equal(read.sockPath, hub.SOCK_PATH);
+    hub.deleteHubLock();
+  });
+
+  it('lockfile omits sockPath when not passed (P2-2 regression)', () => {
+    const lock = hub.writeHubLock(5577, process.pid);
+    assert.equal(lock.sockPath, undefined);
+    const read = hub.readHubLock();
+    assert.equal(read.sockPath, undefined);
     hub.deleteHubLock();
   });
 });

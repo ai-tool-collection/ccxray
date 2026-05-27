@@ -34,10 +34,11 @@ function readHubLock() {
   }
 }
 
-function writeHubLock(port, pid, versionOverride) {
+function writeHubLock(port, pid, versionOverride, sockPath) {
   ensureHubDir();
   const version = versionOverride || require('../package.json').version;
-  const data = { port, pid, version, sockPath: SOCK_PATH, startedAt: new Date().toISOString() };
+  const data = { port, pid, version, startedAt: new Date().toISOString() };
+  if (sockPath) data.sockPath = sockPath;
   fs.writeFileSync(HUB_LOCK_PATH, JSON.stringify(data));
   return data;
 }

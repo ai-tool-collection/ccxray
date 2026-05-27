@@ -250,9 +250,8 @@ describe('hub discovery', () => {
   });
 
   it('returns lock when pid alive and health check passes (via socket)', async () => {
-    // Spin up a socket server (discoverHub now prefers socket when sockPath present)
     const sockSrv = await hub.createHubSocket();
-    hub.writeHubLock(5577, process.pid);
+    hub.writeHubLock(5577, process.pid, undefined, hub.SOCK_PATH);
     const result = await hub.discoverHub();
     assert.ok(result);
     assert.equal(result.port, 5577);

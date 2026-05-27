@@ -300,3 +300,45 @@ describe('verifyDashboard — cookie path added in Phase 1.3', () => {
     delete process.env.AUTH_TOKEN;
   });
 });
+
+// ── HTTP /_auth/bootstrap-token endpoint ──────────────────────────
+
+describe('/_auth/bootstrap-token via HTTP', () => {
+  const http = require('http');
+  const { handleAuthRoutes } = require('../server/routes/auth');
+  let server, port;
+
+  before(async () => {
+    server = http.createServer((req, res) => {
+      if (!handleAuthRoutes(req, res)) {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+    await new Promise(r => server.listen(0, '127.0.0.1', r));
+    port = server.address().port;
+  });
+
+  after(async () => {
+    await new Promise(r => server.close(r));
+  });
+
+  it('returns a token on loopback POST', async () => {
+    const data = await new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: '127.0.0.1', port,
+        path: '/_auth/bootstrap-token', method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, res => {
+        let buf = '';
+        res.on('data', c => { buf += c; });
+        res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(buf) }));
+      });
+      req.on('error', reject);
+      req.end('{}');
+    });
+    assert.equal(data.status, 200);
+    assert.ok(data.body.token);
+    assert.equal(typeof data.body.token, 'string');
+  });
+});

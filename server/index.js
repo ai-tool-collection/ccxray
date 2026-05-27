@@ -517,7 +517,7 @@ if (process.argv[2] === 'open') {
           const body = JSON.stringify({});
           const req = http.request({
             hostname: 'localhost', port,
-            path: '/_api/hub/bootstrap-token', method: 'POST',
+            path: '/_auth/bootstrap-token', method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
             timeout: 3000,
           }, res => {
@@ -784,7 +784,7 @@ async function startServer() {
     await hub.cleanupStaleSocket();
     await hub.createHubSocket();
     // Write lockfile after BOTH http + socket are ready (readiness signal)
-    hub.writeHubLock(actualPort, process.pid);
+    hub.writeHubLock(actualPort, process.pid, undefined, hub.SOCK_PATH);
     hub.startDeadClientCheck();
     hub.setOnShutdown(() => gracefulExit(0));
     const cleanup = () => hub.shutdownHub(); // closes socket + deletes lockfile + gracefulExit via onShutdown
