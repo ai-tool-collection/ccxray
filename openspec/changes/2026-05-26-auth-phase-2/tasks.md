@@ -44,21 +44,34 @@
 
 ## 3. Upstream enforcement (commit 2.2, semver-major → 2.0.0)
 
-- [ ] 3.1 Extract `_matchesLegacyToken(req)` shared helper from `authMiddleware` logic
-- [ ] 3.2 `verifyUpstream`: accept `X-Ccxray-Auth` (compare against K_upstream via `compareSecret`)
-- [ ] 3.3 `verifyUpstream`: reject if neither X-Ccxray-Auth nor ChatGPT-OAuth carve-out matches
-- [ ] 3.4 `isAuthorized` (ws-proxy.js): accept `X-Ccxray-Auth` in addition to legacy Bearer/token
-- [ ] 3.5 `isAuthorized`: reject WS upgrade if `classifyUpstreamAuth` returns `'warn'` (no longer warn-only)
-- [ ] 3.6 Remove deprecation-header code from `verifyUpstream` (no more legacy acceptance)
-- [ ] 3.7 `package.json` version bump to 2.0.0
-- [ ] 3.8 CHANGELOG entry: breaking change + migration guide (reference `ccxray secret upstream`)
-- [ ] 3.9 TDD: with AUTH_TOKEN set, launched Claude agent (X-Ccxray-Auth) → accepted
-- [ ] 3.10 TDD: with AUTH_TOKEN set, curl without X-Ccxray-Auth → 401
-- [ ] 3.11 TDD: ChatGPT-OAuth path (no X-Ccxray-Auth + chatgpt-account-id + JWT) → accepted
-- [ ] 3.12 TDD: WS upgrade without auth → rejected (not just warned)
-- [ ] 3.13 TDD: WS upgrade with X-Ccxray-Auth → accepted
-- [ ] 3.14 TDD: ephemeral mode (no AUTH_TOKEN) + launched agent → accepted via local-secret derived K_upstream
-- [ ] 3.15 Smoke test: real proxy + launched claude/codex, verify API calls succeed
+### Pre-implementation review (2026-05-27)
+- 3.1 (`_matchesLegacyToken` extract): downgraded to optional cleanup — `verifyUpstream` will be rewritten to not use `authMiddleware` at all, so dedup is moot for 2.2
+- `verifyUpstream` must NOT `if (!AUTH_TOKEN) return true` — ephemeral mode still requires `X-Ccxray-Auth` validation via local-secret-derived K_upstream
+- `classifyUpstreamAuth` in ws-proxy.js only checks header *presence*, not value. Phase 2.2 must verify the HMAC value (via `compareSecret`) or a forged header bypasses enforcement
+- `isAuthorized` in ws-proxy.js needs access to `getSecrets()` from auth.js — new cross-module dependency
+
+### Tasks
+- [ ] 3.1 ~~Extract `_matchesLegacyToken(req)` shared helper~~ → deferred (optional cleanup, not blocking)
+- [ ] 3.2 `verifyUpstream`: rewrite — accept `X-Ccxray-Auth` (HMAC-verify via `compareSecret(K_upstream)`)
+- [ ] 3.3 `verifyUpstream`: accept ChatGPT-OAuth carve-out (`classifyUpstreamAuth === 'chatgpt-oauth'`)
+- [ ] 3.4 `verifyUpstream`: reject all other requests (no more `authMiddleware` fallback)
+- [ ] 3.5 `verifyUpstream`: works in ephemeral mode (no AUTH_TOKEN) — K_upstream derived from local-secret
+- [ ] 3.6 `isAuthorized` (ws-proxy.js): HMAC-verify `X-Ccxray-Auth` value (not just presence check)
+- [ ] 3.7 `isAuthorized`: accept ChatGPT-OAuth carve-out
+- [ ] 3.8 `isAuthorized`: reject when neither X-Ccxray-Auth nor ChatGPT-OAuth (remove warn-only path)
+- [ ] 3.9 Remove deprecation-header code from `verifyUpstream` (no more legacy acceptance)
+- [ ] 3.10 `package.json` version bump to 2.0.0
+- [ ] 3.11 CHANGELOG entry: breaking change + migration guide (reference `ccxray secret upstream`)
+- [ ] 3.12 TDD: AUTH_TOKEN set + valid X-Ccxray-Auth → accepted
+- [ ] 3.13 TDD: AUTH_TOKEN set + no X-Ccxray-Auth → 401
+- [ ] 3.14 TDD: AUTH_TOKEN set + forged X-Ccxray-Auth (wrong value) → 401
+- [ ] 3.15 TDD: ChatGPT-OAuth path (chatgpt-account-id + JWT, no X-Ccxray-Auth) → accepted
+- [ ] 3.16 TDD: WS upgrade without auth → rejected (not just warned)
+- [ ] 3.17 TDD: WS upgrade with valid X-Ccxray-Auth → accepted
+- [ ] 3.18 TDD: WS upgrade with forged X-Ccxray-Auth → rejected
+- [ ] 3.19 TDD: ephemeral mode (no AUTH_TOKEN) + valid X-Ccxray-Auth → accepted
+- [ ] 3.20 TDD: ephemeral mode + no X-Ccxray-Auth → 401
+- [ ] 3.21 Smoke test: real proxy + launched claude/codex, verify API calls succeed
 
 ## 4. Dashboard enforcement + ephemeral mode (commit 2.3, version 2.1.0)
 
