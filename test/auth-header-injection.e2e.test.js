@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
+const { deriveUpstreamToken } = require('./helpers/upstream-token');
 
 const SERVER_SCRIPT = path.join(__dirname, '..', 'server', 'index.js');
 const tmpDirs = [];
@@ -131,7 +132,9 @@ describe('Auth header injection E2E (1.4)', () => {
         max_tokens: 8,
         messages: [{ role: 'user', content: 'hello' }],
       }, {
-        'x-ccxray-auth': 'super-secret-token-123',
+        // Valid token so 2.2 enforcement passes; the point of this test is that
+        // it is stripped before forwarding, not that it is rejected.
+        'x-ccxray-auth': deriveUpstreamToken({ home }),
         'x-ccxray-bootstrap': 'bootstrap-secret-456',
       });
 
@@ -185,12 +188,13 @@ describe('Auth header injection E2E (1.4)', () => {
     try {
       await waitForPort(proxyPort);
 
+      const upstreamToken = deriveUpstreamToken({ home });
       await postJson(proxyPort, '/v1/messages', {
         model: 'claude-3-haiku-20240307',
         max_tokens: 8,
         messages: [{ role: 'user', content: 'hello' }],
       }, {
-        'x-ccxray-auth': 'LEAK-CHECK-TOKEN-789',
+        'x-ccxray-auth': upstreamToken,
         'cookie': 'ccxray_s=sensitive-session-cookie',
       });
 
@@ -202,7 +206,7 @@ describe('Auth header injection E2E (1.4)', () => {
         const files = fs.readdirSync(logsDir).filter(f => f.endsWith('.json'));
         for (const f of files) {
           const content = fs.readFileSync(path.join(logsDir, f), 'utf8');
-          assert.ok(!content.includes('LEAK-CHECK-TOKEN-789'),
+          assert.ok(!content.includes(upstreamToken),
             `X-Ccxray-Auth value leaked to ${f}`);
           assert.ok(!content.includes('sensitive-session-cookie'),
             `Cookie value leaked to ${f}`);
@@ -210,6 +214,34 @@ describe('Auth header injection E2E (1.4)', () => {
       }
     } finally {
       upstream.close();
+      await killAndWait(child);
+    }
+  });
+
+  it('prints a loud startup banner when CCXRAY_LOOPBACK_NO_AUTH=1', async () => {
+    const proxyPort = await findFreePort();
+    const home = makeTmpHome();
+
+    let stderr = '';
+    const child = spawn(process.execPath, [SERVER_SCRIPT, '--port', String(proxyPort), '--no-browser'], {
+      env: {
+        ...process.env,
+        CCXRAY_HOME: home,
+        CCXRAY_LOOPBACK_NO_AUTH: '1',
+        BROWSER: 'none',
+        RESTORE_DAYS: '0',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    child.stdout.on('data', () => {});
+    child.stderr.on('data', d => { stderr += d.toString(); });
+
+    try {
+      await waitForPort(proxyPort);
+      await new Promise(r => setTimeout(r, 300)); // let the banner flush
+      assert.match(stderr, /CCXRAY_LOOPBACK_NO_AUTH/,
+        'startup banner should name the flag so the operator knows auth is disabled');
+    } finally {
       await killAndWait(child);
     }
   });

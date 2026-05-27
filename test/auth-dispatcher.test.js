@@ -2,6 +2,14 @@
 
 const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+// Per-run temp CCXRAY_HOME so ephemeral-mode derivation writes its local-secret
+// somewhere safe and never touches the user's real ~/.ccxray.
+const TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'ccxray-dispatcher-'));
+process.env.CCXRAY_HOME = TEST_HOME;
 
 // Match the existing test/auth.test.js style: re-require server/auth after
 // each AUTH_TOKEN flip so the module's AUTH_TOKEN constant refreshes.
@@ -10,6 +18,11 @@ function loadAuthWith(token) {
   else process.env.AUTH_TOKEN = token;
   delete require.cache[require.resolve('../server/auth')];
   return require('../server/auth');
+}
+
+// The valid X-Ccxray-Auth header value the launchers inject: base64url(K_upstream).
+function upstreamTokenFor(auth) {
+  return auth.deriveSecrets(auth.getRootSecret()).K_upstream.toString('base64url');
 }
 
 function mockReqRes(headers = {}, url = '/') {
@@ -34,6 +47,7 @@ after(() => {
   if (originalToken !== undefined) process.env.AUTH_TOKEN = originalToken;
   else delete process.env.AUTH_TOKEN;
   delete require.cache[require.resolve('../server/auth')];
+  fs.rmSync(TEST_HOME, { recursive: true, force: true });
 });
 
 describe('dispatch(req) — path classification', () => {
@@ -134,10 +148,17 @@ describe('verifyDashboard — Phase 1.2 byte-identical to authMiddleware', () =>
   });
 });
 
-describe('verifyUpstream — Phase 1.2 byte-identical to authMiddleware (with deprecation hint)', () => {
-  it('no AUTH_TOKEN: returns true without touching res', () => {
+describe('verifyUpstream — Phase 2.2 enforcement (X-Ccxray-Auth required, legacy rejected)', () => {
+  it('no AUTH_TOKEN, no X-Ccxray-Auth: rejects with 401 (ephemeral still enforces)', () => {
     const auth = loadAuthWith(null);
     const { req, res } = mockReqRes({}, '/v1/messages');
+    assert.equal(auth.verifyUpstream(req, res), false);
+    assert.equal(res.statusCode, 401);
+  });
+
+  it('no AUTH_TOKEN, valid X-Ccxray-Auth: returns true (ephemeral K_upstream)', () => {
+    const auth = loadAuthWith(null);
+    const { req, res } = mockReqRes({ 'x-ccxray-auth': upstreamTokenFor(auth) }, '/v1/messages');
     assert.equal(auth.verifyUpstream(req, res), true);
     assert.equal(res.writeHeadCalled, false);
   });
@@ -149,28 +170,51 @@ describe('verifyUpstream — Phase 1.2 byte-identical to authMiddleware (with de
     assert.equal(res.statusCode, 401);
   });
 
-  it('AUTH_TOKEN set, Bearer accepted on /v1/* (warn-only Phase 1): returns true + deprecation header', () => {
+  it('AUTH_TOKEN set, valid X-Ccxray-Auth: returns true (no deprecation header)', () => {
     const auth = loadAuthWith('sec1');
-    const { req, res, setHeaderCalls } = mockReqRes({ authorization: 'Bearer sec1', host: 'localhost' }, '/v1/messages');
+    const { req, res, setHeaderCalls } = mockReqRes({ 'x-ccxray-auth': upstreamTokenFor(auth), host: 'localhost' }, '/v1/messages');
     assert.equal(auth.verifyUpstream(req, res), true);
-    assert.match(setHeaderCalls['X-Ccxray-Deprecation'] || '', /bearer-on-upstream/);
+    assert.equal(res.writeHeadCalled, false);
+    assert.equal(setHeaderCalls['X-Ccxray-Deprecation'], undefined);
   });
 
-  it('AUTH_TOKEN set, ?token= accepted on /v1/* (warn-only Phase 1): returns true + deprecation header', () => {
+  it('AUTH_TOKEN set, forged X-Ccxray-Auth: returns false and writes 401', () => {
     const auth = loadAuthWith('sec1');
-    const { req, res, setHeaderCalls } = mockReqRes({ host: 'localhost' }, '/v1/messages?token=sec1');
+    const { req, res } = mockReqRes({ 'x-ccxray-auth': 'forged-value', host: 'localhost' }, '/v1/messages');
+    assert.equal(auth.verifyUpstream(req, res), false);
+    assert.equal(res.statusCode, 401);
+  });
+
+  it('AUTH_TOKEN set, legacy Bearer on /v1/* now REJECTED with 401', () => {
+    const auth = loadAuthWith('sec1');
+    const { req, res } = mockReqRes({ authorization: 'Bearer sec1', host: 'localhost' }, '/v1/messages');
+    assert.equal(auth.verifyUpstream(req, res), false);
+    assert.equal(res.statusCode, 401);
+  });
+
+  it('AUTH_TOKEN set, legacy ?token= on /v1/* now REJECTED with 401', () => {
+    const auth = loadAuthWith('sec1');
+    const { req, res } = mockReqRes({ host: 'localhost' }, '/v1/messages?token=sec1');
+    assert.equal(auth.verifyUpstream(req, res), false);
+    assert.equal(res.statusCode, 401);
+  });
+
+  it('ChatGPT-OAuth carve-out (chatgpt-account-id + JWT) accepted', () => {
+    const auth = loadAuthWith('sec1');
+    const jwt = 'Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.sig';
+    const { req, res } = mockReqRes({ 'chatgpt-account-id': 'acct-1', authorization: jwt }, '/v1/responses');
     assert.equal(auth.verifyUpstream(req, res), true);
-    assert.match(setHeaderCalls['X-Ccxray-Deprecation'] || '', /token-query/);
+    assert.equal(res.writeHeadCalled, false);
   });
 });
 
 describe('dispatch().verify — sanity: same instance routes to correct verifier', () => {
-  it('upstream path routes to verifyUpstream', () => {
+  it('upstream path routes to verifyUpstream (valid X-Ccxray-Auth accepted)', () => {
     const auth = loadAuthWith('sec1');
-    const { req, res, setHeaderCalls } = mockReqRes({ authorization: 'Bearer sec1' }, '/v1/messages');
+    const { req, res, setHeaderCalls } = mockReqRes({ 'x-ccxray-auth': upstreamTokenFor(auth) }, '/v1/messages');
     const { verify } = auth.dispatch(req);
     assert.equal(verify(req, res), true);
-    assert.match(setHeaderCalls['X-Ccxray-Deprecation'] || '', /bearer-on-upstream/);
+    assert.equal(setHeaderCalls['X-Ccxray-Deprecation'], undefined);
   });
 
   it('dashboard path routes to verifyDashboard', () => {

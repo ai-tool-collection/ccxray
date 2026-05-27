@@ -382,6 +382,11 @@ function isJwtShaped(authHeader) {
 }
 
 function verifyUpstreamCredential(headers) {
+  // Opt-in escape hatch (CHANGELOG-documented). Blunt bypass with no
+  // loopback-IP check — that check is theater behind a same-host reverse
+  // proxy (errata §5); the loud startup banner is the real safeguard.
+  if (process.env.CCXRAY_LOOPBACK_NO_AUTH === '1') return 'ok';
+
   const headerVal = headers['x-ccxray-auth'];
   if (headerVal) {
     // Header present → it must be the real K_upstream. A forged value rejects
@@ -396,12 +401,15 @@ function verifyUpstreamCredential(headers) {
 }
 
 function verifyUpstream(req, res) {
-  const ok = authMiddleware(req, res);
-  if (!ok) return false;
-  const mech = whichLegacyMechanism(req);
-  if (mech === 'bearer') setDeprecation(res, 'bearer-on-upstream');
-  else if (mech === 'token-query') setDeprecation(res, 'token-query');
-  return true;
+  // Phase 2.2: enforce. Only X-Ccxray-Auth (or the ChatGPT-OAuth carve-out)
+  // is accepted upstream — legacy Bearer/?token= no longer pass here.
+  if (verifyUpstreamCredential(req.headers) !== 'reject') return true;
+  res.writeHead(401, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    error: 'unauthorized',
+    message: 'Valid X-Ccxray-Auth required on /v1/* (run: ccxray secret upstream)',
+  }));
+  return false;
 }
 
 function dispatch(req) {

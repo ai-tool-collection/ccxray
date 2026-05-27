@@ -104,4 +104,36 @@ describe('verifyUpstreamCredential — shared upstream auth taxonomy (2.2)', () 
       }
     });
   });
+
+  describe('CCXRAY_LOOPBACK_NO_AUTH escape hatch (2.2, pulled forward from 2.3)', () => {
+    it('flag "1" → "ok" even with no credential', () => {
+      const auth = loadAuth({ token: 'sec1' });
+      process.env.CCXRAY_LOOPBACK_NO_AUTH = '1';
+      try {
+        assert.equal(auth.verifyUpstreamCredential({}), 'ok');
+      } finally {
+        delete process.env.CCXRAY_LOOPBACK_NO_AUTH;
+      }
+    });
+
+    it('flag "1" → "ok" even with a forged X-Ccxray-Auth', () => {
+      const auth = loadAuth({ token: 'sec1' });
+      process.env.CCXRAY_LOOPBACK_NO_AUTH = '1';
+      try {
+        assert.equal(auth.verifyUpstreamCredential({ 'x-ccxray-auth': 'forged' }), 'ok');
+      } finally {
+        delete process.env.CCXRAY_LOOPBACK_NO_AUTH;
+      }
+    });
+
+    it('flag not exactly "1" (e.g. "0") → does not bypass', () => {
+      const auth = loadAuth({ token: 'sec1' });
+      process.env.CCXRAY_LOOPBACK_NO_AUTH = '0';
+      try {
+        assert.equal(auth.verifyUpstreamCredential({}), 'reject');
+      } finally {
+        delete process.env.CCXRAY_LOOPBACK_NO_AUTH;
+      }
+    });
+  });
 });
