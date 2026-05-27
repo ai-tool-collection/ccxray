@@ -5,7 +5,7 @@ const config = require('./config');
 const store = require('./store');
 const helpers = require('./helpers');
 const { broadcast, broadcastSessionStatus } = require('./sse-broadcast');
-const { AUTH_TOKEN } = require('./auth');
+const { verifyUpstreamCredential } = require('./auth');
 const { stripAuthParams } = require('./url-sanitize');
 const {
   detectOpenAISession,
@@ -81,15 +81,9 @@ function writeSocketResponse(socket, statusCode, reason) {
 }
 
 function isAuthorized(req) {
-  if (!AUTH_TOKEN) return true;
-  const authHeader = req.headers.authorization || '';
-  if (authHeader === `Bearer ${AUTH_TOKEN}`) return true;
-  try {
-    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-    return url.searchParams.get('token') === AUTH_TOKEN;
-  } catch {
-    return false;
-  }
+  // Phase 2.2: same upstream gate as the HTTP path — a valid X-Ccxray-Auth or
+  // the ChatGPT-OAuth carve-out; everything else is rejected.
+  return verifyUpstreamCredential(req.headers) !== 'reject';
 }
 
 const CCXRAY_INTERNAL_HEADERS = new Set(['x-ccxray-auth', 'x-ccxray-bootstrap']);
@@ -330,11 +324,6 @@ function handleWebSocketUpgrade(req, socket, head) {
     return true;
   }
 
-  const authClass = classifyUpstreamAuth(req.headers);
-  if (authClass === 'warn') {
-    console.warn('[ccxray] WebSocket upgrade without X-Ccxray-Auth header (warn-only, Phase 2.1 will enforce)');
-  }
-
   const id = helpers.timestamp();
   const ts = helpers.taipeiTime();
   const startTime = Date.now();
@@ -506,26 +495,10 @@ async function drainWebSocketProxy() {
   await Promise.allSettled([...pendingEntries]);
 }
 
-// JWT-shaped: "Bearer <header>.<payload>.<signature>" where header is base64url JSON
-function isJwtShaped(authHeader) {
-  if (!authHeader || typeof authHeader !== 'string') return false;
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-  if (!token) return false;
-  const parts = token.split('.');
-  return parts.length === 3 && parts[0].length > 10;
-}
-
-function classifyUpstreamAuth(headers) {
-  if (headers['x-ccxray-auth']) return 'authed';
-  if (headers['chatgpt-account-id'] && isJwtShaped(headers.authorization)) return 'chatgpt-oauth';
-  return 'warn';
-}
-
 module.exports = {
   handleWebSocketUpgrade,
   buildWebSocketHeaders,
   isOpenAIWebSocket,
   normalizeCloseCode,
   drainWebSocketProxy,
-  classifyUpstreamAuth,
 };

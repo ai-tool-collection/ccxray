@@ -246,7 +246,7 @@ describe('Auth header injection E2E (1.4)', () => {
     }
   });
 
-  it('WS upgrade without X-Ccxray-Auth emits warning but still succeeds (warn-only)', async () => {
+  it('WS upgrade without X-Ccxray-Auth is rejected with 401 (enforcement on)', async () => {
     const upstreamPort = await findFreePort();
     const proxyPort = await findFreePort();
     const home = makeTmpHome();
@@ -263,14 +263,12 @@ describe('Auth header injection E2E (1.4)', () => {
     });
     await new Promise(resolve => upstreamHttp.listen(upstreamPort, '127.0.0.1', resolve));
 
-    let stderr = '';
     const child = spawn(process.execPath, [SERVER_SCRIPT, '--port', String(proxyPort), '--no-browser'], {
       env: {
         ...process.env,
         OPENAI_TEST_HOST: '127.0.0.1',
         OPENAI_TEST_PORT: String(upstreamPort),
         OPENAI_TEST_PROTOCOL: 'http',
-        AUTH_TOKEN: 'ws-test-secret',
         CCXRAY_HOME: home,
         BROWSER: 'none',
         RESTORE_DAYS: '0',
@@ -278,46 +276,33 @@ describe('Auth header injection E2E (1.4)', () => {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     child.stdout.on('data', () => {});
-    child.stderr.on('data', d => { stderr += d.toString(); });
+    child.stderr.on('data', () => {});
 
     try {
       await waitForPort(proxyPort);
 
-      // Connect without X-Ccxray-Auth — should warn but still upgrade
-      const ws = new WebSocket(`ws://localhost:${proxyPort}/v1/responses?token=ws-test-secret`, {
+      // No X-Ccxray-Auth and no ChatGPT-OAuth markers — enforcement rejects 401.
+      const ws = new WebSocket(`ws://localhost:${proxyPort}/v1/responses`, {
         headers: {
           'openai-beta': 'responses_websockets=v1',
           'codex-session-id': 'test-session-123',
         },
       });
 
-      const opened = await new Promise((resolve, reject) => {
-        ws.on('open', () => resolve(true));
-        ws.on('error', reject);
-        setTimeout(() => reject(new Error('WS connect timeout')), 5000);
+      const result = await new Promise((resolve) => {
+        ws.on('unexpected-response', (_req, res) => { res.resume(); resolve({ statusCode: res.statusCode }); });
+        ws.on('open', () => resolve({ opened: true }));
+        ws.on('error', err => resolve({ error: err.message }));
+        setTimeout(() => resolve({ timeout: true }), 5000);
       });
-      assert.ok(opened, 'WS should connect successfully (warn-only, not blocking)');
-
-      // Wait for close
-      await new Promise(resolve => {
-        ws.on('close', resolve);
-        setTimeout(resolve, 2000);
-      });
-
-      // Allow stderr to flush
-      await new Promise(r => setTimeout(r, 300));
-
-      assert.ok(
-        stderr.includes('without X-Ccxray-Auth'),
-        'Should have emitted warning about missing X-Ccxray-Auth in stderr'
-      );
+      assert.equal(result.statusCode, 401, 'WS upgrade without X-Ccxray-Auth must be rejected with 401');
     } finally {
       upstreamHttp.close();
       await killAndWait(child);
     }
   });
 
-  it('WS upgrade with ChatGPT-OAuth markers does NOT warn', async () => {
+  it('WS upgrade with ChatGPT-OAuth markers is accepted (carve-out)', async () => {
     const upstreamPort = await findFreePort();
     const proxyPort = await findFreePort();
     const home = makeTmpHome();
@@ -331,14 +316,12 @@ describe('Auth header injection E2E (1.4)', () => {
     });
     await new Promise(resolve => upstreamHttp.listen(upstreamPort, '127.0.0.1', resolve));
 
-    let stderr = '';
     const child = spawn(process.execPath, [SERVER_SCRIPT, '--port', String(proxyPort), '--no-browser'], {
       env: {
         ...process.env,
         OPENAI_TEST_HOST: '127.0.0.1',
         OPENAI_TEST_PORT: String(upstreamPort),
         OPENAI_TEST_PROTOCOL: 'http',
-        AUTH_TOKEN: 'ws-oauth-secret',
         CCXRAY_HOME: home,
         BROWSER: 'none',
         RESTORE_DAYS: '0',
@@ -346,13 +329,13 @@ describe('Auth header injection E2E (1.4)', () => {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     child.stdout.on('data', () => {});
-    child.stderr.on('data', d => { stderr += d.toString(); });
+    child.stderr.on('data', () => {});
 
     try {
       await waitForPort(proxyPort);
 
-      // Connect with ChatGPT-OAuth markers — should NOT warn
-      const ws = new WebSocket(`ws://localhost:${proxyPort}/v1/responses?token=ws-oauth-secret`, {
+      // ChatGPT-OAuth carve-out: chatgpt-account-id + JWT, no X-Ccxray-Auth → accepted.
+      const ws = new WebSocket(`ws://localhost:${proxyPort}/v1/responses`, {
         headers: {
           'openai-beta': 'responses_websockets=v1',
           'chatgpt-account-id': 'acct-test-456',
@@ -361,23 +344,13 @@ describe('Auth header injection E2E (1.4)', () => {
         },
       });
 
-      await new Promise((resolve, reject) => {
-        ws.on('open', () => resolve(true));
-        ws.on('error', reject);
-        setTimeout(() => reject(new Error('WS connect timeout')), 5000);
+      const result = await new Promise((resolve) => {
+        ws.on('open', () => resolve({ opened: true }));
+        ws.on('unexpected-response', (_req, res) => { res.resume(); resolve({ statusCode: res.statusCode }); });
+        ws.on('error', err => resolve({ error: err.message }));
+        setTimeout(() => resolve({ timeout: true }), 5000);
       });
-
-      await new Promise(resolve => {
-        ws.on('close', resolve);
-        setTimeout(resolve, 2000);
-      });
-
-      await new Promise(r => setTimeout(r, 300));
-
-      assert.ok(
-        !stderr.includes('without X-Ccxray-Auth'),
-        'Should NOT warn for ChatGPT-OAuth path (chatgpt-account-id + JWT present)'
-      );
+      assert.ok(result.opened, `ChatGPT-OAuth carve-out should connect, got ${JSON.stringify(result)}`);
     } finally {
       upstreamHttp.close();
       await killAndWait(child);
@@ -419,10 +392,11 @@ describe('Auth header injection E2E (1.4)', () => {
     try {
       await waitForPort(proxyPort);
 
-      const ws = new WebSocket(`ws://localhost:${proxyPort}/v1/responses?token=ws-strip-secret`, {
+      const ws = new WebSocket(`ws://localhost:${proxyPort}/v1/responses`, {
         headers: {
           'openai-beta': 'responses_websockets=v1',
-          'x-ccxray-auth': 'must-not-reach-upstream',
+          // Valid token so 2.2 enforcement passes; the test asserts it is stripped upstream.
+          'x-ccxray-auth': deriveUpstreamToken({ home, authToken: 'ws-strip-secret' }),
           'x-ccxray-bootstrap': 'also-must-not-reach',
           'authorization': 'Bearer sk-real-key',
           'codex-session-id': 'test-session-strip',

@@ -9,6 +9,7 @@ const path = require('path');
 const os = require('os');
 const net = require('net');
 const WebSocket = require('ws');
+const { deriveUpstreamToken } = require('./helpers/upstream-token');
 
 const SERVER_SCRIPT = path.resolve(__dirname, '..', 'server', 'index.js');
 
@@ -117,6 +118,10 @@ describe('OpenAI Responses WebSocket proxy', () => {
       OPENAI_TEST_HOST: 'localhost',
       OPENAI_TEST_PORT: String(upstreamPort),
       OPENAI_TEST_PROTOCOL: 'http',
+      // 2.2: these tests exercise WS transport mechanics, not the auth gate.
+      // Bypass upstream auth by default; the auth-specific tests below override
+      // this to '0' and supply real credentials.
+      CCXRAY_LOOPBACK_NO_AUTH: '1',
       ...extraEnv,
     });
     await waitForPort(proxyPort);
@@ -356,12 +361,12 @@ describe('OpenAI Responses WebSocket proxy', () => {
     }
   });
 
-  it('rejects WebSocket upgrade with 401 when AUTH_TOKEN is set and credentials are missing', async () => {
+  it('rejects WebSocket upgrade with 401 when no X-Ccxray-Auth is present (enforcement on)', async () => {
     upstreamWss = new WebSocket.Server({ server: upstreamServer, path: '/v1/responses' });
     upstreamWss.on('connection', () => {
       throw new Error('upstream should not be reached when auth fails');
     });
-    await startProxy({ AUTH_TOKEN: 'sekret' });
+    await startProxy({ CCXRAY_LOOPBACK_NO_AUTH: '0' });
 
     const ws = new WebSocket(`ws://localhost:${proxyPort}/v1/responses`, {
       headers: {
@@ -379,17 +384,41 @@ describe('OpenAI Responses WebSocket proxy', () => {
     assert.equal(result.statusCode, 401);
   });
 
-  it('accepts WebSocket upgrade when AUTH_TOKEN is set and bearer matches', async () => {
+  it('rejects WebSocket upgrade with 401 when X-Ccxray-Auth is forged', async () => {
+    upstreamWss = new WebSocket.Server({ server: upstreamServer, path: '/v1/responses' });
+    upstreamWss.on('connection', () => {
+      throw new Error('upstream should not be reached when auth fails');
+    });
+    await startProxy({ CCXRAY_LOOPBACK_NO_AUTH: '0' });
+
+    const ws = new WebSocket(`ws://localhost:${proxyPort}/v1/responses`, {
+      headers: {
+        'openai-beta': 'responses_websockets=2026-02-06',
+        'x-ccxray-auth': 'forged-nonsense',
+        session_id: 'auth-fail-002',
+      },
+    });
+    const result = await new Promise(resolve => {
+      ws.on('unexpected-response', (_req, res) => {
+        res.resume();
+        resolve({ statusCode: res.statusCode });
+      });
+      ws.on('error', err => resolve({ error: err.message }));
+    });
+    assert.equal(result.statusCode, 401);
+  });
+
+  it('accepts WebSocket upgrade with a valid X-Ccxray-Auth (enforcement on)', async () => {
     upstreamWss = new WebSocket.Server({ server: upstreamServer, path: '/v1/responses' });
     upstreamWss.on('connection', (ws) => {
       ws.on('message', data => ws.send(`echo:${data.toString()}`));
     });
-    await startProxy({ AUTH_TOKEN: 'sekret' });
+    await startProxy({ CCXRAY_LOOPBACK_NO_AUTH: '0' });
 
     const sessionId = '019e0ab2-bcc2-7b72-a1bf-980edc2ea948';
     const ws = new WebSocket(`ws://localhost:${proxyPort}/v1/responses`, {
       headers: {
-        authorization: 'Bearer sekret',
+        'x-ccxray-auth': deriveUpstreamToken({ home: testHome }),
         'openai-beta': 'responses_websockets=2026-02-06',
         session_id: sessionId,
       },
