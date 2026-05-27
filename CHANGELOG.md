@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.0.0
+
+### Breaking
+
+- **Upstream auth is now enforced.** Requests to `/v1/*` (HTTP and the Codex WebSocket upgrade) must carry a valid `X-Ccxray-Auth` header; the previous warn-only behavior is gone. Legacy `Authorization: Bearer <AUTH_TOKEN>` and `?token=` are no longer accepted on the upstream path and return `401`. This holds even when `AUTH_TOKEN` is unset — in that case the key is derived from `~/.ccxray/local-secret`.
+
+  **Migration:** ccxray-launched CLIs (`ccxray claude`, `ccxray codex` with an API key) inject the header automatically — no change needed. Scripts that hit `/v1/*` directly must add the header:
+
+  ```bash
+  curl -H "X-Ccxray-Auth: $(ccxray secret upstream)" http://localhost:5577/v1/messages ...
+  ```
+
+- **ChatGPT-OAuth Codex carve-out (unchanged behavior, now load-bearing).** Codex on a ChatGPT login cannot inject `X-Ccxray-Auth`, so a request presenting `chatgpt-account-id` plus a JWT-shaped `Authorization` is accepted on the upstream path without the header.
+
+### Added
+
+- **`CCXRAY_LOOPBACK_NO_AUTH=1` escape hatch** — opt-in bypass of the upstream auth gate for local development. A loud startup banner is printed whenever it is active. It is a blunt bypass (no loopback-IP check, which would be unreliable behind a same-host reverse proxy); the banner is the safeguard.
+
 ## 1.9.3
 
 ### Fixed

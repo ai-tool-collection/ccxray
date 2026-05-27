@@ -52,33 +52,34 @@
 
 ### Tasks
 - [ ] 3.1 ~~Extract `_matchesLegacyToken(req)` shared helper~~ → deferred (optional cleanup, not blocking)
-- [ ] 3.2 Extract `_verifyUpstreamCredential(headers)` → `'ok'|'chatgpt-oauth'|'reject'` pure function in auth.js (shared by HTTP verifyUpstream + WS isAuthorized)
-- [ ] 3.3 `verifyUpstream`: rewrite using `_verifyUpstreamCredential` — HMAC-verify `X-Ccxray-Auth`, ChatGPT-OAuth carve-out, reject all other (no `authMiddleware` fallback)
-- [ ] 3.4 `verifyUpstream`: works in ephemeral mode (no AUTH_TOKEN) — K_upstream derived from local-secret
-- [ ] 3.5 `isAuthorized` (ws-proxy.js): rewrite using `_verifyUpstreamCredential` — same logic, different response path (`writeSocketResponse` instead of `res.writeHead`)
-- [ ] 3.6 Remove warn-only path: `classifyUpstreamAuth` `'warn'` log in ws-proxy.js L334-336 → delete (reject handled by `isAuthorized` now)
-- [ ] 3.7 `classifyUpstreamAuth` role change: demote to log-classification-only (not used in auth decisions); update callers
-- [ ] 3.8 Remove deprecation-header code from `verifyUpstream` (`setDeprecation` calls, `whichLegacyMechanism` on upstream path)
-- [ ] 3.9 `package.json` version bump to 2.0.0
-- [ ] 3.10 CHANGELOG entry: breaking change + migration guide (reference `ccxray secret upstream`)
-- [ ] 3.11 TDD: AUTH_TOKEN set + valid X-Ccxray-Auth → accepted
-- [ ] 3.12 TDD: AUTH_TOKEN set + no X-Ccxray-Auth → 401
-- [ ] 3.13 TDD: AUTH_TOKEN set + forged X-Ccxray-Auth (wrong value) → 401
-- [ ] 3.14 TDD: ChatGPT-OAuth path (chatgpt-account-id + JWT, no X-Ccxray-Auth) → accepted
-- [ ] 3.15 TDD: WS upgrade without auth → rejected (not just warned)
-- [ ] 3.16 TDD: WS upgrade with valid X-Ccxray-Auth → accepted
-- [ ] 3.17 TDD: WS upgrade with forged X-Ccxray-Auth → rejected
-- [ ] 3.18 TDD: ephemeral mode (no AUTH_TOKEN) + valid X-Ccxray-Auth → accepted
-- [ ] 3.19 TDD: ephemeral mode + no X-Ccxray-Auth → 401
-- [ ] 3.20 Smoke test: real proxy + launched claude/codex, verify API calls succeed
+- [x] 3.2 Extract `verifyUpstreamCredential(headers)` → `'ok'|'chatgpt-oauth'|'reject'` pure function in auth.js (shared by HTTP verifyUpstream + WS isAuthorized). Shipped in 2.2a (`703d177`); exported without the `_` prefix since it's cross-module.
+- [x] 3.3 `verifyUpstream`: rewrite using `verifyUpstreamCredential` — value-compare `X-Ccxray-Auth` (constant-time via `compareSecret`), ChatGPT-OAuth carve-out, reject all other (no `authMiddleware` fallback). 2.2b.
+- [x] 3.4 `verifyUpstream`: works in ephemeral mode (no AUTH_TOKEN) — K_upstream derived from local-secret. 2.2b (unit + integration tested).
+- [x] 3.5 `isAuthorized` (ws-proxy.js): rewrite using `verifyUpstreamCredential` — different response path (`writeSocketResponse`). 2.2c.
+- [x] 3.6 Remove warn-only path: `classifyUpstreamAuth` `'warn'` log in ws-proxy.js → deleted. 2.2c.
+- [x] 3.7 `classifyUpstreamAuth`: **removed** (not demoted) — its presence-only taxonomy is superseded by the value-checking `verifyUpstreamCredential` (single source of truth); `isJwtShaped` moved to auth.js. 2.2c.
+- [x] 3.8 Remove deprecation-header code from `verifyUpstream` (`setDeprecation`/`whichLegacyMechanism` on upstream path; both kept for `verifyDashboard`). 2.2b.
+- [x] 3.9 `package.json` version bump to 2.0.0. 2.2d.
+- [x] 3.10 CHANGELOG entry: breaking change + migration guide (reference `ccxray secret upstream`). 2.2d.
+- [x] 3.11 TDD: AUTH_TOKEN set + valid X-Ccxray-Auth → accepted (auth-upstream-credential + auth-dispatcher)
+- [x] 3.12 TDD: AUTH_TOKEN set + no X-Ccxray-Auth → 401
+- [x] 3.13 TDD: AUTH_TOKEN set + forged X-Ccxray-Auth (wrong value) → 401
+- [x] 3.14 TDD: ChatGPT-OAuth path (chatgpt-account-id + JWT, no X-Ccxray-Auth) → accepted
+- [x] 3.15 TDD: WS upgrade without auth → rejected (websocket-proxy + auth-header-injection e2e)
+- [x] 3.16 TDD: WS upgrade with valid X-Ccxray-Auth → accepted
+- [x] 3.17 TDD: WS upgrade with forged X-Ccxray-Auth → rejected
+- [x] 3.18 TDD: ephemeral mode (no AUTH_TOKEN) + valid X-Ccxray-Auth → accepted
+- [x] 3.19 TDD: ephemeral mode + no X-Ccxray-Auth → 401
+- [x] 3.20 Smoke test: isolated `--port` + temp CCXRAY_HOME — no-auth → 401, `ccxray secret upstream` token → 200 forwarded, forged → 401 (HTTP). WS reject/accept/strip covered by e2e.
 
 ## 4. Dashboard enforcement + ephemeral mode (commit 2.3, version 2.1.0)
 
 - [ ] 4.1 `verifyDashboard`: reject if no valid cookie and no valid X-Ccxray-Auth
 - [ ] 4.2 Keep `Authorization: Bearer <AUTH_TOKEN>` acceptance on dashboard (permanent per spec)
 - [ ] 4.3 Ephemeral mode default: when AUTH_TOKEN unset, auth still required (via local-secret)
-- [ ] 4.4 `CCXRAY_LOOPBACK_NO_AUTH=1` env: bypass all auth checks for loopback requests
-- [ ] 4.5 Startup banner when CCXRAY_LOOPBACK_NO_AUTH=1 is active (loud warning)
+- [x] 4.4 `CCXRAY_LOOPBACK_NO_AUTH=1` env: bypass upstream auth — **pulled forward into 2.2** (design.md lists it as the 2.2 breaking-change mitigation). Implemented as a blunt bypass in `verifyUpstreamCredential`. Dashboard-side bypass still TODO in 2.3.
+- [x] 4.5 Startup banner when CCXRAY_LOOPBACK_NO_AUTH=1 is active (loud warning) — **pulled forward into 2.2** (`server/index.js`).
+- [ ] 4.4-note (2.3): reconcile 4.10 with errata §5 — the loopback-IP check was intentionally NOT added in 2.2 (theater behind a same-host reverse proxy). Decide in 2.3 whether 4.10 stays.
 - [ ] 4.5a `/_auth/bootstrap-token` HTTP endpoint → require auth (codex R3 P1 deferred from 2.1)
 - [ ] 4.6 `package.json` version bump to 2.1.0
 - [ ] 4.7 TDD: dashboard without cookie → 401
