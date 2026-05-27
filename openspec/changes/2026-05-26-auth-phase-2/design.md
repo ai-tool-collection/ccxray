@@ -44,10 +44,16 @@ Protocol：每條訊息是一個 JSON object + `\n`。Client 送 `{"cmd":"regist
 
 ### 決策 3：Socket lifecycle
 
-- Hub 啟動時 `net.createServer().listen(sockPath)` — 若 stale file exists，unlink 先
-- `hub.json` 加 `sockPath` field：`{"port":5577, "pid":123, "sockPath":"/Users/x/.ccxray/hub.sock", ...}`
-- Hub 正常關閉：`server.close()` auto-unlinks socket file
-- Hub crash：下次啟動時 unlink stale socket（`fs.existsSync` + `connect` probe → timeout = stale）
+- Hub 啟動時 `cleanupStaleSocket()` → `createHubSocket()`（`createHubSocket` 不做 blind unlink，依賴前置清理）
+- `hub.json` 加 `sockPath` field（explicit 4th param to `writeHubLock`；orphan recovery 走 socket 時帶 `SOCK_PATH`，走 HTTP 時不帶）
+- Hub 正常關閉：`shutdownHub()` closes socket + explicit `unlinkSync` fallback
+- Hub crash：下次啟動時 `cleanupStaleSocket()`（pid cross-check + connect probe；lockfile absent → 直接 unlink）
+
+### 決策 3a：bootstrap-token endpoint 搬遷（codex review R1 finding）
+
+`bootstrap-token` 從 `/_api/hub/bootstrap-token` 搬到 `/_auth/bootstrap-token`。原因：standalone mode（`--port`，無 hub socket）也需要 `ccxray open` 能 mint token，但 `/_api/hub/*` 現在一律 410。新 endpoint 在 `server/routes/auth.js`，loopback-restricted。
+
+Phase 2.3 的 dashboard enforcement 需要把 `/_auth/bootstrap-token` 也納入 auth gate（codex R3 P1 deferred）。
 
 ### 決策 4：verifyUpstream 辨識 X-Ccxray-Auth（2.2）
 

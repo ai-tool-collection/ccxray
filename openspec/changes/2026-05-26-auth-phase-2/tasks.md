@@ -67,6 +67,7 @@
 - [ ] 4.3 Ephemeral mode default: when AUTH_TOKEN unset, auth still required (via local-secret)
 - [ ] 4.4 `CCXRAY_LOOPBACK_NO_AUTH=1` env: bypass all auth checks for loopback requests
 - [ ] 4.5 Startup banner when CCXRAY_LOOPBACK_NO_AUTH=1 is active (loud warning)
+- [ ] 4.5a `/_auth/bootstrap-token` HTTP endpoint → require auth (codex R3 P1 deferred from 2.1)
 - [ ] 4.6 `package.json` version bump to 2.1.0
 - [ ] 4.7 TDD: dashboard without cookie → 401
 - [ ] 4.8 TDD: dashboard with cookie → 200
