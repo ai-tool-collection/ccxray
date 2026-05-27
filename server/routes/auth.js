@@ -28,13 +28,17 @@ function handleAuthRoutes(req, res) {
   }
 
   if (req.method === 'POST' && pathname === '/_auth/bootstrap-token') {
-    const addr = req.socket?.remoteAddress || '';
-    const isLoopback = addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
-    if (!isLoopback) {
+    if (!auth.isLoopbackAddress(req.socket?.remoteAddress)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'loopback_only' }));
       return true;
     }
+    // codex R3 P1: minting a bootstrap token is privileged (mint + redeem ⇒ a
+    // dashboard session). Require the same credential the dashboard does, so an
+    // other-UID loopback process that can't read ~/.ccxray/local-secret (and
+    // thus can't forge X-Ccxray-Auth) can't mint. `ccxray open` authenticates
+    // with X-Ccxray-Auth derived from the shared root secret.
+    if (!auth.verifyDashboard(req, res)) return true; // 401 written by the gate
     const token = auth.mintBootstrapToken();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ token }));

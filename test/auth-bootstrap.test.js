@@ -323,22 +323,41 @@ describe('/_auth/bootstrap-token via HTTP', () => {
     await new Promise(r => server.close(r));
   });
 
-  it('returns a token on loopback POST', async () => {
-    const data = await new Promise((resolve, reject) => {
+  // base64url(K_upstream) from the same ephemeral local-secret the server uses
+  // — the credential `ccxray open` sends. Force AUTH_TOKEN unset + a fresh
+  // module so a prior describe's 'sec1'-cached secrets can't leak in.
+  function upstreamToken() {
+    delete process.env.AUTH_TOKEN;
+    delete require.cache[require.resolve('../server/auth')];
+    const auth = require('../server/auth');
+    return auth.deriveSecrets(auth.getRootSecret()).K_upstream.toString('base64url');
+  }
+
+  function postBootstrap(headers) {
+    return new Promise((resolve, reject) => {
       const req = http.request({
         hostname: '127.0.0.1', port,
         path: '/_auth/bootstrap-token', method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...headers },
       }, res => {
         let buf = '';
         res.on('data', c => { buf += c; });
-        res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(buf) }));
+        res.on('end', () => { let body = null; try { body = JSON.parse(buf); } catch {} resolve({ status: res.statusCode, body }); });
       });
       req.on('error', reject);
       req.end('{}');
     });
+  }
+
+  it('rejects loopback POST without a credential → 401 (codex R3 P1 gate)', async () => {
+    const data = await postBootstrap({});
+    assert.equal(data.status, 401);
+  });
+
+  it('returns a token on loopback POST with a valid X-Ccxray-Auth', async () => {
+    const data = await postBootstrap({ 'X-Ccxray-Auth': upstreamToken() });
     assert.equal(data.status, 200);
-    assert.ok(data.body.token);
+    assert.ok(data.body && data.body.token);
     assert.equal(typeof data.body.token, 'string');
   });
 });

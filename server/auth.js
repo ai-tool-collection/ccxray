@@ -482,6 +482,7 @@ module.exports = {
   verifyUpstreamCredential,
   // Phase 2.3: loopback-guarded escape hatch, shared by all three gates.
   isLoopbackBypass,
+  isLoopbackAddress,
   // Phase 1.3 additions
   mintBootstrapToken,
   redeemBootstrap,

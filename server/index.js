@@ -526,13 +526,18 @@ if (process.argv[2] === 'open') {
         const res = await hub.hubSocketRequest(lock.sockPath, { cmd: 'bootstrap-token' });
         token = res?.token;
       } else {
-        // Fallback to HTTP for standalone mode (no hub socket)
+        // Fallback to HTTP for standalone mode (no hub socket). The endpoint is
+        // now auth-gated (codex R3 P1), so send X-Ccxray-Auth derived from the
+        // shared root secret — the same credential the launchers inject. Only a
+        // caller that can read the secret (same user) can mint a token.
+        const auth = require('./auth');
+        const upstreamTok = auth.deriveSecrets(auth.getRootSecret()).K_upstream.toString('base64url');
         token = await new Promise((resolve, reject) => {
           const body = JSON.stringify({});
           const req = http.request({
             hostname: 'localhost', port,
             path: '/_auth/bootstrap-token', method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'X-Ccxray-Auth': upstreamTok },
             timeout: 3000,
           }, res => {
             let buf = '';
