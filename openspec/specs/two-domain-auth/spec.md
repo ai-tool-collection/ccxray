@@ -61,6 +61,27 @@ Users SHALL authenticate the browser via `ccxray open` which mints a one-time 60
 - **WHEN** browser POSTs to `/_auth/redeem` with an already-redeemed token
 - **THEN** server SHALL respond 401
 
+### Requirement: Launcher auto-bootstrap for local startup
+When ccxray launches an agent (`ccxray claude`, `ccxray codex`) or starts standalone (`ccxray`) and would auto-open the dashboard in a browser, the launcher SHALL mint a one-time bootstrap token and open `http://localhost:<port>/#k=<token>` instead of the bare dashboard URL. The same single-use 60s primitive as `ccxray open` is reused — no new mechanism, no new escape hatch.
+
+This preserves the "launch → see the dashboard" zero-friction UX after dashboard auth was flipped to enforce: the local user invoking the CLI already holds the root secret, so the launcher legitimately mints a session for the browser it opens itself. LAN peers, additional browsers, and re-auth after cookie expiry still go through manual `ccxray open`.
+
+#### Scenario: Standalone or agent launch with auto-open
+- **WHEN** ccxray starts in standalone mode (or via `ccxray claude` / `ccxray codex`) and auto-open is not suppressed (`--no-browser` unset, `BROWSER` ≠ `none`, no `CI`, no `SSH_TTY`)
+- **THEN** the launcher SHALL mint a fresh bootstrap token and exec the OS open command with `http://localhost:<port>/#k=<token>`
+
+#### Scenario: Hub mode first client
+- **WHEN** the first client connects to a hub and that client's auto-open is not suppressed
+- **THEN** the first-client auto-open SHALL include `#k=<token>` so the browser bootstraps without a manual `ccxray open`
+
+#### Scenario: Auto-open suppressed
+- **WHEN** `--no-browser` is set, or `BROWSER=none`, or `CI`, or `SSH_TTY` is in the env
+- **THEN** no auto-open SHALL happen (unchanged from prior behavior); the user runs `ccxray open` manually when ready
+
+#### Scenario: Additional browsers or re-auth
+- **WHEN** the user opens the dashboard in a second browser, or returns after the session cookie expires
+- **THEN** they SHALL run `ccxray open` manually — launcher auto-bootstrap only covers the auto-opened browser at startup
+
 ### Requirement: Key derivation via HKDF
 All authentication keys SHALL be derived from a single root secret via HKDF-SHA256 with label separation: `K_upstream` (label `ccxray/v1/upstream`), `K_session` (label `ccxray/v1/session-hmac`), `K_bootstrap` (label `ccxray/v1/bootstrap`).
 
