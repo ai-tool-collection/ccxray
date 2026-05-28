@@ -20,6 +20,8 @@
 
 ### Added
 
+- **Launcher auto-bootstrap.** `ccxray claude`, `ccxray codex`, and standalone `ccxray` now auto-open the dashboard **already authenticated** — the launcher mints a single-use 60s bootstrap token and opens `http://localhost:<port>/#k=<token>` instead of the bare URL, so the OS-opened browser redeems it on load and lands on a logged-in dashboard. The "launch and look" zero-friction UX from before 2.0.0 is preserved for the local-CLI case. LAN peers, additional browsers, and re-auth after the 24h cookie expiry still go through manual `ccxray open`. Suppressed by `--no-browser`, `BROWSER=none`, `CI`, or `SSH_TTY` (unchanged).
+
 - **`CCXRAY_LOOPBACK_NO_AUTH=1` escape hatch** — opt-in bypass of the auth gate (both `/v1/*` upstream and the dashboard) for local development. A loud startup banner is printed whenever it is active. The bypass is **loopback-guarded**: it applies only when the request's `remoteAddress` is loopback, so setting the flag on a `0.0.0.0`-bound proxy does not expose `/v1/*` or recorded conversations to the LAN. A same-host reverse proxy presents `127.0.0.1` and defeats the guard — documented, not closed; the banner remains the backstop.
 
 ### Security

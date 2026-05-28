@@ -361,3 +361,39 @@ describe('/_auth/bootstrap-token via HTTP', () => {
     assert.equal(typeof data.body.token, 'string');
   });
 });
+
+describe('mintAutoOpenUrl — launcher auto-bootstrap (Phase 2.4)', () => {
+  it('returns http://localhost:<port>/#k=<token> with a token that redeems → 204 + Set-Cookie', () => {
+    const auth = loadAuthFresh();
+    const url = auth.mintAutoOpenUrl(5577);
+    const m = url.match(/^http:\/\/localhost:5577\/#k=([A-Za-z0-9_-]{20,})$/);
+    assert.ok(m, `URL must carry #k= token, got: ${url}`);
+    const tok = m[1];
+    // Prove the token is in the pending set: redeem succeeds end-to-end.
+    const { req, res, setHeaderCalls } = mockReqRes({
+      headers: {
+        'x-ccxray-bootstrap': tok,
+        'sec-fetch-site': 'same-origin',
+        origin: 'http://localhost:5577',
+        host: 'localhost:5577',
+      },
+    });
+    auth.redeemBootstrap(req, res);
+    req._deliverBody('{}');
+    assert.equal(res.statusCode, 204);
+    assert.match(setHeaderCalls['set-cookie'] || '', /^ccxray_s=/);
+  });
+
+  it('each call mints a fresh, distinct single-use token', () => {
+    const auth = loadAuthFresh();
+    const t1 = auth.mintAutoOpenUrl(5577).match(/#k=([A-Za-z0-9_-]+)/)[1];
+    const t2 = auth.mintAutoOpenUrl(5577).match(/#k=([A-Za-z0-9_-]+)/)[1];
+    assert.notEqual(t1, t2);
+  });
+
+  it('reflects the supplied port in the URL', () => {
+    const auth = loadAuthFresh();
+    const url = auth.mintAutoOpenUrl(9999);
+    assert.match(url, /^http:\/\/localhost:9999\/#k=/);
+  });
+});

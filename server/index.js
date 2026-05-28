@@ -14,7 +14,7 @@ const { warmUp: warmUpCosts } = require('./cost-budget');
 const { forwardRequest, setStatusLineEnabled, getStatusLineEnabled } = require('./forward');
 const { readSettings } = require('./settings');
 const { broadcastSessionStatus, broadcastPendingRequest } = require('./sse-broadcast');
-const { dispatch } = require('./auth');
+const { dispatch, mintAutoOpenUrl } = require('./auth');
 const { extractAgentType, extractPromptAgentType, splitB2IntoBlocks } = require('./system-prompt');
 const { findSharedPrefix } = require('./delta-helpers');
 const providers = require('./providers');
@@ -668,7 +668,8 @@ async function startClientMode(lock) {
       if (!noOpen) {
         const { exec } = require('child_process');
         const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-        exec(`${cmd} http://localhost:${lock.port}`);
+        // Phase 2.4: pre-bootstrap the browser so it lands authenticated.
+        exec(`${cmd} ${mintAutoOpenUrl(lock.port)}`);
       }
     }
   } catch (err) {
@@ -856,7 +857,8 @@ async function startServer() {
   if (!noOpen) {
     const { exec } = require('child_process');
     const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-    exec(`${cmd} http://localhost:${actualPort}`);
+    // Phase 2.4: pre-bootstrap the browser so it lands authenticated.
+    exec(`${cmd} ${mintAutoOpenUrl(actualPort)}`);
   }
 
   if (agentMode) spawnStandaloneAgent(actualPort, agentCommand, agentArgs);
