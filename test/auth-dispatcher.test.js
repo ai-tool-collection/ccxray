@@ -322,6 +322,38 @@ describe('verifyUpstream — loopback-guarded hatch wiring (2.3)', () => {
   });
 });
 
+describe('verifyUpstream — ChatGPT-OAuth carve-out scoped to ChatGPT-routed requests (codex 2.4 P1)', () => {
+  // The carve-out exists because Codex on a ChatGPT login can't inject custom
+  // headers (errata §1.3), so we accept `chatgpt-account-id` + JWT-shaped
+  // Authorization as the credential on routes that actually go to ChatGPT.
+  // Previously the check was header-only, so the same shape passed on
+  // Anthropic `/v1/messages` too — a LAN attacker could forge it and bypass
+  // upstream auth on the main API path. Now the gate confirms the request
+  // would route to UPSTREAMS.openaiChatGPT before accepting the carve-out.
+  const JWT = 'Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.sig';
+
+  it('chatgpt markers on /v1/messages (Anthropic route) → 401 (bypass closed)', () => {
+    const auth = loadAuthWith('sec1');
+    const { req, res } = mockReqRes({ 'chatgpt-account-id': 'acct-1', authorization: JWT }, '/v1/messages');
+    assert.equal(auth.verifyUpstream(req, res), false);
+    assert.equal(res.statusCode, 401);
+  });
+
+  it('chatgpt markers on /v1/responses (Codex path → ChatGPT route) → allowed', () => {
+    const auth = loadAuthWith('sec1');
+    const { req, res } = mockReqRes({ 'chatgpt-account-id': 'acct-1', authorization: JWT }, '/v1/responses');
+    assert.equal(auth.verifyUpstream(req, res), true);
+    assert.equal(res.writeHeadCalled, false);
+  });
+
+  it('chatgpt markers on /v1/realtime (OpenAI path + chatgpt-account-id → ChatGPT route) → allowed', () => {
+    const auth = loadAuthWith('sec1');
+    const { req, res } = mockReqRes({ 'chatgpt-account-id': 'acct-1', authorization: JWT }, '/v1/realtime');
+    assert.equal(auth.verifyUpstream(req, res), true);
+    assert.equal(res.writeHeadCalled, false);
+  });
+});
+
 describe('dispatch().verify — sanity: same instance routes to correct verifier', () => {
   it('upstream path routes to verifyUpstream (valid X-Ccxray-Auth accepted)', () => {
     const auth = loadAuthWith('sec1');

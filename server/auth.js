@@ -16,6 +16,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const config = require('./config');
 
 // ─── Root secret resolution ──────────────────────────────────────────
 
@@ -444,12 +445,30 @@ function verifyUpstreamCredential(headers) {
   return 'reject';
 }
 
-function verifyUpstream(req, res) {
-  // Phase 2.3: loopback-guarded escape hatch (design 決策 7).
+// Single source of truth for "is this /v1/* request authenticated?" — pure
+// boolean, shared by verifyUpstream (HTTP gate) and ws-proxy isAuthorized (WS
+// gate) so the two can't drift.
+//
+// Acceptors: the loopback escape hatch, a valid X-Ccxray-Auth, or the Codex-
+// on-ChatGPT carve-out IFF the request would route to the ChatGPT backend.
+// The carve-out exists because Codex on a ChatGPT login can't inject custom
+// headers (errata §1.3), but the markers (chatgpt-account-id + JWT-shaped
+// Authorization) are only meaningful on ChatGPT-routed paths. On Anthropic
+// /v1/messages they'd be a forgery attempt — caught by the upstream-routing
+// check (codex 2.4 P1).
+function isUpstreamAuthenticated(req) {
   if (isLoopbackBypass(req)) return true;
-  // Phase 2.2: enforce. Only X-Ccxray-Auth (or the ChatGPT-OAuth carve-out)
-  // is accepted upstream — legacy Bearer/?token= no longer pass here.
-  if (verifyUpstreamCredential(req.headers) !== 'reject') return true;
+  const verdict = verifyUpstreamCredential(req.headers);
+  if (verdict === 'ok') return true;
+  if (verdict === 'chatgpt-oauth') {
+    const upstream = config.getUpstreamForRequestAndHeaders(req.url, req.headers);
+    return upstream === config.UPSTREAMS.openaiChatGPT;
+  }
+  return false;
+}
+
+function verifyUpstream(req, res) {
+  if (isUpstreamAuthenticated(req)) return true;
   res.writeHead(401, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
     error: 'unauthorized',
@@ -500,6 +519,9 @@ module.exports = {
   // Phase 2.2: shared upstream credential taxonomy (wired into verifyUpstream
   // in 2.2b and ws-proxy isAuthorized in 2.2c).
   verifyUpstreamCredential,
+  // Phase 2.4: shared upstream-gate predicate (HTTP + WS); also scopes the
+  // ChatGPT-OAuth carve-out to ChatGPT-routed requests (codex 2.4 P1).
+  isUpstreamAuthenticated,
   // Phase 2.3: loopback-guarded escape hatch, shared by all three gates.
   isLoopbackBypass,
   isLoopbackAddress,
