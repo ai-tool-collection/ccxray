@@ -1,0 +1,210 @@
+'use strict';
+
+const crypto = require('crypto');
+const store = require('../store');
+const { extractPromptAgentType } = require('../system-prompt');
+
+// ── Low-level helpers (also exported for ws-proxy.js) ───────
+
+function firstHeader(headers, name) {
+  const value = headers?.[name.toLowerCase()];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function parseCodexTurnMetadata(headers) {
+  const raw = firstHeader(headers, 'x-codex-turn-metadata');
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(String(raw));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function getCodexSessionId(headers, parsedBody) {
+  const direct = firstHeader(headers, 'session_id') || firstHeader(headers, 'x-openai-session-id');
+  if (direct) return String(direct);
+  const turnMetadata = parseCodexTurnMetadata(headers);
+  if (typeof turnMetadata?.session_id === 'string') return turnMetadata.session_id;
+  return parsedBody?.metadata?.session_id || null;
+}
+
+function getCodexRawSessionId() {
+  return 'codex-raw';
+}
+
+function getOpenAIAgentTypeFromHeaders(headers) {
+  const subagent = firstHeader(headers, 'x-openai-subagent');
+  const direct = firstHeader(headers, 'x-openai-agent-type') || firstHeader(headers, 'x-codex-agent-type');
+  const turnMetadata = parseCodexTurnMetadata(headers);
+  const value = direct || turnMetadata?.agent_type || subagent;
+  if (!value) return null;
+  const normalized = String(value).toLowerCase();
+  if (normalized === 'explorer' || normalized === 'worker' || normalized === 'default') return normalized;
+  return null;
+}
+
+function isOpenAISubagent(headers, parsedBody) {
+  const raw = firstHeader(headers, 'x-openai-subagent');
+  if (raw != null) {
+    const text = String(raw).toLowerCase();
+    return text !== '0' && text !== 'false' && text !== 'no';
+  }
+  return Boolean(parsedBody?.metadata?.is_subagent || parsedBody?.metadata?.isSubagent);
+}
+
+function withCodexMetadata(parsedBody, headers) {
+  if (!parsedBody || typeof parsedBody !== 'object') return parsedBody;
+  const sessionId = getCodexSessionId(headers, parsedBody);
+  const agentType = getOpenAIAgentTypeFromHeaders(headers);
+  if (!sessionId && !agentType) return parsedBody;
+  const metadata = parsedBody.metadata && typeof parsedBody.metadata === 'object'
+    ? { ...parsedBody.metadata }
+    : {};
+  if (sessionId && !metadata.session_id) metadata.session_id = sessionId;
+  if (agentType && !metadata.agent_type) metadata.agent_type = agentType;
+  return { ...parsedBody, metadata };
+}
+
+// ── WIRE_PARSERS interface (7 methods) ──────────────────────
+
+// From index.js:302-322 (OpenAI dedup path)
+function dedupExtract(parsedBody) {
+  const sharedFiles = [];
+  let sysHash = null;
+  let toolsHash = null;
+  let coreHash = null;
+  let versionInfo = null;
+
+  if (parsedBody.instructions != null) {
+    sysHash = crypto.createHash('sha256').update(JSON.stringify(parsedBody.instructions)).digest('hex').slice(0, 12);
+    sharedFiles.push({ name: `openai_instructions_${sysHash}.json`, data: JSON.stringify(parsedBody.instructions) });
+
+    if (typeof parsedBody.instructions === 'string') {
+      const { key: agentKey, label: agentLabel } = extractPromptAgentType('openai', parsedBody);
+      if (agentKey && agentKey !== 'unknown') {
+        coreHash = crypto.createHash('md5').update(parsedBody.instructions).digest('hex').slice(0, 12);
+        versionInfo = {
+          agentKey, agentLabel, coreHash,
+          promptText: parsedBody.instructions,
+          sharedFile: `openai_instructions_${sysHash}.json`,
+          promptMetaFile: { name: `openai_prompt_meta_${sysHash}.json`, data: JSON.stringify({ agentKey, agentLabel }) },
+        };
+        sharedFiles.push(versionInfo.promptMetaFile);
+      }
+    }
+  }
+
+  if (parsedBody.tools) {
+    toolsHash = crypto.createHash('sha256').update(JSON.stringify(parsedBody.tools)).digest('hex').slice(0, 12);
+    sharedFiles.push({ name: `openai_tools_${toolsHash}.json`, data: JSON.stringify(parsedBody.tools) });
+  }
+
+  return { sysHash, toolsHash, coreHash, sharedFiles, versionInfo };
+}
+
+// OpenAI has no delta-log support
+function extractDeltaSlice(_prevState, _currReq, _opts) {
+  return null;
+}
+
+// From config.js:169-177 (isCodexPlatformNoisePath)
+function isNoiseRequest(url, _headers, _parsedBody) {
+  const pathname = (url || '').split('?')[0];
+  if (pathname === '/v1/plugins' || pathname.startsWith('/v1/plugins/')) return true;
+  if (pathname === '/v1/ps/plugins' || pathname.startsWith('/v1/ps/plugins/')) return true;
+  if (pathname === '/v1/connectors' || pathname.startsWith('/v1/connectors/')) return true;
+  if (pathname === '/v1/api/codex/apps' || pathname.startsWith('/v1/api/codex/apps/')) return true;
+  if (pathname === '/v1/api/codex/usage' || pathname.startsWith('/v1/api/codex/usage/')) return true;
+  return false;
+}
+
+// READ-path: from raw stored entry → ThinCanonical
+function normalizeListMeta(entry) {
+  const inputLen = Array.isArray(entry.req?.input) ? entry.req.input.length : 0;
+  return {
+    id: entry.id,
+    ts: entry.ts,
+    provider: 'openai',
+    model: entry.model || entry.res?.model || entry.req?.model || 'unknown',
+    sessionId: entry.sessionId,
+    msgCount: entry.msgCount ?? inputLen,
+    toolCount: entry.toolCount ?? (Array.isArray(entry.req?.tools) ? entry.req.tools.length : 0),
+    usage: entry.usage || null,
+    cost: entry.cost || null,
+    agentType: entry.agentType || 'default',
+    agentLabel: entry.agentLabel || 'Codex Default',
+    isSubagent: entry.isSubagent || false,
+    stopReason: entry.stopReason || entry.res?.status || null,
+    status: entry.status,
+    elapsed: entry.elapsed,
+    responseMetadata: entry.responseMetadata || null,
+  };
+}
+
+// From response object's .usage field
+function extractUsage(resData) {
+  if (!resData) return null;
+  // OpenAI response can be an object with .usage, or an array of SSE events
+  const usage = resData.usage || (Array.isArray(resData) ? resData.find(e => e.usage)?.usage : null);
+  if (!usage) return null;
+  return {
+    input_tokens: usage.input_tokens || usage.prompt_tokens || 0,
+    output_tokens: usage.output_tokens || usage.completion_tokens || 0,
+    total_tokens: usage.total_tokens || 0,
+  };
+}
+
+// From system-prompt.js:82-99 + openai-session.js:33-42
+function extractAgentTypeMethod(_systemBlob, headers) {
+  if (headers) {
+    const fromHeaders = getOpenAIAgentTypeFromHeaders(headers);
+    if (fromHeaders) {
+      const labelMap = { explorer: 'Codex Explorer', worker: 'Codex Worker', default: 'Codex Default' };
+      return { key: fromHeaders, label: labelMap[fromHeaders] || 'Codex' };
+    }
+  }
+  return { key: 'default', label: 'Codex Default' };
+}
+
+// From openai-session.js:58-70
+function detectSession(_req, headers, parsedBody) {
+  const sessionId = getCodexSessionId(headers, parsedBody);
+  if (!sessionId) {
+    return { sessionId: getCodexRawSessionId(), isNewSession: false, inferred: true };
+  }
+  const bodyForDetection = parsedBody || { metadata: { session_id: sessionId } };
+  const detected = store.detectSession(bodyForDetection);
+  return {
+    sessionId: detected.sessionId || sessionId || getCodexRawSessionId(),
+    isNewSession: detected.isNewSession || false,
+    inferred: detected.inferred || false,
+  };
+}
+
+// Optional preprocessor: inject header-derived metadata into parsedBody
+function preprocessBody(parsedBody, headers) {
+  return withCodexMetadata(parsedBody, headers);
+}
+
+module.exports = {
+  // WIRE_PARSERS interface
+  dedupExtract,
+  extractDeltaSlice,
+  isNoiseRequest,
+  normalizeListMeta,
+  extractUsage,
+  extractAgentType: extractAgentTypeMethod,
+  detectSession,
+  preprocessBody,
+  // Low-level exports for ws-proxy.js compatibility
+  getCodexRawSessionId,
+  firstHeader,
+  parseCodexTurnMetadata,
+  getCodexSessionId,
+  getOpenAIAgentTypeFromHeaders,
+  isOpenAISubagent,
+  detectOpenAISession: detectSession,
+  withCodexMetadata,
+};

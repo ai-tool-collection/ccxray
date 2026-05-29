@@ -1,11 +1,11 @@
 'use strict';
 
 const anthropic = require('./anthropic');
-// const openai = require('./openai'); // Phase 2
+const openai = require('./openai');
 
 const WIRE_PARSERS = Object.freeze({
   anthropic,
-  // openai, // Phase 2
+  openai,
 });
 
 const SAFE_DEFAULTS = {
