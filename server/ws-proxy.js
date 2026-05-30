@@ -15,6 +15,13 @@ const {
 } = require('./wire-parsers/openai');
 const detectOpenAISession = (headers, body) => _detectOpenAISession3(null, headers, body);
 
+// Large envelope events skipped from timeline capture — each is ~35KB (full response object).
+// Blacklist (not whitelist) so new event types are automatically captured.
+const WS_SKIP_EVENTS = new Set([
+  'response.created', 'response.in_progress', 'response.completed', 'response.done',
+  'codex.rate_limits',
+]);
+
 const HOP_BY_HOP_HEADERS = new Set([
   'connection',
   'keep-alive',
@@ -211,14 +218,17 @@ async function recordWebSocketEntry(ctx, result) {
     },
     metadata: ctx.turnMetadata || null,
   };
-  const resLog = {
-    transport: 'websocket',
-    capture: 'transport-only',
-    frameCounts: ctx.frameCounts,
-    byteCounts: ctx.byteCounts,
-    close: result.close || null,
-    error: result.error || null,
-  };
+  const hasEvents = ctx.responseEvents.length > 0;
+  const resLog = hasEvents
+    ? ctx.responseEvents
+    : {
+      transport: 'websocket',
+      capture: 'transport-only',
+      frameCounts: ctx.frameCounts,
+      byteCounts: ctx.byteCounts,
+      close: result.close || null,
+      error: result.error || null,
+    };
 
   const reqWritePromise = config.storage.write(ctx.id, '_req.json', JSON.stringify(reqLog))
     .catch(e => console.error('Write ws req.json failed:', e.message));
@@ -361,6 +371,7 @@ function handleWebSocketUpgrade(req, socket, head) {
       sessionInferred: detected.inferred || !getCodexSessionId(req.headers, null),
       frameCounts: { clientToUpstream: 0, upstreamToClient: 0 },
       byteCounts: { clientToUpstream: 0, upstreamToClient: 0 },
+      responseEvents: [],
     };
     // Only client→upstream needs queueing; clientWs is already OPEN inside this
     // callback so upstream→client can always send directly via safeSend().
@@ -428,6 +439,14 @@ function handleWebSocketUpgrade(req, socket, head) {
       refreshIdleTimer();
       ctx.frameCounts.upstreamToClient += 1;
       ctx.byteCounts.upstreamToClient += frameSize(data);
+      if (!isBinary) {
+        try {
+          const parsed = JSON.parse(data.toString());
+          if (parsed.type && !WS_SKIP_EVENTS.has(parsed.type)) {
+            ctx.responseEvents.push(parsed);
+          }
+        } catch {}
+      }
       safeSend(clientWs, data, isBinary);
     });
     clientWs.on('ping', data => {
