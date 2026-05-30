@@ -7,10 +7,16 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 function loadMessagesContext() {
-  const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'messages.js'), 'utf8');
-  const context = { console };
+  const publicDir = path.join(__dirname, '..', 'public');
+  const context = { console, window: {} };
   vm.createContext(context);
-  vm.runInContext(source, context);
+  // Load renderers first (they register on window.RENDERERS)
+  for (const f of ['renderers/index.js', 'renderers/anthropic.js', 'renderers/openai.js', 'renderers/fallback.js']) {
+    vm.runInContext(fs.readFileSync(path.join(publicDir, f), 'utf8'), context);
+  }
+  // Promote window globals into context scope (messages.js reads getRenderer as a global)
+  vm.runInContext('var RENDERERS = window.RENDERERS; var getRenderer = window.getRenderer;', context);
+  vm.runInContext(fs.readFileSync(path.join(publicDir, 'messages.js'), 'utf8'), context);
   return context;
 }
 
@@ -21,7 +27,7 @@ describe('dashboard timeline rendering helpers', () => {
       { type: 'response.output_text.delta', delta: 'Hi' },
       { type: 'response.output_text.delta', delta: '. What' },
       { type: 'response.output_text.delta', delta: ' next?' },
-    ]);
+    ], 'openai');
 
     assert.equal(steps.length, 1);
     assert.equal(steps[0].type, 'assistant-text');
@@ -33,7 +39,7 @@ describe('dashboard timeline rendering helpers', () => {
     const context = loadMessagesContext();
     const steps = context.buildMergedSteps([], [
       { type: 'response.output_text.done', text: 'Done text' },
-    ]);
+    ], 'openai');
 
     assert.equal(steps.length, 1);
     assert.equal(steps[0].type, 'assistant-text');
@@ -46,7 +52,7 @@ describe('dashboard timeline rendering helpers', () => {
       { type: 'response.reasoning_text.delta', delta: 'Check repo. ' },
       { type: 'response.reasoning_summary_part.added', part: { text: 'Found renderer path.' } },
       { type: 'response.completed', _ts: 1200 },
-    ]);
+    ], 'openai');
 
     assert.equal(steps.length, 1);
     assert.equal(steps[0].type, 'tool-group');
@@ -64,7 +70,7 @@ describe('dashboard timeline rendering helpers', () => {
       },
       { type: 'response.function_call_arguments.delta', item_id: 'call_1', delta: '{"command":"' },
       { type: 'response.function_call_arguments.delta', item_id: 'call_1', delta: 'npm test"}' },
-    ]);
+    ], 'openai');
 
     assert.equal(steps.length, 1);
     assert.equal(steps[0].type, 'tool-group');
