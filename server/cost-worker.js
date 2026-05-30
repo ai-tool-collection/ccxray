@@ -15,6 +15,11 @@ function calculateCostSimple(usage, model) {
     'claude-sonnet-4-5-20250514': { input: 3e-6, output: 15e-6, cache_read: 0.3e-6, cache_create: 3.75e-6 },
     'claude-opus-4-5-20250514': { input: 15e-6, output: 75e-6, cache_read: 1.5e-6, cache_create: 18.75e-6 },
     'claude-haiku-3-5-20241022': { input: 0.8e-6, output: 4e-6, cache_read: 0.08e-6, cache_create: 1e-6 },
+    'gpt-5.5': { input: 2e-6, output: 10e-6, cache_read: 1e-6, cache_create: 0 },
+    'gpt-5': { input: 2e-6, output: 10e-6, cache_read: 1e-6, cache_create: 0 },
+    'gpt-4o': { input: 2.5e-6, output: 10e-6, cache_read: 1.25e-6, cache_create: 0 },
+    'o3': { input: 2e-6, output: 8e-6, cache_read: 0.5e-6, cache_create: 0 },
+    'o4-mini': { input: 1.1e-6, output: 4.4e-6, cache_read: 0.55e-6, cache_create: 0 },
   };
   // Find matching rate by prefix
   let r = null;

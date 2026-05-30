@@ -22,6 +22,15 @@ const DEFAULT_PRICING = {
   'claude-3-5-sonnet': { input: 3,  output: 15, cache_create: 3.75,  cache_read: 0.30 },
   'claude-3-5-haiku':  { input: 0.80, output: 4, cache_create: 1,    cache_read: 0.08 },
   'claude-3-opus':     { input: 15, output: 75, cache_create: 18.75, cache_read: 1.50 },
+  // OpenAI models (per 1M tokens, USD — 2026-05 rates)
+  'gpt-5.5':           { input: 2,    output: 10,   cache_create: 0, cache_read: 1 },
+  'gpt-5':             { input: 2,    output: 10,   cache_create: 0, cache_read: 1 },
+  'gpt-4.1':           { input: 2,    output: 8,    cache_create: 0, cache_read: 0.50 },
+  'gpt-4o':            { input: 2.50, output: 10,   cache_create: 0, cache_read: 1.25 },
+  'gpt-4o-mini':       { input: 0.15, output: 0.60, cache_create: 0, cache_read: 0.075 },
+  'o3':                { input: 2,    output: 8,    cache_create: 0, cache_read: 0.50 },
+  'o3-mini':           { input: 1.10, output: 4.40, cache_create: 0, cache_read: 0.55 },
+  'o4-mini':           { input: 1.10, output: 4.40, cache_create: 0, cache_read: 0.55 },
 };
 
 let pricingTable = { ...DEFAULT_PRICING };
@@ -57,7 +66,6 @@ async function fetchPricing() {
           const fetched = {};
           const fetchedCtx = {};
           for (const [key, val] of Object.entries(data)) {
-            if (!key.startsWith('claude-')) continue;
             if (val.input_cost_per_token) {
               fetched[key] = {
                 input: (val.input_cost_per_token || 0) * 1_000_000,
@@ -74,7 +82,7 @@ async function fetchPricing() {
             .catch(e => console.error('Write pricing cache failed:', e.message));
           pricingTable = { ...DEFAULT_PRICING, ...fetched };
           contextTable = fetchedCtx;
-          console.log(`\x1b[90m   Pricing fetched: ${Object.keys(fetched).length} Claude models, ${Object.keys(fetchedCtx).length} context windows\x1b[0m`);
+          console.log(`\x1b[90m   Pricing fetched: ${Object.keys(fetched).length} models, ${Object.keys(fetchedCtx).length} context windows\x1b[0m`);
         } catch (e) {
           console.log(`\x1b[33m   ⚠ Pricing parse error, using defaults\x1b[0m`);
         }

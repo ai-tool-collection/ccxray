@@ -715,21 +715,23 @@ function handleOpenAISSE(ctx, proxyRes, clientRes) {
     responseMetadata.streaming = true;
     const usage = getParser('openai').extractUsage(response);
 
+    const openaiModel = response?.model || parsedBody?.model || null;
+    const openaiCost = calculateCost(usage, openaiModel);
     const entry = {
       id, ts: ctx.ts, sessionId: reqSessionId, method: ctx.clientReq.method, url: stripAuthParams(ctx.clientReq.url),
       provider: 'openai',
       agent: 'codex',
       req: parsedBody, res: events,
       elapsed, status: proxyRes.statusCode, isSSE: true,
-      tokens: null,
-      usage, cost: null,
+      tokens: helpers.tokenizeRequest(parsedBody),
+      usage, cost: openaiCost,
       responseMetadata,
-      maxContext: null,
+      maxContext: config.inferMaxContext(openaiModel, parsedBody?.instructions, usage),
       cwd: store.sessionMeta[reqSessionId]?.cwd || null,
       receivedAt: startTime,
       thinkingDuration: null,
       duplicateToolCalls: null,
-      model: response?.model || parsedBody?.model || null,
+      model: openaiModel,
       msgCount: Array.isArray(parsedBody?.input) ? parsedBody.input.length : 0,
       toolCount: Array.isArray(parsedBody?.tools) ? parsedBody.tools.length : 0,
       toolCalls: {},
@@ -863,8 +865,8 @@ function handleNonSSEResponse(ctx, proxyRes, clientRes) {
       agent: provider === 'openai' ? 'codex' : 'claude',
       req: parsedBody, res: resData,
       elapsed, status: proxyRes.statusCode, isSSE: !!openAIEvents,
-      tokens: provider === 'anthropic' ? helpers.tokenizeRequest(parsedBody) : null,
-      usage, cost: null,
+      tokens: helpers.tokenizeRequest(parsedBody),
+      usage, cost: calculateCost(usage, parsedBody?.model || (openAIResponse || resData)?.model),
       responseMetadata,
       maxContext,
       cwd: store.sessionMeta[sessionId]?.cwd || null,

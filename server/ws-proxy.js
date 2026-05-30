@@ -4,6 +4,7 @@ const WebSocket = require('ws');
 const config = require('./config');
 const store = require('./store');
 const helpers = require('./helpers');
+const { calculateCost } = require('./pricing');
 const { broadcast, broadcastSessionStatus } = require('./sse-broadcast');
 const { isUpstreamAuthenticated } = require('./auth');
 const { stripAuthParams } = require('./url-sanitize');
@@ -258,14 +259,14 @@ async function recordWebSocketEntry(ctx, result) {
     status: result.status,
     isSSE: false,
     tokens: null,
-    usage: null,
-    cost: null,
+    usage: ctx.lastUsage || null,
+    cost: calculateCost(ctx.lastUsage, ctx.lastModel),
     responseMetadata,
-    maxContext: null,
+    maxContext: ctx.lastModel ? config.inferMaxContext(ctx.lastModel, null, ctx.lastUsage) : null,
     cwd: store.sessionMeta[ctx.sessionId]?.cwd || null,
     receivedAt: ctx.startTime,
     duplicateToolCalls: null,
-    model: null,
+    model: ctx.lastModel || null,
     msgCount: 0,
     toolCount: 0,
     toolCalls: {},
@@ -372,6 +373,8 @@ function handleWebSocketUpgrade(req, socket, head) {
       frameCounts: { clientToUpstream: 0, upstreamToClient: 0 },
       byteCounts: { clientToUpstream: 0, upstreamToClient: 0 },
       responseEvents: [],
+      lastUsage: null,
+      lastModel: null,
     };
     // Only client→upstream needs queueing; clientWs is already OPEN inside this
     // callback so upstream→client can always send directly via safeSend().
@@ -442,8 +445,14 @@ function handleWebSocketUpgrade(req, socket, head) {
       if (!isBinary) {
         try {
           const parsed = JSON.parse(data.toString());
-          if (parsed.type && !WS_SKIP_EVENTS.has(parsed.type)) {
-            ctx.responseEvents.push(parsed);
+          if (parsed.type) {
+            // Extract metadata from envelope events before skipping their large body
+            const r = parsed.response || parsed;
+            if (r.usage) ctx.lastUsage = r.usage;
+            if (r.model) ctx.lastModel = r.model;
+            if (!WS_SKIP_EVENTS.has(parsed.type)) {
+              ctx.responseEvents.push(parsed);
+            }
           }
         } catch {}
       }
