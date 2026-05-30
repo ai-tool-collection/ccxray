@@ -11,6 +11,7 @@ const { broadcast, broadcastSessionStatus, broadcastSessionTitleUpdate } = requi
 const { appendSample, collectRatelimitHeaders } = require('./ratelimit-log');
 const hub = require('./hub');
 const { stripAuthParams } = require('./url-sanitize');
+const { getParser } = require('./wire-parsers');
 
 // For title-generator subagent responses, extract the clean title from the
 // JSON payload and (when attribution succeeds) stamp it onto the parent
@@ -481,7 +482,7 @@ function handleSSEResponse(ctx, proxyRes, clientRes) {
     }
     const resWritePromise = config.storage.write(id, '_res.json', JSON.stringify(events)).catch(e => console.error('Write res.json failed:', e.message));
 
-    const usage = helpers.extractUsage(events);
+    const usage = getParser('anthropic').extractUsage(events);
     // Inject usage text block before message_delta/message_stop
     const stopReason = heldEvents.reduce((r, raw) => {
       const m = raw.match(/^data: (.+)$/m);
@@ -712,7 +713,7 @@ function handleOpenAISSE(ctx, proxyRes, clientRes) {
       .catch(e => console.error('Write res.json failed:', e.message));
     const responseMetadata = buildResponseMetadata('openai', response, proxyRes);
     responseMetadata.streaming = true;
-    const usage = response?.usage || null;
+    const usage = getParser('openai').extractUsage(response);
 
     const entry = {
       id, ts: ctx.ts, sessionId: reqSessionId, method: ctx.clientReq.method, url: stripAuthParams(ctx.clientReq.url),
@@ -847,7 +848,7 @@ function handleNonSSEResponse(ctx, proxyRes, clientRes) {
         || null);
     const toolFail = provider === 'anthropic' ? helpers.hasToolFail(parsedBody) : false;
     const stopReason = provider === 'openai' ? ((openAIResponse || resData)?.status || '') : (resData?.stop_reason || '');
-    const usage = provider === 'openai' ? ((openAIResponse || resData)?.usage || null) : null;
+    const usage = getParser(provider)?.extractUsage(openAIResponse || resData) || null;
     const currMsgCount = provider === 'openai'
       ? (Array.isArray(parsedBody?.input) ? parsedBody.input.length : 0)
       : (parsedBody?.messages?.length || 0);
