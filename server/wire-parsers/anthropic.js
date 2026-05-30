@@ -1,89 +1,7 @@
 'use strict';
 
-const crypto = require('crypto');
-const { extractAgentType, splitB2IntoBlocks } = require('../system-prompt');
+const { extractAgentType } = require('../system-prompt');
 const store = require('../store');
-
-// ── dedupExtract ────────────────────────────────────────────
-// From index.js:287-301 + 376-404 (Anthropic path)
-function dedupExtract(parsedBody) {
-  const sharedFiles = [];
-  let sysHash = null;
-  let toolsHash = null;
-  let coreHash = null;
-  let versionInfo = null;
-
-  if (parsedBody.system) {
-    sysHash = crypto.createHash('sha256').update(JSON.stringify(parsedBody.system)).digest('hex').slice(0, 12);
-    sharedFiles.push({ name: `sys_${sysHash}.json`, data: JSON.stringify(parsedBody.system) });
-  }
-  if (parsedBody.tools) {
-    toolsHash = crypto.createHash('sha256').update(JSON.stringify(parsedBody.tools)).digest('hex').slice(0, 12);
-    sharedFiles.push({ name: `tools_${toolsHash}.json`, data: JSON.stringify(parsedBody.tools) });
-  }
-
-  // coreHash from B2 (system[2]) — for version tracking
-  if (Array.isArray(parsedBody.system) && parsedBody.system.length >= 3) {
-    const b0 = parsedBody.system[0]?.text || '';
-    const b2 = parsedBody.system[2]?.text || '';
-    const liveM = b0.match(/cc_version=(\S+?)[; ]/);
-    const liveVer = liveM ? liveM[1] : null;
-    const { key: agentKey, label: agentLabel } = extractAgentType(parsedBody.system);
-
-    if (b2.length >= 500) {
-      const coreText = splitB2IntoBlocks(b2).coreInstructions || '';
-      coreHash = crypto.createHash('md5').update(coreText).digest('hex').slice(0, 12);
-      if (liveVer || agentKey !== 'unknown') {
-        versionInfo = {
-          agentKey, agentLabel, coreHash, coreText,
-          version: liveVer, b2Len: b2.length,
-          sharedFile: sysHash ? `sys_${sysHash}.json` : null,
-        };
-      }
-    }
-  }
-
-  return { sysHash, toolsHash, coreHash, sharedFiles, versionInfo };
-}
-
-// ── extractDeltaSlice ───────────────────────────────────────
-// From index.js:324-353 (Anthropic delta-log path)
-// prevState: { id, messages, deltaCount } from caller's sessionLastReq Map
-// currReq: { id, parsedBody, sysHash, toolsHash }
-// Returns: { stripped, trackingState } or null (full write)
-function extractDeltaSlice(prevState, currReq, { snapshotInterval = 0 } = {}) {
-  const { findSharedPrefix } = require('../delta-helpers');
-  const currMessages = Array.isArray(currReq.parsedBody.messages) ? currReq.parsedBody.messages : [];
-  const sharedCount = prevState ? findSharedPrefix(prevState.messages, currMessages) : 0;
-  const forceFull = !prevState ||
-    (snapshotInterval > 0 && (prevState.deltaCount || 0) >= snapshotInterval);
-
-  if (!forceFull && sharedCount >= 2) {
-    return {
-      stripped: {
-        model: currReq.parsedBody.model,
-        max_tokens: currReq.parsedBody.max_tokens,
-        prevId: prevState.id,
-        msgOffset: sharedCount,
-        messages: currMessages.slice(sharedCount),
-        sysHash: currReq.sysHash,
-        toolsHash: currReq.toolsHash,
-      },
-      trackingState: { id: currReq.id, messages: currMessages, deltaCount: (prevState.deltaCount || 0) + 1 },
-    };
-  }
-
-  return {
-    stripped: {
-      model: currReq.parsedBody.model,
-      max_tokens: currReq.parsedBody.max_tokens,
-      messages: currMessages,
-      sysHash: currReq.sysHash,
-      toolsHash: currReq.toolsHash,
-    },
-    trackingState: { id: currReq.id, messages: currMessages, deltaCount: 0 },
-  };
-}
 
 // ── isNoiseRequest ──────────────────────────────────────────
 function isNoiseRequest(_url, _headers, _parsedBody) {
@@ -151,8 +69,6 @@ function detectSession(_req, _headers, parsedBody) {
 }
 
 module.exports = {
-  dedupExtract,
-  extractDeltaSlice,
   isNoiseRequest,
   normalizeListMeta,
   extractUsage,

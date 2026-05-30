@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 
 const openai = require('../server/wire-parsers/openai');
-const { getParser, safeCall } = require('../server/wire-parsers');
+const { getParser } = require('../server/wire-parsers');
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'wire-parsers', 'openai');
 const loadFixture = name => JSON.parse(fs.readFileSync(path.join(FIXTURES, name), 'utf8'));
@@ -15,7 +15,6 @@ describe('wire-parsers/openai registry', () => {
   it('getParser returns openai parser', () => {
     const parser = getParser('openai');
     assert.ok(parser);
-    assert.equal(typeof parser.dedupExtract, 'function');
     assert.equal(typeof parser.extractUsage, 'function');
     assert.equal(typeof parser.isNoiseRequest, 'function');
     assert.equal(typeof parser.preprocessBody, 'function');
@@ -23,54 +22,6 @@ describe('wire-parsers/openai registry', () => {
 });
 
 describe('wire-parsers/openai', () => {
-  describe('dedupExtract', () => {
-    it('extracts sysHash and toolsHash from codex request', () => {
-      const req = loadFixture('turn1_req.json');
-      const result = openai.dedupExtract(req);
-
-      assert.ok(result.sysHash, 'should have sysHash from instructions');
-      assert.ok(result.toolsHash, 'should have toolsHash');
-      assert.equal(result.sysHash.length, 12);
-      assert.equal(result.toolsHash.length, 12);
-      assert.ok(result.sharedFiles.some(f => f.name.startsWith('openai_instructions_')));
-      assert.ok(result.sharedFiles.some(f => f.name.startsWith('openai_tools_')));
-    });
-
-    it('returns stable hashes', () => {
-      const req = loadFixture('turn1_req.json');
-      const r1 = openai.dedupExtract(req);
-      const r2 = openai.dedupExtract(req);
-      assert.equal(r1.sysHash, r2.sysHash);
-      assert.equal(r1.toolsHash, r2.toolsHash);
-    });
-
-    it('handles missing instructions/tools', () => {
-      const result = openai.dedupExtract({ model: 'gpt-5.5' });
-      assert.equal(result.sysHash, null);
-      assert.equal(result.toolsHash, null);
-      assert.deepEqual(result.sharedFiles, []);
-    });
-
-    it('produces versionInfo with prompt metadata', () => {
-      const req = loadFixture('turn1_req.json');
-      const result = openai.dedupExtract(req);
-      // instructions is a string → should produce versionInfo
-      if (result.versionInfo) {
-        assert.ok(result.versionInfo.agentKey);
-        assert.ok(result.versionInfo.agentLabel);
-        assert.ok(result.versionInfo.promptMetaFile);
-        assert.ok(result.sharedFiles.some(f => f.name.startsWith('openai_prompt_meta_')));
-      }
-    });
-  });
-
-  describe('extractDeltaSlice', () => {
-    it('always returns null for OpenAI', () => {
-      assert.equal(openai.extractDeltaSlice({}, {}), null);
-      assert.equal(openai.extractDeltaSlice(null, null), null);
-    });
-  });
-
   describe('isNoiseRequest', () => {
     it('filters codex platform noise paths', () => {
       const noisePaths = loadFixture('noise_paths.json');

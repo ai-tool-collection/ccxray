@@ -1,8 +1,6 @@
 'use strict';
 
-const crypto = require('crypto');
 const store = require('../store');
-const { extractPromptAgentType } = require('../system-prompt');
 
 // ── Low-level helpers (also exported for ws-proxy.js) ───────
 
@@ -67,47 +65,7 @@ function withCodexMetadata(parsedBody, headers) {
   return { ...parsedBody, metadata };
 }
 
-// ── WIRE_PARSERS interface (7 methods) ──────────────────────
-
-// From index.js:302-322 (OpenAI dedup path)
-function dedupExtract(parsedBody) {
-  const sharedFiles = [];
-  let sysHash = null;
-  let toolsHash = null;
-  let coreHash = null;
-  let versionInfo = null;
-
-  if (parsedBody.instructions != null) {
-    sysHash = crypto.createHash('sha256').update(JSON.stringify(parsedBody.instructions)).digest('hex').slice(0, 12);
-    sharedFiles.push({ name: `openai_instructions_${sysHash}.json`, data: JSON.stringify(parsedBody.instructions) });
-
-    if (typeof parsedBody.instructions === 'string') {
-      const { key: agentKey, label: agentLabel } = extractPromptAgentType('openai', parsedBody);
-      if (agentKey && agentKey !== 'unknown') {
-        coreHash = crypto.createHash('md5').update(parsedBody.instructions).digest('hex').slice(0, 12);
-        versionInfo = {
-          agentKey, agentLabel, coreHash,
-          promptText: parsedBody.instructions,
-          sharedFile: `openai_instructions_${sysHash}.json`,
-          promptMetaFile: { name: `openai_prompt_meta_${sysHash}.json`, data: JSON.stringify({ agentKey, agentLabel }) },
-        };
-        sharedFiles.push(versionInfo.promptMetaFile);
-      }
-    }
-  }
-
-  if (parsedBody.tools) {
-    toolsHash = crypto.createHash('sha256').update(JSON.stringify(parsedBody.tools)).digest('hex').slice(0, 12);
-    sharedFiles.push({ name: `openai_tools_${toolsHash}.json`, data: JSON.stringify(parsedBody.tools) });
-  }
-
-  return { sysHash, toolsHash, coreHash, sharedFiles, versionInfo };
-}
-
-// OpenAI has no delta-log support
-function extractDeltaSlice(_prevState, _currReq, _opts) {
-  return null;
-}
+// ── WIRE_PARSERS interface ──────────────────────────────────
 
 // From config.js:169-177 (isCodexPlatformNoisePath)
 function isNoiseRequest(url, _headers, _parsedBody) {
@@ -190,8 +148,6 @@ function preprocessBody(parsedBody, headers) {
 
 module.exports = {
   // WIRE_PARSERS interface
-  dedupExtract,
-  extractDeltaSlice,
   isNoiseRequest,
   normalizeListMeta,
   extractUsage,

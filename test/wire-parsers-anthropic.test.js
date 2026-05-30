@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 
 const anthropic = require('../server/wire-parsers/anthropic');
-const { getParser, safeCall, SAFE_DEFAULTS } = require('../server/wire-parsers');
+const { getParser } = require('../server/wire-parsers');
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'wire-parsers', 'anthropic');
 const loadFixture = name => JSON.parse(fs.readFileSync(path.join(FIXTURES, name), 'utf8'));
@@ -15,111 +15,15 @@ describe('wire-parsers/index', () => {
   it('getParser returns anthropic parser', () => {
     const parser = getParser('anthropic');
     assert.ok(parser);
-    assert.equal(typeof parser.dedupExtract, 'function');
     assert.equal(typeof parser.extractUsage, 'function');
   });
 
   it('getParser returns null for unknown provider', () => {
     assert.equal(getParser('gemini'), null);
   });
-
-  it('safeCall returns fallback on error', () => {
-    const badParser = { boom() { throw new Error('kaboom'); } };
-    const result = safeCall(badParser, 'boom', [], 'fallback-value');
-    assert.equal(result, 'fallback-value');
-  });
-
-  it('safeCall returns fallback when method missing', () => {
-    const result = safeCall({}, 'nonexistent', [], 'fb');
-    assert.equal(result, 'fb');
-  });
-
-  it('safeCall uses SAFE_DEFAULTS when no explicit fallback', () => {
-    const badParser = { extractUsage() { throw new Error('fail'); } };
-    const result = safeCall(badParser, 'extractUsage', [null]);
-    assert.equal(result, SAFE_DEFAULTS.extractUsage);
-  });
 });
 
 describe('wire-parsers/anthropic', () => {
-  describe('dedupExtract', () => {
-    it('extracts sysHash and toolsHash from request body', () => {
-      const req = loadFixture('turn1_req.json');
-      const result = anthropic.dedupExtract(req);
-
-      assert.ok(result.sysHash, 'should have sysHash');
-      assert.ok(result.toolsHash, 'should have toolsHash');
-      assert.equal(result.sysHash.length, 12);
-      assert.equal(result.toolsHash.length, 12);
-      assert.ok(result.sharedFiles.length >= 2, 'should have at least sys + tools shared files');
-      assert.ok(result.sharedFiles.some(f => f.name.startsWith('sys_')));
-      assert.ok(result.sharedFiles.some(f => f.name.startsWith('tools_')));
-    });
-
-    it('returns stable hashes for same input', () => {
-      const req = loadFixture('turn1_req.json');
-      const r1 = anthropic.dedupExtract(req);
-      const r2 = anthropic.dedupExtract(req);
-      assert.equal(r1.sysHash, r2.sysHash);
-      assert.equal(r1.toolsHash, r2.toolsHash);
-    });
-
-    it('handles missing system/tools gracefully', () => {
-      const result = anthropic.dedupExtract({ model: 'test', messages: [] });
-      assert.equal(result.sysHash, null);
-      assert.equal(result.toolsHash, null);
-      assert.deepEqual(result.sharedFiles, []);
-    });
-
-    it('computes coreHash when B2 is long enough', () => {
-      const req = loadFixture('turn1_req.json');
-      // Our fixture B2 is short — coreHash should be null
-      const result = anthropic.dedupExtract(req);
-      assert.equal(result.coreHash, null, 'short B2 should not produce coreHash');
-
-      // Longer B2
-      const longReq = JSON.parse(JSON.stringify(req));
-      longReq.system[2].text = 'A'.repeat(600);
-      const longResult = anthropic.dedupExtract(longReq);
-      assert.ok(longResult.coreHash, 'long B2 should produce coreHash');
-      assert.equal(longResult.coreHash.length, 12);
-    });
-  });
-
-  describe('extractDeltaSlice', () => {
-    it('returns full write when no prevState', () => {
-      const req = loadFixture('turn1_req.json');
-      const result = anthropic.extractDeltaSlice(null, { id: 't1', parsedBody: req, sysHash: 'abc', toolsHash: 'def' });
-      assert.ok(result.stripped);
-      assert.ok(!result.stripped.prevId, 'first turn should not have prevId');
-      assert.ok(result.stripped.messages);
-      assert.deepEqual(result.trackingState, { id: 't1', messages: req.messages, deltaCount: 0 });
-    });
-
-    it('produces delta when messages share prefix', () => {
-      const turn1 = loadFixture('turn1_req.json');
-      const turn2 = loadFixture('turn2_req.json');
-      const prevState = { id: 't1', messages: turn1.messages, deltaCount: 0 };
-      const result = anthropic.extractDeltaSlice(prevState, { id: 't2', parsedBody: turn2, sysHash: 'abc', toolsHash: 'def' });
-
-      assert.ok(result.stripped);
-      if (turn2.messages.length > turn1.messages.length) {
-        assert.equal(result.stripped.prevId, 't1');
-        assert.ok(result.stripped.msgOffset >= 2, 'should share at least 2 messages');
-        assert.ok(result.stripped.messages.length < turn2.messages.length, 'delta should have fewer messages');
-        assert.ok(result.trackingState.deltaCount > 0);
-      }
-    });
-
-    it('forces full write when snapshot interval reached', () => {
-      const req = loadFixture('turn1_req.json');
-      const prevState = { id: 't0', messages: req.messages, deltaCount: 5 };
-      const result = anthropic.extractDeltaSlice(prevState, { id: 't1', parsedBody: req, sysHash: 'a', toolsHash: 'b' }, { snapshotInterval: 5 });
-      assert.ok(!result.stripped.prevId, 'should force full when snapshot interval reached');
-      assert.equal(result.trackingState.deltaCount, 0);
-    });
-  });
-
   describe('isNoiseRequest', () => {
     it('always returns false for Anthropic', () => {
       assert.equal(anthropic.isNoiseRequest('/v1/messages', {}, {}), false);

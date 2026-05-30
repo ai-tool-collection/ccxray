@@ -19,11 +19,11 @@ const { extractAgentType, extractPromptAgentType, splitB2IntoBlocks } = require(
 const { findSharedPrefix } = require('./delta-helpers');
 const providers = require('./providers');
 const { handleWebSocketUpgrade, drainWebSocketProxy } = require('./ws-proxy');
+const { WIRE_PARSERS, getParser } = require('./wire-parsers');
 const {
   getCodexRawSessionId,
   isOpenAISubagent,
-} = require('./openai-session');
-const { WIRE_PARSERS, getParser } = require('./wire-parsers');
+} = require('./wire-parsers/openai');
 
 // ── CLI: parse flags and detect provider launchers ──
 const portIdx = process.argv.indexOf('--port');

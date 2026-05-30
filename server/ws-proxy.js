@@ -8,11 +8,12 @@ const { broadcast, broadcastSessionStatus } = require('./sse-broadcast');
 const { isUpstreamAuthenticated } = require('./auth');
 const { stripAuthParams } = require('./url-sanitize');
 const {
-  detectOpenAISession,
+  detectSession: _detectOpenAISession3,
   getCodexSessionId,
   getOpenAIAgentTypeFromHeaders,
   parseCodexTurnMetadata,
-} = require('./openai-session');
+} = require('./wire-parsers/openai');
+const detectOpenAISession = (headers, body) => _detectOpenAISession3(null, headers, body);
 
 const HOP_BY_HOP_HEADERS = new Set([
   'connection',
