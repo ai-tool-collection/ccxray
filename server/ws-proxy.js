@@ -16,9 +16,6 @@ const {
 } = require('./wire-parsers/openai');
 const detectOpenAISession = (headers, body) => _detectOpenAISession3(null, headers, body);
 
-let _cwdFallback = null;
-function setCwdFallback(fn) { _cwdFallback = fn; }
-
 // Large envelope events skipped from timeline capture — each is ~35KB (full response object).
 // Blacklist (not whitelist) so new event types are automatically captured.
 const WS_SKIP_EVENTS = new Set([
@@ -140,10 +137,7 @@ function getWorkspaceCwd(turnMetadata) {
   const first = Object.values(workspaces).find(v => typeof v === 'string');
   if (first) return first;
   const nested = Object.values(workspaces).find(v => v && typeof v === 'object' && typeof v.cwd === 'string');
-  if (nested?.cwd) return nested.cwd;
-  // Codex encodes workspaces as { "/path/to/dir": { has_changes: true } }
-  const pathKey = Object.keys(workspaces).find(k => k.startsWith('/'));
-  return pathKey || null;
+  return nested?.cwd || null;
 }
 
 function safeSend(target, data, isBinary) {
@@ -349,7 +343,7 @@ function handleWebSocketUpgrade(req, socket, head) {
   const sessionId = detected.sessionId;
   const turnMetadata = parseCodexTurnMetadata(req.headers);
   const agentType = getOpenAIAgentTypeFromHeaders(req.headers);
-  const cwd = getWorkspaceCwd(turnMetadata) || (typeof _cwdFallback === 'function' ? _cwdFallback() : null);
+  const cwd = getWorkspaceCwd(turnMetadata);
   const endpoint = (req.url || '').split('?')[0];
 
   if (!store.sessionMeta[sessionId]) store.sessionMeta[sessionId] = {};
@@ -536,5 +530,4 @@ module.exports = {
   isOpenAIWebSocket,
   normalizeCloseCode,
   drainWebSocketProxy,
-  setCwdFallback,
 };

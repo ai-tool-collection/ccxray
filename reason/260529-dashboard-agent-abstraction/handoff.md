@@ -149,8 +149,10 @@ Architecture 鳥瞰圖（4 registry + disk + dispatch keys 對照表）。要在
 - [x] Phase 4b: Cleanup — 刪 dead code + 刪 openai-session.js。done。
 - [x] Phase 5: WS frame capture — 27 行改動。done。
 - [x] Phase 6: Codex parity gaps — G1-G10 done (2 commits, 57 行)。HTTP SSE + WS entries 完整 metadata（cost/tokens/maxContext/model）。OpenAI pricing rates。Codex tool aliases。
-- [x] Phase 7: Integration tests — done (2 new test files, 7 test cases). WS frame→buildMergedSteps pipeline, 1.9.x provider compat, summarizeEntry fallback. G11-G13 deferred (不 block release).
-- [ ] Phase 8: Cleanup + release — **next**
+- [x] Phase 7: Integration tests — done (2 new test files, 7 test cases). WS frame→buildMergedSteps pipeline, 1.9.x provider compat, summarizeEntry fallback.
+- [x] Phase 7b: G11 provider badge + G13 perMessage tokens — committed (4788ab9), then user manually reverted G11/G13 + cleaned up setCwdFallback + simplified version index. **6 files with uncommitted cleanup changes.**
+- [x] Phase 7c: WS cwd fix — committed (3b0b691), WS sessions inherit cwd from Codex workspaces metadata.
+- [ ] Phase 8: Comprehensive UI audit — **next** (see below)
 
 ## Phase 6 完成明細
 
@@ -180,9 +182,30 @@ G1-G9（呼叫已有函數）+ G10（tool aliases）已 commit。
 - 精確 OpenAI token count: 需 tiktoken dependency → 不加，用 ±15% 近似
 - extractOpenAIToolCalls: 缺帶 tool call 的 fixture → defer
 
+## Phase 8: Comprehensive UI Audit（下一步）
+
+使用者要求用 workflow 做完整的 Claude vs Codex dashboard 體驗對比審計：
+
+1. 列出 dashboard 中 Claude Code 可觀察的所有資料項及其 UI 位置
+2. 建立 Codex session（ccxray --port 5600），用 browser automation 截圖每個 UI 區域
+3. 逐項比對 Codex 是否在對應位置提供正確資料
+4. 找出所有缺口，每個缺口做 deep research 找 9+/10 分的解法
+5. 做事前驗屍，找出風險和解方
+6. 整理成單一 HTML 報告（含截圖），**不實作**，等使用者拍板
+
+### 未 commit 的改動（6 files）
+
+使用者手動做的 cleanup，接續時需要先 commit 或確認：
+- `public/system-prompt-ui.js` — 移除 G11 provider badge
+- `server/helpers.js` — revert G13 perMessage tokens（簡化為只算 total）
+- `server/index.js` — 移除 setCwdFallback import
+- `server/restore.js` — version index 移除 provider 欄位
+- `server/routes/api.js` — API response 移除 provider 欄位
+- `server/ws-proxy.js` — 移除 setCwdFallback + 簡化 getWorkspaceCwd
+
 ## 立刻接續時的第一步
 
 1. `git log --oneline main..HEAD | head` 確認 branch 狀態
-2. 讀這份 handoff + `openspec/changes/2026-05-29-dashboard-agent-abstraction/design.md`
-3. 繼續下一個未完成的 Phase
-4. **用 `--port 5579` + `CCXRAY_HOME=/tmp/test` 做隔離 smoke test**
+2. `git diff --stat` 確認未 commit 的 cleanup 改動
+3. 讀這份 handoff
+4. 執行 Phase 8 UI audit workflow
