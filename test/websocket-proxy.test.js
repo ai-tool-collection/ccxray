@@ -436,6 +436,101 @@ describe('OpenAI Responses WebSocket proxy', () => {
     assert.ok(messages.includes('echo:ping'));
   });
 
+  it('captures response.create frame content in _req.json and populates tokens/msgCount/toolCount', async () => {
+    upstreamWss = new WebSocket.Server({ server: upstreamServer, path: '/v1/responses' });
+    upstreamWss.on('connection', ws => {
+      ws.on('message', () => {
+        ws.send(JSON.stringify({ type: 'response.output_text.delta', delta: 'hi' }));
+        ws.send(JSON.stringify({
+          type: 'response.completed',
+          response: {
+            usage: { input_tokens: 500, output_tokens: 20 },
+            model: 'gpt-5.5',
+          },
+        }));
+      });
+    });
+    await startProxy();
+
+    const sessionId = 'ws-capture-test-001';
+    const ws = new WebSocket(`ws://localhost:${proxyPort}/v1/responses`, {
+      headers: {
+        'openai-beta': 'responses_websockets=2026-02-06',
+        session_id: sessionId,
+      },
+    });
+    await new Promise((resolve, reject) => {
+      ws.on('open', resolve);
+      ws.on('error', reject);
+    });
+
+    ws.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.5',
+      instructions: 'You are a test assistant.',
+      input: [
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Say hello' }] },
+      ],
+      tools: [
+        { type: 'function', name: 'shell', description: 'Run command', parameters: { type: 'object' } },
+        { type: 'function', name: 'read_file', description: 'Read a file', parameters: { type: 'object' } },
+      ],
+      tool_choice: 'auto',
+    }));
+
+    await new Promise(resolve => setTimeout(resolve, 500));
+    ws.close(1000, 'done');
+    await new Promise(resolve => ws.on('close', resolve));
+
+    const entry = await waitForIndexEntry(path.join(testHome, 'logs'), e => e.sessionId === sessionId);
+    assert.equal(entry.msgCount, 1, 'msgCount should reflect input array length');
+    assert.equal(entry.toolCount, 2, 'toolCount should reflect tools array length');
+
+    const reqLog = JSON.parse(fs.readFileSync(path.join(testHome, 'logs', `${entry.id}_req.json`), 'utf8'));
+    assert.equal(reqLog.provider, 'openai');
+    assert.equal(reqLog.model, 'gpt-5.5');
+    assert.equal(reqLog.instructions, 'You are a test assistant.');
+    assert.equal(reqLog.transport, 'websocket');
+    assert.equal(reqLog.capture, undefined, 'capture should NOT be transport-only when content is captured');
+    assert.ok(Array.isArray(reqLog.input), 'input array should be present');
+    assert.equal(reqLog.input.length, 1);
+    assert.equal(reqLog.input[0].role, 'user');
+    assert.ok(Array.isArray(reqLog.tools), 'tools array should be present');
+    assert.equal(reqLog.tools.length, 2);
+    assert.equal(reqLog.tool_choice, 'auto');
+  });
+
+  it('falls back to transport-only when client sends non-JSON frames', async () => {
+    upstreamWss = new WebSocket.Server({ server: upstreamServer, path: '/v1/responses' });
+    upstreamWss.on('connection', ws => {
+      ws.on('message', () => ws.send('pong'));
+    });
+    await startProxy();
+
+    const sessionId = 'ws-capture-fallback-001';
+    const ws = new WebSocket(`ws://localhost:${proxyPort}/v1/responses`, {
+      headers: {
+        'openai-beta': 'responses_websockets=2026-02-06',
+        session_id: sessionId,
+      },
+    });
+    await new Promise((resolve, reject) => {
+      ws.on('open', resolve);
+      ws.on('error', reject);
+    });
+    ws.send('not json');
+    await new Promise(resolve => setTimeout(resolve, 200));
+    ws.close(1000, 'done');
+    await new Promise(resolve => ws.on('close', resolve));
+
+    const entry = await waitForIndexEntry(path.join(testHome, 'logs'), e => e.sessionId === sessionId);
+    assert.equal(entry.msgCount, 0, 'msgCount should be 0 for non-captured frames');
+
+    const reqLog = JSON.parse(fs.readFileSync(path.join(testHome, 'logs', `${entry.id}_req.json`), 'utf8'));
+    assert.equal(reqLog.capture, 'transport-only', 'should fall back to transport-only');
+    assert.equal(reqLog.instructions, undefined, 'no instructions in transport-only');
+  });
+
   it('returns 404 for upgrades on non-OpenAI WebSocket paths', async () => {
     await startProxy();
     const ws = new WebSocket(`ws://localhost:${proxyPort}/v1/messages`);

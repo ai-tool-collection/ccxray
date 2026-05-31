@@ -206,19 +206,37 @@ function normalizeCloseCode(code) {
 
 async function recordWebSocketEntry(ctx, result) {
   const elapsed = ((Date.now() - ctx.startTime) / 1000).toFixed(1);
-  const reqLog = {
-    transport: 'websocket',
-    capture: 'transport-only',
-    method: ctx.req.method,
-    url: stripAuthParams(ctx.req.url),
-    endpoint: ctx.endpoint,
-    headers: {
-      openaiBeta: ctx.req.headers['openai-beta'] || null,
-      sessionId: ctx.sessionId,
-      agentType: ctx.agentType,
-    },
-    metadata: ctx.turnMetadata || null,
+  const cr = ctx.clientRequest;
+  const baseHeaders = {
+    openaiBeta: ctx.req.headers['openai-beta'] || null,
+    sessionId: ctx.sessionId,
+    agentType: ctx.agentType,
   };
+  const reqLog = cr
+    ? {
+      provider: 'openai',
+      model: cr.model,
+      instructions: cr.instructions,
+      input: cr.input,
+      tools: cr.tools,
+      tool_choice: cr.tool_choice,
+      previous_response_id: cr.previous_response_id,
+      transport: 'websocket',
+      method: ctx.req.method,
+      url: stripAuthParams(ctx.req.url),
+      endpoint: ctx.endpoint,
+      headers: baseHeaders,
+      metadata: ctx.turnMetadata || null,
+    }
+    : {
+      transport: 'websocket',
+      capture: 'transport-only',
+      method: ctx.req.method,
+      url: stripAuthParams(ctx.req.url),
+      endpoint: ctx.endpoint,
+      headers: baseHeaders,
+      metadata: ctx.turnMetadata || null,
+    };
   const hasEvents = ctx.responseEvents.length > 0;
   const resLog = hasEvents
     ? ctx.responseEvents
@@ -258,7 +276,7 @@ async function recordWebSocketEntry(ctx, result) {
     elapsed,
     status: result.status,
     isSSE: false,
-    tokens: null,
+    tokens: cr ? helpers.tokenizeRequest(reqLog) : null,
     usage: ctx.lastUsage || null,
     cost: calculateCost(ctx.lastUsage, ctx.lastModel),
     responseMetadata,
@@ -267,8 +285,8 @@ async function recordWebSocketEntry(ctx, result) {
     receivedAt: ctx.startTime,
     duplicateToolCalls: null,
     model: ctx.lastModel || null,
-    msgCount: 0,
-    toolCount: 0,
+    msgCount: Array.isArray(cr?.input) ? cr.input.length : 0,
+    toolCount: Array.isArray(cr?.tools) ? cr.tools.length : 0,
     toolCalls: {},
     isSubagent: ctx.agentType === 'explorer' || ctx.agentType === 'worker',
     sessionInferred: ctx.sessionInferred,
@@ -323,6 +341,7 @@ async function recordWebSocketEntry(ctx, result) {
   entry.req = null;
   entry.res = null;
   entry._loaded = false;
+  ctx.clientRequest = null;
 }
 
 function handleWebSocketUpgrade(req, socket, head) {
@@ -375,6 +394,7 @@ function handleWebSocketUpgrade(req, socket, head) {
       responseEvents: [],
       lastUsage: null,
       lastModel: null,
+      clientRequest: null,
     };
     // Only client→upstream needs queueing; clientWs is already OPEN inside this
     // callback so upstream→client can always send directly via safeSend().
@@ -432,6 +452,23 @@ function handleWebSocketUpgrade(req, socket, head) {
       refreshIdleTimer();
       ctx.frameCounts.clientToUpstream += 1;
       ctx.byteCounts.clientToUpstream += frameSize(data);
+      if (!isBinary) {
+        try {
+          const parsed = JSON.parse(typeof data === 'string' ? data : data.toString());
+          if (parsed.type === 'response.create' && !ctx.clientRequest) {
+            ctx.clientRequest = {
+              model: parsed.model || null,
+              instructions: parsed.instructions || null,
+              input: parsed.input || null,
+              tools: parsed.tools || null,
+              tool_choice: parsed.tool_choice || null,
+              previous_response_id: parsed.previous_response_id || null,
+            };
+          } else if (parsed.type === 'session.update' && parsed.session?.instructions) {
+            if (ctx.clientRequest) ctx.clientRequest.instructions = parsed.session.instructions;
+          }
+        } catch {}
+      }
       const result = bufferOrSend(upstreamWs, upstreamBuffer, data, isBinary);
       if (result.overflow) {
         closeBoth(1009, 'client buffer exceeded');
