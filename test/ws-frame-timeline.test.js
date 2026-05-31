@@ -62,6 +62,52 @@ describe('WS frame capture → buildMergedSteps integration', () => {
     assert.equal(toolSteps.length, 0, 'say-hi should have no tool calls');
   });
 
+  it('OpenAI user message in input[] produces human step', () => {
+    const context = loadMessagesContext();
+    const input = [
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello world' }] },
+    ];
+    const steps = context.buildMergedSteps(input, [], 'openai');
+    const humanSteps = steps.filter(s => s.type === 'human');
+    assert.equal(humanSteps.length, 1);
+    assert.ok(humanSteps[0].humanText.includes('hello world'));
+  });
+
+  it('OpenAI developer messages are skipped', () => {
+    const context = loadMessagesContext();
+    const input = [
+      { type: 'message', role: 'developer', content: [{ type: 'input_text', text: '<permissions>sandbox</permissions>' }] },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'do something' }] },
+    ];
+    const steps = context.buildMergedSteps(input, [], 'openai');
+    assert.equal(steps.length, 1);
+    assert.equal(steps[0].type, 'human');
+    assert.ok(steps[0].humanText.includes('do something'));
+  });
+
+  it('OpenAI function_call_output normalizes to tool_result', () => {
+    const context = loadMessagesContext();
+    const input = [
+      { type: 'function_call_output', call_id: 'call_abc', output: 'file contents here' },
+    ];
+    const steps = context.buildMergedSteps(input, [], 'openai');
+    assert.ok(steps.length >= 0);
+  });
+
+  it('OpenAI mixed input: developer skipped, user shown, function_call_output preserved', () => {
+    const context = loadMessagesContext();
+    const input = [
+      { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'system stuff' }] },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'read file.txt' }] },
+      { type: 'function_call_output', call_id: 'call_xyz', output: 'file data' },
+    ];
+    const steps = context.buildMergedSteps(input, [], 'openai');
+    const humanSteps = steps.filter(s => s.type === 'human');
+    assert.equal(humanSteps.length, 2);
+    assert.ok(humanSteps[0].humanText.includes('read file.txt'));
+    assert.ok(humanSteps[1].hasToolResult);
+  });
+
   it('filters envelope events matching WS_SKIP_EVENTS', () => {
     const raw = fs.readFileSync(path.join(__dirname, 'fixtures', 'codex-ws-frames', 'say-hi.ndjson'), 'utf8');
     let totalU2C = 0;

@@ -169,8 +169,33 @@ function getResponseFunctionCallName(item) {
   return item?.name || item?.function?.name || item?.tool_name || item?.type || 'function_call';
 }
 
+function normalizeOpenAIInput(input) {
+  const msgs = [];
+  for (const item of input) {
+    if (item.type === 'message') {
+      if (item.role === 'developer') continue;
+      const blocks = Array.isArray(item.content) ? item.content : [];
+      const content = blocks.map(b => ({
+        type: 'text',
+        text: b.text || JSON.stringify(b),
+      }));
+      msgs.push({ role: item.role || 'user', content });
+    } else if (item.type === 'function_call_output') {
+      msgs.push({
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: item.call_id, content: item.output || '' }],
+      });
+    }
+  }
+  return msgs;
+}
+
 function buildMergedSteps(messages, resEvents, provider) {
   if ((!messages || !messages.length) && (!resEvents || !resEvents.length)) return [];
+
+  if (messages?.length && messages[0].type === 'message') {
+    messages = normalizeOpenAIInput(messages);
+  }
 
   // Phase 1a: Build tool_use_id → tool_result map
   const resultMap = new Map();
