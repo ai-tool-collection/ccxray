@@ -354,6 +354,7 @@ function addEntry(e) {
     title: e.title || null,
     coreHash: e.coreHash || null,
     thinkingStripped: e.thinkingStripped || false,
+    provider: e.provider || 'anthropic',
   });
 
   // ── V3 turn card: five-line layout ──

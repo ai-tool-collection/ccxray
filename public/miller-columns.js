@@ -2059,15 +2059,16 @@ function selectSession(id) {
   renderBreadcrumb();
 }
 
-// Coalesced render scheduler — merges multiple async render requests into one rAF
-let _renderDirty = false;
+// Coalesced render scheduler — merges multiple async render requests into one rAF.
+// Uses cancel-and-requeue so the latest call always wins (avoids race where an
+// earlier RAF fires before new data is available and no re-render is scheduled).
+let _renderRafId = null;
 let _renderCallback = null;
 function scheduleRender(afterRender) {
   if (afterRender) _renderCallback = afterRender;
-  if (_renderDirty) return;
-  _renderDirty = true;
-  requestAnimationFrame(() => {
-    _renderDirty = false;
+  if (_renderRafId) cancelAnimationFrame(_renderRafId);
+  _renderRafId = requestAnimationFrame(() => {
+    _renderRafId = null;
     if (selectedTurnIdx >= 0) {
       renderSectionsCol(selectedTurnIdx);
       renderDetailCol();
@@ -2239,8 +2240,8 @@ function renderSectionsCol(idx) {
     html += '<div style="padding:4px 12px 6px;border-bottom:1px solid var(--border)"><div style="height:8px;border-radius:2px;background:var(--border);margin:4px 0 2px"></div><div style="height:12px;width:80px;border-radius:2px;background:var(--border)"></div></div>';
   }
 
-  const coreTools = req.tools ? req.tools.filter(t => !t.name.startsWith('mcp__')) : null;
-  const mcpTools  = req.tools ? req.tools.filter(t =>  t.name.startsWith('mcp__')) : null;
+  const coreTools = req.tools ? req.tools.filter(t => t.name && !t.name.startsWith('mcp__')) : null;
+  const mcpTools  = req.tools ? req.tools.filter(t => t.name &&  t.name.startsWith('mcp__')) : null;
   const tc = allEntries[idx]?.toolCalls || {};
   const coreCalls = Object.entries(tc).filter(([n]) => !n.startsWith('mcp__')).reduce((s, [, c]) => s + c, 0);
   const mcpCalls  = Object.entries(tc).filter(([n]) =>  n.startsWith('mcp__')).reduce((s, [, c]) => s + c, 0);
@@ -2255,7 +2256,7 @@ function renderSectionsCol(idx) {
   const sysSubline = ccVer ? 'cc ' + ccVer : '';
 
   // Compute step stats for Timeline badge
-  const previewSteps = e.reqLoaded ? getCachedSteps(req.messages, resEvents) : [];
+  const previewSteps = e.reqLoaded ? getCachedSteps(req.messages || req.input, resEvents, e.provider || 'anthropic') : [];
   const stepCount = previewSteps.length;
   const stepErrorCount = previewSteps.filter(s => s.type === 'tool-group' && s.calls.some(c => c.isError)).length;
 
@@ -2606,7 +2607,7 @@ function renderDetailCol() {
     case 'core-tools':
     case 'mcp-tools': {
       const isMcp = selectedSection === 'mcp-tools';
-      const filtered = req.tools ? req.tools.filter(t => isMcp ? t.name.startsWith('mcp__') : !t.name.startsWith('mcp__')) : null;
+      const filtered = req.tools ? req.tools.filter(t => t.name && (isMcp ? t.name.startsWith('mcp__') : !t.name.startsWith('mcp__'))) : null;
       if (filtered?.length) {
         const usageCount = allEntries[selectedTurnIdx]?.toolCalls || {};
         const sorted = [...filtered].sort((a, b) => (usageCount[b.name] || 0) - (usageCount[a.name] || 0));

@@ -153,8 +153,9 @@ Architecture 鳥瞰圖（4 registry + disk + dispatch keys 對照表）。要在
 - [x] Phase 7b: G11 provider badge + G13 perMessage tokens — committed (4788ab9), then user manually reverted G11/G13 + cleaned up setCwdFallback + simplified version index. **6 files with uncommitted cleanup changes.**
 - [x] Phase 7c: WS cwd fix — committed (3b0b691), WS sessions inherit cwd from Codex workspaces metadata.
 - [x] Phase 8: Comprehensive UI audit — done (see below)
-- [x] Phase 8a: WS content capture — done, **未 commit**（ws-proxy.js +67行, test +95行, 690/690 pass）
-- [ ] Phase 8b: buildMergedSteps OpenAI support — **next**（Timeline "No messages" → 有內容）
+- [x] Phase 8a: WS content capture — **committed** (fea830c). ws-proxy.js +67行, test +95行
+- [x] Phase 8b: buildMergedSteps OpenAI support — **committed** (4e83ee8). normalizeOpenAIInput() + miller-columns 4 call sites + 4 TDD tests, 694/694 pass
+- [x] Lazy-load fix — **未 commit**。4 個 root causes（見「已修復」段落）。cross-cutting：`addEntry` 存 `provider` 讓後續 8c-8f 的 renderer selection 正確運作
 - [ ] Phase 8c: perMessage token breakdown — Minimap per-item bars
 - [ ] Phase 8d: extractToolCalls OpenAI — Tool chips
 - [ ] Phase 8e: WS_SKIP_EVENTS 修復 — 5 行，獨立可平行
@@ -194,12 +195,13 @@ Workflow（37 agents, 2.7M tokens）→ 5 個平行 audit agent 讀取完整 cod
 ### 依賴鏈（實施順序）
 
 ```
-Phase 8a: WS content capture (ws-proxy.js)     ← 第一張骨牌，解鎖 ~40% gaps
-  ├→ Phase 8b: buildMergedSteps OpenAI support  ← Timeline "No messages" → 有內容
-  ├→ Phase 8c: perMessage token breakdown       ← Minimap 有 per-item bars
-  ├→ Phase 8d: extractToolCalls OpenAI          ← Tool chips 顯示
-  ├→ Phase 8e: analyzeContext OpenAI            ← Context bar 有分段
-  └→ Phase 8f: System Prompt UI OpenAI          ← 版本歷史 + diff + browsing
+Phase 8a ✅ WS content capture
+  ├→ Phase 8b ✅ buildMergedSteps OpenAI support
+  │    └→ Lazy-load fix ✅ (未commit) ← addEntry 存 provider，解鎖正確 renderer selection
+  ├→ Phase 8c: perMessage token breakdown       ← Minimap per-item bars
+  ├→ Phase 8d: extractToolCalls OpenAI          ← Tool chips
+  └→ Phase 8f: System Prompt UI OpenAI          ← 版本歷史 + diff
+Phase 8e: WS_SKIP_EVENTS 修復                   ← 獨立，不依賴 8a
 ```
 
 ### 報告
@@ -243,9 +245,9 @@ Phase 8a: WS content capture (ws-proxy.js)     ← 第一張骨牌，解鎖 ~40%
 | Context bar 有 system/tools/messages 分段 | Tool chips（需 8d） |
 | `entry.msgCount` / `toolCount` 正確 | System Prompt 版本追蹤（需 8f） |
 
-### 狀態：DONE，未 commit
+### 狀態：DONE，已 commit（fea830c）
 
-改動已實施 + 測試通過。3 files changed, +243 -40：
+3 files changed, +243 -40：
 - `server/ws-proxy.js` — frame capture 邏輯（+67 行）
 - `test/websocket-proxy.test.js` — 2 個新 e2e test（+95 行）
 - `handoff.md` — 更新
@@ -264,15 +266,11 @@ Phase 8a: WS content capture (ws-proxy.js)     ← 第一張骨牌，解鎖 ~40%
 
 ## Phase 8b-8f: 剩餘缺口清單
 
-### 8b: buildMergedSteps OpenAI support（critical，~60 行）
+### 8b: buildMergedSteps OpenAI support — ✅ DONE (4e83ee8)
 
-**問題**：`public/messages.js` buildMergedSteps Phase 2 期望 `req.messages` + Anthropic content blocks（`type:text/thinking/tool_use/tool_result`）。OpenAI 用 `req.input` + 不同結構（`type:message` items, `type:input_text` blocks, `role:developer`）。
+`normalizeOpenAIInput()` adapter + `req.messages || req.input` fallback（4 call sites）+ 4 TDD tests。
 
-**解法方向**：在 Phase 2 加 format detection → OpenAI input adapter，把 `input[]` 轉成 step format。
-- **Adversarial review 評分**：原始 9 → **修正 7**
-- **修正原因**：Phase 2 接收 `req.messages`（由 miller-columns.js:2531 傳入），OpenAI 需傳 `req.input`；OpenAI 用 `type:input_text` 不是 `type:text`、`role:developer` 不是 `role:system`
-- **前置依賴**：Phase 8a（已完成 — _req.json 現在有 input[]）
-- **改動範圍**：`public/messages.js`（adapter）+ `public/miller-columns.js`（傳 `req.input` fallback）
+**已知限制**：`codex exec` single-turn session 的 `response.create` frame 裡 `input: []` 是空的（Codex 不在 input 裡放歷史），Timeline 只靠 `res` events（response.output_text.delta）渲染 response text。Multi-turn session 需要進一步驗證 `input` 是否有歷史 messages。
 
 ### 8c: perMessage token breakdown（critical，~25 行）
 
@@ -323,7 +321,7 @@ Phase 8a: WS content capture (ws-proxy.js)     ← 第一張骨牌，解鎖 ~40%
 | G2 | usage cache fields | minor | 8 | ✅ | OpenAI 無 cache fields → 顯式設 0（clean data hygiene）|
 | G3 | Cache read/write display | minor | 7 | ✅ | Turn-level 已正確隱藏，scorecard hover 需 provider check |
 | G4 | Session total tokens | minor | 7 | ✅ | Usage extraction works，真正問題是 per-entry token breakdown（Phase 8c 解決） |
-| G5 | Context MCP section | minor | 8 | ✅ | 如果 Codex 用 `mcp__` naming 則已 work；否則需 tool name parsing |
+| G5 | Context MCP section | minor | 8 | ⚠️ | Codex 不用 `mcp__` naming。且有 3 個 meta-tool（tool_search/web_search/image_generation）沒有 `.name` → `.name.startsWith` crash。**lazy-load fix 已加 guard（3 處）** |
 | G6 | Raw Request section | minor | 9 | ✅ | 純下游 — Phase 8a 完成後自動解決 |
 | G7 | OpenAI renderer processEvent | minor | 8 | ✅ | 需 audit 所有 event types，確保 switch/case 覆蓋完整 |
 | G8 | WS entry normalize (restore) | major | 8 | ✅ | `loadEntryReqRes` 需處理 WS format，依賴 8a + 8e |
@@ -378,21 +376,48 @@ G1-G9（呼叫已有函數）+ G10（tool aliases）已 commit。
 
 1. 讀這份 handoff
 2. `git log --oneline main..HEAD | head` 確認 branch 狀態
-3. `git diff --stat` — 應有 3 files changed（ws-proxy.js, test, handoff.md）
-4. 先 commit Phase 8a（WS content capture + tests，690/690 pass）
-5. 接著做 Phase 8b（buildMergedSteps OpenAI）— 這是使用者最在意的：Timeline 從 "No messages" → 有內容
-
-### Phase 8b 的具體切入點
-
-`public/messages.js` buildMergedSteps Phase 2（line ~172-285）：
-- 目前從 `messages` param 讀 Anthropic content blocks
-- 需要：detect OpenAI format（`input[]` with `type:message` items），轉成相同 step 結構
-- `public/miller-columns.js:2531` 傳 `req.messages` → 需加 `req.input` fallback
-- OpenAI 格式差異：`type:input_text`（非 text）、`role:developer`（非 system）、`type:function_call_output`（非 tool_result）
-- 可用 fixture 驗證：`test/fixtures/codex-ws-frames/say-hi.ndjson`（2-turn session with input[]）
+3. Commit lazy-load fix（2 files 未 commit，見「已修復」段落）
+4. 接著做 Phase 8e → 8c → 8d → 8f
 
 ### 實施建議順序
 
 ```
-8a ✅ commit → 8b（最大 UX 改善）→ 8e（5行快修）→ 8c → 8d → 8f
+8a ✅ → 8b ✅ → lazy-load fix ✅(未commit) → 8e（5行快修）→ 8c → 8d → 8f
 ```
+
+### 驗證方式（所有 phase 通用）
+
+```bash
+# 1. 啟動隔離 server
+CCXRAY_HOME=/tmp/ccxray-smoke-$$ CCXRAY_LOOPBACK_NO_AUTH=1 \
+  node server/index.js --port 5602 --no-browser
+
+# 2. 產生真實 Codex 流量（不要用 JS 注入假資料）
+codex exec -c 'openai_base_url="http://localhost:5602/v1"' "Say hello"
+
+# 3. browser-harness 開 dashboard 驗證
+browser-harness -c 'new_tab("http://localhost:5602/"); ...'
+```
+
+### 已修復：Lazy-load timing → Timeline 卡 "Loading..."
+
+Phase 8b e2e 驗證時發現：選中 Codex turn 後 Timeline 永久卡在 "⏳ Loading…"。
+
+**Root cause（4 個問題，用真實 `codex exec` 流量驗證）：**
+
+1. **`renderSectionsCol` crash（直接原因）**：Codex 的 `tool_search` / `web_search` / `image_generation` 沒有 `.name` 屬性 → `t.name.startsWith('mcp__')` throws TypeError → 整個 RAF callback abort → `renderDetailCol()` 永遠不被呼叫。RAF 裡的 uncaught error 不會出現在 console。
+2. **`addEntry` 沒存 `provider`**：SSE broadcast 有送 `provider: 'openai'`，但 `addEntry` 的 `allEntries.push({...})` 漏存 → `e.provider` 永遠 `undefined` → fallback 到 `'anthropic'` renderer → 不認得 `response.output_text.delta` events → 0 steps。
+3. **`scheduleRender` coalesce guard race**（防禦性修復）：`if (_renderDirty) return` 可能吃掉 prefetch 完成的 render 請求。改為 cancel-and-requeue。
+4. **`renderSectionsCol` preview badge** 沒用 `req.input` fallback → OpenAI entries 的 Timeline badge 永遠空白。
+
+**修復（未 commit，等確認）：**
+- `public/miller-columns.js`：`t.name &&` guard（3 處）、`scheduleRender` cancel-and-requeue、`getCachedSteps` 加 `req.input` fallback + `provider` 參數
+- `public/entry-rendering.js`：`addEntry` 存 `provider`
+
+**驗證方式：**
+用 `codex exec -c 'openai_base_url="http://localhost:5602/v1"' "Say hello"` 產生真實流量，browser-harness 開 dashboard 確認 Timeline 從 "⏳ Loading…" 變成正確顯示 response text。
+
+**教訓：**
+- 「函式沒被呼叫」→ 先在 caller 加 try-catch，不要理論推導 scheduling race（5 分鐘 vs 30 輪）
+- Smoke test 必須用真實 provider 流量，不要 JS 注入假 entry（假資料不暴露格式不符）
+- Codex 有 3 個 meta-tool 沒有 `.name`（tool_search、web_search、image_generation）→ 所有遍歷 `req.tools` 的地方都要 `t.name &&` guard
