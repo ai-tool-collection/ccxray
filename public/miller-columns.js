@@ -2521,8 +2521,8 @@ function renderDetailCol() {
 
   switch (selectedSection) {
     case 'system':
-      if (req.system) {
-        inner = '<div class="detail-content">' + renderSystemBlockViewer(req.system) + '</div>';
+      if (req.system || req.instructions) {
+        inner = '<div class="detail-content">' + renderSystemBlockViewer(req.system || req.instructions) + '</div>';
       } else { inner = e.reqLoaded ? '<div class="col-empty">No system prompt</div>' : loading; }
       break;
     case 'timeline': {
