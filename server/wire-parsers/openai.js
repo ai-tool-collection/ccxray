@@ -107,11 +107,19 @@ function extractUsage(resData) {
   // OpenAI response can be an object with .usage, or an array of SSE events
   const usage = resData.usage || (Array.isArray(resData) ? resData.find(e => e.usage)?.usage : null);
   if (!usage) return null;
-  return {
+  const result = {
     input_tokens: usage.input_tokens || usage.prompt_tokens || 0,
     output_tokens: usage.output_tokens || usage.completion_tokens || 0,
     total_tokens: usage.total_tokens || 0,
   };
+  // Canonical cache fields (provider-agnostic thin canonical)
+  const cached = usage.input_tokens_details?.cached_tokens || 0;
+  result.cache_read_input_tokens = cached;
+  result.cache_creation_input_tokens = 0;
+  // Preserve provider-native detail
+  if (usage.input_tokens_details) result.input_tokens_details = usage.input_tokens_details;
+  if (usage.output_tokens_details) result.output_tokens_details = usage.output_tokens_details;
+  return result;
 }
 
 // From system-prompt.js:82-99 + openai-session.js:33-42

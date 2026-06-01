@@ -13,6 +13,7 @@ const {
   getCodexSessionId,
   getOpenAIAgentTypeFromHeaders,
   parseCodexTurnMetadata,
+  extractUsage: extractOpenAIUsage,
 } = require('./wire-parsers/openai');
 const detectOpenAISession = (headers, body) => _detectOpenAISession3(null, headers, body);
 
@@ -490,7 +491,7 @@ function handleWebSocketUpgrade(req, socket, head) {
           if (parsed.type) {
             // Extract metadata from envelope events before skipping their large body
             const r = parsed.response || parsed;
-            if (r.usage) ctx.lastUsage = r.usage;
+            if (r.usage) ctx.lastUsage = extractOpenAIUsage({ usage: r.usage }) || r.usage;
             if (r.model) ctx.lastModel = r.model;
             if (!WS_SKIP_EVENTS.has(parsed.type)) {
               ctx.responseEvents.push(parsed);

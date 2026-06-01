@@ -143,9 +143,9 @@
 | Output tokens | `message_delta.usage.output_tokens` | `response.usage.output_tokens` or `completion_tokens` | `contractual` |
 | Cache creation | `usage.cache_creation_input_tokens` | N/A (no equivalent field) | `contractual` (Anthropic) |
 | Cache creation breakdown | `usage.cache_creation.ephemeral_5m_input_tokens`, `usage.cache_creation.ephemeral_1h_input_tokens` | N/A | `obs-fragile` |
-| Cache read | `usage.cache_read_input_tokens` | `usage.input_tokens_details.cached_tokens` (ccxray does not currently extract this field) | `contractual` (Anthropic) / `obs-fragile` (Codex) |
+| Cache read | `usage.cache_read_input_tokens` | `usage.input_tokens_details.cached_tokens` (ccxray maps to canonical `cache_read_input_tokens`) | `contractual` (Anthropic) / `obs-stable` (Codex) |
 | Stop reason (HTTP) | `message_delta.delta.stop_reason` (`end_turn`, `tool_use`, `max_tokens`) | `response.status` (`completed`, `failed`, `cancelled`) | `contractual` |
-| Stop reason (WS) | N/A | Derived from WS close event reason, not `response.status` | `obs-stable` |
+| Stop reason (WS) | N/A | `response.completed` / `response.done` events carry `response.status` on the wire. Note: ccxray currently stores the WS close reason instead (implementation detail, not wire behavior) | `contractual` (wire) / `obs-stable` (ccxray storage) |
 
 ---
 
