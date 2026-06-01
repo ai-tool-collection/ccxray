@@ -269,9 +269,12 @@ function tokenizeRequest(body) {
         const t = safeCountTokens(item.output || '');
         tokens = t;
         if (t > 0) blocks.push({ type: 'tool_result', tokens: t });
-      } else if (item.type === 'message') {
-        const content = Array.isArray(item.content) ? item.content : [];
-        for (const b of content) {
+      } else if (typeof item.content === 'string') {
+        const t = safeCountTokens(item.content);
+        tokens = t;
+        if (t > 0) blocks.push({ type: 'text', tokens: t });
+      } else if (Array.isArray(item.content)) {
+        for (const b of item.content) {
           const text = b.text || '';
           const t = safeCountTokens(text);
           tokens += t;
@@ -282,6 +285,9 @@ function tokenizeRequest(body) {
       return { role: item.role || 'user', tokens, blocks };
     });
     breakdown.messages = total;
+  } else if (body.input != null) {
+    const text = typeof body.input === 'string' ? body.input : JSON.stringify(body.input);
+    breakdown.messages = safeCountTokens(text);
   }
   breakdown.total = (breakdown.system || 0) + (breakdown.tools || 0) + (breakdown.messages || 0);
   breakdown.contextBreakdown = analyzeContext(body);
