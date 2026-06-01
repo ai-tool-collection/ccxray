@@ -138,7 +138,10 @@ function getWorkspaceCwd(turnMetadata) {
   const first = Object.values(workspaces).find(v => typeof v === 'string');
   if (first) return first;
   const nested = Object.values(workspaces).find(v => v && typeof v === 'object' && typeof v.cwd === 'string');
-  return nested?.cwd || null;
+  if (nested?.cwd) return nested.cwd;
+  // Codex format: keys are paths, values are metadata objects
+  const pathKey = Object.keys(workspaces).find(k => k.startsWith('/'));
+  return pathKey || null;
 }
 
 function safeSend(target, data, isBinary) {
