@@ -260,9 +260,28 @@ function tokenizeRequest(body) {
       return { role: m.role, tokens, blocks };
     });
     breakdown.messages = total;
-  } else if (body.input != null) {
-    const text = typeof body.input === 'string' ? body.input : JSON.stringify(body.input);
-    breakdown.messages = safeCountTokens(text);
+  } else if (Array.isArray(body.input) && body.input.length) {
+    let total = 0;
+    breakdown.perMessage = body.input.map(item => {
+      let tokens = 0;
+      const blocks = [];
+      if (item.type === 'function_call_output') {
+        const t = safeCountTokens(item.output || '');
+        tokens = t;
+        if (t > 0) blocks.push({ type: 'tool_result', tokens: t });
+      } else if (item.type === 'message') {
+        const content = Array.isArray(item.content) ? item.content : [];
+        for (const b of content) {
+          const text = b.text || '';
+          const t = safeCountTokens(text);
+          tokens += t;
+          if (t > 0) blocks.push({ type: 'text', tokens: t });
+        }
+      }
+      total += tokens;
+      return { role: item.role || 'user', tokens, blocks };
+    });
+    breakdown.messages = total;
   }
   breakdown.total = (breakdown.system || 0) + (breakdown.tools || 0) + (breakdown.messages || 0);
   breakdown.contextBreakdown = analyzeContext(body);
