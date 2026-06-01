@@ -372,18 +372,41 @@ G1-G9（呼叫已有函數）+ G10（tool aliases）已 commit。
 - 精確 OpenAI token count: 需 tiktoken dependency → 不加，用 Claude tokenizer 近似（±15%）
 - extractOpenAIToolCalls: Phase 8d 處理（Responses API format：`function_call_output` + `call_id`，非 Chat Completions format）
 
-## 立刻接續時的第一步
-
-1. 讀這份 handoff
-2. `git log --oneline main..HEAD | head` 確認 branch 狀態
-3. Commit lazy-load fix（2 files 未 commit，見「已修復」段落）
-4. 接著做 Phase 8e → 8c → 8d → 8f
-
-### 實施建議順序
+## 進度（2026-06-01 更新）
 
 ```
-8a ✅ → 8b ✅ → lazy-load fix ✅(未commit) → 8e（5行快修）→ 8c → 8d → 8f
+8a ✅ → 8b ✅ → lazy-load fix ✅ → 8e ✅ → 8d ✅ → 8c ✅ → 8f ✅
+全部 Phase 8 完成 + Codex review findings 修復 + regression tests
 ```
+
+### 已完成（2026-06-01）
+
+- **Phase 8e**: `WS_SKIP_EVENTS` 調整（response.completed/done 回到 skip set — usage/model 在 filter 前提取）
+- **Phase 8d**: `extractOpenAIToolCalls()` + server-side `OPENAI_TOOL_ALIASES`，tool chips 在 dashboard 顯示
+- **Phase 8c**: `tokenizeRequest` OpenAI input branch — perMessage breakdown（含 string content + no-type items 支援）
+- **Phase 8f**: System section fallback `req.system || req.instructions`
+- **CWD fix**: `getWorkspaceCwd()` 支援 Codex workspaces key-is-path 格式
+- **generate:false fix**: warm-up frame 搶先設定 `ctx.clientRequest` 導致 `input=[]`。1 行 guard 修復
+- **function_call normalization**: `normalizeOpenAIInput` 支援 `function_call` items → assistant `tool_use` blocks + `isOpenAIInput()` detection
+- **HTTP OpenAI toolCalls**: SSE path 用 `events`（非 `ctx.resData`），non-SSE path 用 `openAIEvents || response.output`
+- **Resume button**: `sess.agent`（`'claude'`/`'codex'`）驅動 resume 指令，codex-raw 隱藏 copy button
+- **Wire Protocol Reference**: `docs/wire-protocol-reference.md` Part 1 完成（186 行，6 sections，confidence tags）
+- **Regression tests**: `extractOpenAIToolCalls` unit tests + forward-path e2e tests（SSE text/event-stream + non-SSE JSON）
+
+### 教訓
+
+- **generate:false warm-up bug**: 觀察到 `input=[]` 就假設是協議限制，寫了 backfill workaround。Workflow review 發現真因是 warm-up frame 覆蓋。1 行 fix 取代 34 行 workaround。**教訓：異常值先驗證 root cause，不要直接寫 workaround。**
+- **forward.js variable naming**: SSE path 用了不存在的 `ctx.resData`，non-SSE path 傳 `[]`。Reviewer 抓到。**教訓：integration test 比 unit test 重要 — unit test 不測 wiring。**
+
+### Wire Protocol Doc — 待修 Review Findings（19 個）
+
+Workflow review 確認 21 個問題，已修 2 個 code issues，剩 19 個 doc issues。詳見 `docs/wire-protocol-reference.md` changelog。
+
+### 下一步
+
+1. Wire protocol doc findings batch fix（19 個）
+2. Part 2: ccxray Normalization Map
+3. Part 3: Explanation & War Stories
 
 ### 驗證方式（所有 phase 通用）
 
