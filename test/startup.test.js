@@ -785,6 +785,28 @@ describe('OpenAI Responses raw capture', () => {
       req.on('data', c => { body += c; });
       req.on('end', () => {
         receivedReq = { method: req.method, url: req.url, headers: req.headers, body };
+        if (req.url.includes('stream=1') && req.url.includes('tools=1')) {
+          // SSE response with function_call output item
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end([
+            'event: response.output_item.done',
+            'data: ' + JSON.stringify({
+              type: 'response.output_item.done',
+              item: { type: 'function_call', name: 'exec_command', call_id: 'call_t1', status: 'completed', arguments: '{"cmd":"ls"}' },
+              output_index: 0,
+            }),
+            '',
+            'event: response.completed',
+            'data: ' + JSON.stringify({
+              type: 'response.completed',
+              response: { id: 'resp_sse_tools', object: 'response', model: 'gpt-5.5', status: 'completed',
+                usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+                output: [{ type: 'function_call', name: 'exec_command', call_id: 'call_t1' }] },
+            }),
+            '',
+          ].join('\n'));
+          return;
+        }
         if (req.url.includes('stream=1')) {
           res.writeHead(200, { 'Content-Type': 'application/json', 'x-openai-mock': 'responses-stream' });
           res.end([
@@ -808,6 +830,18 @@ describe('OpenAI Responses raw capture', () => {
             }),
             '',
           ].join('\n'));
+          return;
+        }
+        if (req.url.includes('tools=1')) {
+          // Non-SSE JSON response with function_call in output[]
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            id: 'resp_json_tools', object: 'response', model: 'gpt-5.5', status: 'completed',
+            output: [
+              { type: 'function_call', name: 'exec_command', call_id: 'call_j1' },
+              { type: 'function_call', name: 'apply_patch', call_id: 'call_j2' },
+            ],
+          }));
           return;
         }
         res.writeHead(200, { 'Content-Type': 'application/json', 'x-openai-mock': 'responses' });
@@ -908,6 +942,33 @@ describe('OpenAI Responses raw capture', () => {
     const finalEvent = resLog[resLog.length - 1];
     assert.equal(finalEvent.type, 'response.completed');
     assert.equal(finalEvent.data.response.output[0].content[0].text, 'stream ok');
+  });
+
+  it('HTTP SSE OpenAI response with function_call populates entry.toolCalls', async () => {
+    const requestBody = JSON.stringify({ model: 'gpt-5.5', input: 'run ls', stream: true });
+    await sendOpenAIResponsesRequest(proxyPort, requestBody, '/v1/responses?stream=1&tools=1');
+    await new Promise(r => setTimeout(r, 500));
+
+    const logsDir = path.join(TEST_HOME, 'logs');
+    const indexEntries = fs.readFileSync(path.join(logsDir, 'index.ndjson'), 'utf8')
+      .trim().split('\n').map(line => JSON.parse(line));
+    const entry = indexEntries.find(e => e.responseMetadata?.id === 'resp_sse_tools');
+    assert.ok(entry, 'expected SSE tools entry');
+    assert.equal(entry.toolCalls.Bash, 1, 'exec_command should be aliased to Bash');
+  });
+
+  it('HTTP non-SSE OpenAI JSON with function_call in output[] populates entry.toolCalls', async () => {
+    const requestBody = JSON.stringify({ model: 'gpt-5.5', input: 'edit file' });
+    await sendOpenAIResponsesRequest(proxyPort, requestBody, '/v1/responses?tools=1');
+    await new Promise(r => setTimeout(r, 500));
+
+    const logsDir = path.join(TEST_HOME, 'logs');
+    const indexEntries = fs.readFileSync(path.join(logsDir, 'index.ndjson'), 'utf8')
+      .trim().split('\n').map(line => JSON.parse(line));
+    const entry = indexEntries.find(e => e.provider === 'openai' && e.responseMetadata?.id === 'resp_json_tools');
+    assert.ok(entry, 'expected non-SSE JSON tools entry');
+    assert.equal(entry.toolCalls.Bash, 1, 'exec_command should be aliased to Bash');
+    assert.equal(entry.toolCalls.Edit, 1, 'apply_patch should be aliased to Edit');
   });
 
   it('groups Codex turns by session_id header and marks OpenAI subagents', async () => {
