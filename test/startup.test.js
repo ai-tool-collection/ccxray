@@ -787,7 +787,7 @@ describe('OpenAI Responses raw capture', () => {
         receivedReq = { method: req.method, url: req.url, headers: req.headers, body };
         if (req.url.includes('stream=1') && req.url.includes('tools=1')) {
           // SSE response with function_call output item
-          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.writeHead(200, { 'Content-Type': 'text/event-stream' });
           res.end([
             'event: response.output_item.done',
             'data: ' + JSON.stringify({
