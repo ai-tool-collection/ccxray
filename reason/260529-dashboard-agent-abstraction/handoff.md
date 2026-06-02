@@ -1,8 +1,16 @@
 # Dashboard Agent Abstraction — Handoff
 
+> **⚠️ 狀態更正（2026-06-02，分支 `feat/codex-dashboard-foundation`）**
+> 本文件下方與 memory 曾標示「COMPLETE / 1.10.0 READY TO SHIP」——**已撤回**。經 code-grounded 盤點（4+2 subagent）確認名實不符：
+> - `openspec/.../tasks.md` 整份 0 項勾選；本 handoff 內部矛盾（此處原寫「brainstorming 進行中」、tail 又寫 Phase 8 全完成）。
+> - UI audit（`reason/260531-codex-ui-audit`）是修復**之前**的，已大量過時。
+> - 真實狀態：abstraction 已大幅**實作**（Phase 0-8, 77 commits），但**未驗證完成**。server 寫入路徑仍有 ~61 條 provider 分支、entry/index builder 手刻 3 份、Codex maxContext live↔restore 不一致、version 登記雙軌、死介面等。
+>
+> **唯一可信進度來源 = 建置中的 code-grounded gap ledger**（Step 2，見下方計畫）。在 ledger 完成前，請忽略本文件任何「完成/COMPLETE」字樣。**尚未 archive**：此 change 仍載未完成工作。
+
 **目的**：把 ccxray 從「只懂 Claude」抽象到「per-provider strategy registry」，讓 codex（與未來 Gemini 等）都能在 dashboard 上完整呈現，而不是各處 `if (provider === ...)` 散落分支。
 
-**現況**：brainstorming 進行中（superpowers:brainstorming skill flow），已在第 §1/5 design section 等使用者批准。新對話應該接著從 §2 開始。
+**現況（2026-06-02 更正）**：abstraction 已實作大半但未驗證完成；下一步是 Step 1 truth-marker（本次）→ Step 2 真實 Codex smoke + gap ledger → Step 3 A1-A3 寫入面單一事實來源（buildEntryFields/buildIndexLine）。完整計畫見 session 結論與 [[project_dashboard_agent_abstraction]] memory。
 
 ---
 
@@ -333,6 +341,19 @@ Phase 8e: WS_SKIP_EVENTS 修復                   ← 獨立，不依賴 8a
 | G14 | Intercept UI for WS | minor | 7 | ❌ | WS 攔截架構根本不同 → document limitation |
 | G15 | Context Core section | minor | 6 | ❌ | `CODEX_TOOL_ALIASES` 是 client-side only，`categorizeTools` 需自己的 mapping |
 | G16 | Cost Efficiency analysis | minor | 7 | ❌ | cache hit rate section 用 Anthropic-specific fields |
+
+### 設計輸入：per-provider cache model（cache TTL 處理）
+
+來源：ccxray-dev agmsg，reviewer (Codex) 研究摘要，2026-06-02。**完整筆記在 `reason/260602-codex-cache-ttl/notes.md`（authoritative）。** 直接影響 cache 相關缺口 **G2 / G3 / G9 / G16**。
+
+關鍵結論：
+- **Claude**：有明確 prompt cache TTL（5m / 1h ephemeral 區塊）→ UI 可給確定性 TTL 倒數/提醒。
+- **Codex/OpenAI**：client 端只設穩定 `prompt_cache_key = thread_id`（見 codex-rs `client.rs`），**TTL 是服務端/org 政策決定、一般 turn 不明示**（本機觀察 >60min 甚至 ~6h 仍有 cache hit，但無法證明保證 24h）→ UI **不該顯示固定的 Codex cache-expiry 倒數**。改顯示**觀察值**：last `cached_input_tokens`、hit ratio、last-hit time，標「retention service-managed / unknown」。
+- → 建議納入 D-decisions 範疇的 **provider-specific cache model 抽象**：Anthropic = 明示 ephemeral TTL buckets；OpenAI/Codex = `prompt_cache_key` + 觀察到的 `cached_input_tokens` + 未知/推導 retention。
+- 注意修正 G2 的舊敘述「OpenAI 無 cache fields」：OpenAI **有** cache_read（`usage.input_tokens_details.cached_tokens`，`openai.js:115-120` 已映射到 canonical `cache_read_input_tokens`）；缺的是 cache_creation 與明示 TTL，不是全無 cache。
+- 待先實測：`prompt_cache_key` 是否出現在 captured 的 `/v1/responses` body / WS create frame。
+
+狀態：**parked，未實作**（不在 `feat/two-domain-auth` branch 做），併入本抽象工作時一起處理。
 
 ### 已確認假缺口（不需要修）
 

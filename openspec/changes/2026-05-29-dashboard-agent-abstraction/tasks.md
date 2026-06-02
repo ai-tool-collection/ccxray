@@ -1,5 +1,12 @@
 # Tasks: Dashboard Agent Abstraction
 
+> **⚠️ 狀態（2026-06-02）：本檔不可作進度依據。**
+> 整份 checkbox 從未回填（**0 勾 ≠ 未做**）。部分措辭已被 `design.md` / Phase 4b 推翻：
+> - `safeCall` / `SAFE_DEFAULTS` / try-catch safe defaults（1.1/1.2）→ **已刪除**，不採用。
+> - Phase 5（OpenAI renderer 獨立）→ **已併入 Phase 4**。
+> - 「搬移整個 detail timeline rendering」（4.2）→ 實際 dispatch 邊界縮為 `processEvent`。
+> 真實進度以 code-grounded gap ledger 為準（見 `reason/260529-.../handoff.md` 頂部 truth-marker）。**尚未 archive**：仍載未完成工作。
+
 ## 0. Fixtures（Phase 0 前置）
 
 - [ ] 0.1 從 `~/.ccxray/logs/` 擷取 Anthropic 真實 wire dump（req + res），存入 `test/fixtures/wire-parsers/anthropic/`
