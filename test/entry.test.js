@@ -114,6 +114,31 @@ test('T1 non-SSE index parity: legacy keys preserved', () => {
   assertParity(entry, legacy, []);
 });
 
+test('T1 OpenAI non-SSE index parity: cost/maxContext fixed, responseMetadata preserved', () => {
+  const entry = {
+    id:'ON1', ts:'t', sessionId:'s', provider:'openai', agent:'codex', model:'gpt-5.5',
+    msgCount:1, toolCount:0, toolCalls:{}, isSubagent:false, sessionInferred:false, cwd:'/p',
+    isSSE:false, usage:{input_tokens:20,output_tokens:5}, cost:{cost:0.07}, maxContext:400000,
+    responseMetadata:{transport:'http',provider:'openai',id:'resp_02',object:'response',model:'gpt-5.5',status:200,responseStatus:'completed'},
+    stopReason:'completed', title:'Non-SSE OpenAI',
+    thinkingDuration:null, toolFail:false, elapsed:'0.3', status:200, receivedAt:3,
+    sysHash:null, toolsHash:null, coreHash:null,
+    hasCredential:undefined, toolSources:undefined,
+    // excluded:
+    req:{}, res:{}, tokens:{total:25}, method:'POST', url:'/v1/responses',
+  };
+  const legacy = {
+    id:'ON1', ts:'t', sessionId:'s', provider:'openai', agent:'codex', model:'gpt-5.5',
+    msgCount:1, toolCount:0, toolCalls:{}, isSubagent:false, sessionInferred:false, cwd:'/p',
+    isSSE:false, usage:{input_tokens:20,output_tokens:5}, cost:null, maxContext:null,
+    responseMetadata:{transport:'http',provider:'openai',id:'resp_02',object:'response',model:'gpt-5.5',status:200,responseStatus:'completed'},
+    stopReason:'completed', title:'Non-SSE OpenAI',
+    thinkingDuration:null, toolFail:false, elapsed:'0.3', status:200, receivedAt:3,
+    sysHash:null, toolsHash:null, coreHash:null,
+  };
+  assertParity(entry, legacy, ['cost','maxContext']);
+});
+
 test('T1 WS index parity: legacy keys preserved', () => {
   const entry = {
     id:'W1', ts:'t', sessionId:'s', provider:'openai', agent:'codex', model:'gpt-5.5',
