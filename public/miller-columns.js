@@ -482,7 +482,7 @@ function _applyStepTargetWhenReady(idx, stepIdx, sub, attempts, opts) {
         else resolve({ ok: false, reason: 'render-timeout' });
         return;
       }
-      prepareTimelineSteps(current.req?.messages || [], Array.isArray(current.res) ? current.res : []);
+      prepareTimelineSteps(current.req?.messages || current.req?.input || [], Array.isArray(current.res) ? current.res : [], current.provider || 'anthropic');
       if (!currentSteps[stepIdx]) {
         resolve({ ok: false, reason: 'missing-step' });
         return;
@@ -755,7 +755,7 @@ function _selectTimelineStepWhenReady(turnIdx, stepIdx, sub) {
       renderDetailCol();
     }
     requestAnimationFrame(() => {
-      prepareTimelineSteps(current.req?.messages || [], Array.isArray(current.res) ? current.res : []);
+      prepareTimelineSteps(current.req?.messages || current.req?.input || [], Array.isArray(current.res) ? current.res : [], current.provider || 'anthropic');
       selectStep(stepIdx, sub);
       if (typeof scrollTimelineStepIntoViewWhenReady === 'function') scrollTimelineStepIntoViewWhenReady(stepIdx, sub);
       else if (typeof scrollTimelineStepIntoView === 'function') scrollTimelineStepIntoView(stepIdx, sub);
@@ -1386,8 +1386,8 @@ function formatEntryDateShort(id) {
 }
 
 
-function copySessionContinue(sid, btn) {
-  navigator.clipboard.writeText('claude --resume ' + sid).then(() => {
+function copySessionContinue(sid, btn, agent) {
+  navigator.clipboard.writeText((agent || 'claude') + ' --resume ' + sid).then(() => {
     const orig = btn.textContent;
     btn.textContent = '✓ copied!';
     btn.style.color = 'var(--green)';
@@ -1488,9 +1488,10 @@ function renderSessionItem(sess, sid) {
   const titleRow = sess.title
     ? '<div class="si-title">' + escapeHtml(sess.title) + '</div>'
     : '';
-  const copyBtn = sid === 'direct-api'
+  const resumeCmd = (sess.agent || 'claude') + ' --resume ' + sid;
+  const copyBtn = sid === 'direct-api' || sid === 'codex-raw'
     ? ''
-    : '<button class="launch-btn" onclick="event.stopPropagation();copySessionContinue(&quot;' + escapeHtml(sid) + '&quot;,this)" title="Copy: claude --resume ' + escapeHtml(sid) + '">&#10697;</button>';
+    : '<button class="launch-btn" onclick="event.stopPropagation();copySessionContinue(&quot;' + escapeHtml(sid) + '&quot;,this,&quot;' + escapeHtml(sess.agent || 'claude') + '&quot;)" title="Copy: ' + escapeHtml(resumeCmd) + '">&#10697;</button>';
   return '<div class="si-row1">' +
     '<button class="' + sdotClasses + '"' + (sdotTitle ? ' title="' + sdotTitle + '"' : '') + (sdotOnclick ? ' onclick="' + sdotOnclick + '"' : '') + ' tabindex="-1"></button>' +
     '<span class="sid" title="' + escapeHtml(tooltip) + '">' + escapeHtml(shortSid) + '</span>' +
@@ -2059,15 +2060,16 @@ function selectSession(id) {
   renderBreadcrumb();
 }
 
-// Coalesced render scheduler — merges multiple async render requests into one rAF
-let _renderDirty = false;
+// Coalesced render scheduler — merges multiple async render requests into one rAF.
+// Uses cancel-and-requeue so the latest call always wins (avoids race where an
+// earlier RAF fires before new data is available and no re-render is scheduled).
+let _renderRafId = null;
 let _renderCallback = null;
 function scheduleRender(afterRender) {
   if (afterRender) _renderCallback = afterRender;
-  if (_renderDirty) return;
-  _renderDirty = true;
-  requestAnimationFrame(() => {
-    _renderDirty = false;
+  if (_renderRafId) cancelAnimationFrame(_renderRafId);
+  _renderRafId = requestAnimationFrame(() => {
+    _renderRafId = null;
     if (selectedTurnIdx >= 0) {
       renderSectionsCol(selectedTurnIdx);
       renderDetailCol();
@@ -2239,8 +2241,8 @@ function renderSectionsCol(idx) {
     html += '<div style="padding:4px 12px 6px;border-bottom:1px solid var(--border)"><div style="height:8px;border-radius:2px;background:var(--border);margin:4px 0 2px"></div><div style="height:12px;width:80px;border-radius:2px;background:var(--border)"></div></div>';
   }
 
-  const coreTools = req.tools ? req.tools.filter(t => !t.name.startsWith('mcp__')) : null;
-  const mcpTools  = req.tools ? req.tools.filter(t =>  t.name.startsWith('mcp__')) : null;
+  const coreTools = req.tools ? req.tools.filter(t => t.name && !t.name.startsWith('mcp__')) : null;
+  const mcpTools  = req.tools ? req.tools.filter(t => t.name &&  t.name.startsWith('mcp__')) : null;
   const tc = allEntries[idx]?.toolCalls || {};
   const coreCalls = Object.entries(tc).filter(([n]) => !n.startsWith('mcp__')).reduce((s, [, c]) => s + c, 0);
   const mcpCalls  = Object.entries(tc).filter(([n]) =>  n.startsWith('mcp__')).reduce((s, [, c]) => s + c, 0);
@@ -2255,7 +2257,7 @@ function renderSectionsCol(idx) {
   const sysSubline = ccVer ? 'cc ' + ccVer : '';
 
   // Compute step stats for Timeline badge
-  const previewSteps = e.reqLoaded ? getCachedSteps(req.messages, resEvents) : [];
+  const previewSteps = e.reqLoaded ? getCachedSteps(req.messages || req.input, resEvents, e.provider || 'anthropic') : [];
   const stepCount = previewSteps.length;
   const stepErrorCount = previewSteps.filter(s => s.type === 'tool-group' && s.calls.some(c => c.isError)).length;
 
@@ -2520,15 +2522,15 @@ function renderDetailCol() {
 
   switch (selectedSection) {
     case 'system':
-      if (req.system) {
-        inner = '<div class="detail-content">' + renderSystemBlockViewer(req.system) + '</div>';
+      if (req.system || req.instructions) {
+        inner = '<div class="detail-content">' + renderSystemBlockViewer(req.system || req.instructions) + '</div>';
       } else { inner = e.reqLoaded ? '<div class="col-empty">No system prompt</div>' : loading; }
       break;
     case 'timeline': {
       if (!isFocusedMode) {
         // Non-focused: show step summary list with minimap (no detail pane)
         // User clicks a step or presses Enter to enter split-pane
-        prepareTimelineSteps(req.messages, resEvents);
+        prepareTimelineSteps(req.messages || req.input, resEvents, e.provider || 'anthropic');
         if (!currentSteps.length) {
           inner = e.reqLoaded ? '<div class="col-empty">No messages</div>' : loading;
           break;
@@ -2554,7 +2556,7 @@ function renderDetailCol() {
       }
 
       // Prepare steps if needed
-      prepareTimelineSteps(req.messages, resEvents);
+      prepareTimelineSteps(req.messages || req.input, resEvents, e.provider || 'anthropic');
       if (!currentSteps.length) {
         inner = e.reqLoaded ? '<div class="col-empty">No messages</div>' : loading;
         break;
@@ -2606,7 +2608,7 @@ function renderDetailCol() {
     case 'core-tools':
     case 'mcp-tools': {
       const isMcp = selectedSection === 'mcp-tools';
-      const filtered = req.tools ? req.tools.filter(t => isMcp ? t.name.startsWith('mcp__') : !t.name.startsWith('mcp__')) : null;
+      const filtered = req.tools ? req.tools.filter(t => t.name && (isMcp ? t.name.startsWith('mcp__') : !t.name.startsWith('mcp__'))) : null;
       if (filtered?.length) {
         const usageCount = allEntries[selectedTurnIdx]?.toolCalls || {};
         const sorted = [...filtered].sort((a, b) => (usageCount[b.name] || 0) - (usageCount[a.name] || 0));
@@ -2705,9 +2707,10 @@ function renderToolDetail(c) {
 
 function renderToolMeta(c) {
   const inp = c.input || {};
-  switch (c.name) {
+  const name = (typeof CODEX_TOOL_ALIASES !== 'undefined' && CODEX_TOOL_ALIASES[c.name]) || c.name;
+  switch (name) {
     case 'Bash': {
-      const cmd = (inp.command || '');
+      const cmd = (inp.command || inp.cmd || '');
       const desc = inp.description ? '<div class="detail-meta-line">' + escapeHtml(inp.description) + '</div>' : '';
       return '<div class="detail-meta"><code class="detail-cmd-block">$ ' + escapeHtml(cmd.split('\n')[0]) + (cmd.includes('\n') ? ' ...' : '') + '</code>' + desc + '</div>';
     }
@@ -2745,13 +2748,14 @@ function renderToolMeta(c) {
 
 function renderToolInput(c) {
   const inp = c.input || {};
+  const name = (typeof CODEX_TOOL_ALIASES !== 'undefined' && CODEX_TOOL_ALIASES[c.name]) || c.name;
 
-  if (c.name === 'Edit' && inp.old_string != null) {
+  if (name === 'Edit' && inp.old_string != null) {
     return renderEditDiff(inp.old_string, inp.new_string || '');
   }
 
-  if (c.name === 'Bash') {
-    const cmd = inp.command || '';
+  if (name === 'Bash') {
+    const cmd = inp.command || inp.cmd || '';
     const lines = cmd.split('\n');
     let html = '<div class="content-block"><div class="type">COMMAND</div>';
     if (lines.length > COLLAPSE_THRESHOLD) {
@@ -2767,7 +2771,7 @@ function renderToolInput(c) {
   // For tools where meta already shows the key info, collapse JSON by default
   const metaTools = ['Read', 'Write', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Agent', 'TaskCreate', 'TaskUpdate'];
   const json = JSON.stringify(inp, null, 2);
-  if (metaTools.includes(c.name)) {
+  if (metaTools.includes(name)) {
     return '<details class="detail-input-details"><summary>INPUT JSON</summary><pre>' + escapeHtml(json) + '</pre></details>';
   }
 

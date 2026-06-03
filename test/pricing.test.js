@@ -25,7 +25,13 @@ describe('pricing', () => {
     });
 
     it('returns null for unknown model', () => {
-      assert.equal(getModelPricing('gpt-4o'), null);
+      assert.equal(getModelPricing('totally-unknown-model'), null);
+    });
+
+    it('returns pricing for OpenAI models', () => {
+      const p = getModelPricing('gpt-5.5');
+      assert.ok(p);
+      assert.equal(p.input, 2);
     });
   });
 

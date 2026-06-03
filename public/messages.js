@@ -132,10 +132,12 @@ function getMessagePreview(m) {
 }
 
 // ── Merged Steps: transform flat messages into logical steps ──
+const CODEX_TOOL_ALIASES = { exec_command: 'Bash', shell: 'Bash', read_mcp_resource: 'Read', apply_patch: 'Edit' };
+
 function getToolPreview(toolUse) {
   const inp = toolUse.input || {};
-  switch (toolUse.name) {
-    case 'Bash': return (inp.command || '').split('\n')[0].slice(0, 60);
+  switch (CODEX_TOOL_ALIASES[toolUse.name] || toolUse.name) {
+    case 'Bash': return (inp.command || inp.cmd || '').split('\n')[0].slice(0, 60);
     case 'Read': case 'Write': case 'Edit': case 'NotebookEdit':
       return (inp.file_path || inp.notebook_path || '').split('/').pop() || '';
     case 'Grep': return (inp.pattern || '').slice(0, 40);
@@ -167,8 +169,45 @@ function getResponseFunctionCallName(item) {
   return item?.name || item?.function?.name || item?.tool_name || item?.type || 'function_call';
 }
 
-function buildMergedSteps(messages, resEvents) {
+function normalizeOpenAIInput(input) {
+  const msgs = [];
+  for (const item of input) {
+    if (item.type === 'message') {
+      if (item.role === 'developer') continue;
+      const blocks = Array.isArray(item.content) ? item.content : [];
+      const content = blocks.map(b => ({
+        type: 'text',
+        text: b.text || JSON.stringify(b),
+      }));
+      msgs.push({ role: item.role || 'user', content });
+    } else if (item.type === 'function_call') {
+      let input = {};
+      try { input = JSON.parse(item.arguments || '{}'); } catch {}
+      msgs.push({
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: item.call_id || item.id, name: item.name || 'function_call', input }],
+      });
+    } else if (item.type === 'function_call_output') {
+      msgs.push({
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: item.call_id, content: item.output || '' }],
+      });
+    }
+  }
+  return msgs;
+}
+
+function isOpenAIInput(items) {
+  if (!Array.isArray(items) || !items.length) return false;
+  return items.some(m => m.type === 'message' || m.type === 'function_call' || m.type === 'function_call_output');
+}
+
+function buildMergedSteps(messages, resEvents, provider) {
   if ((!messages || !messages.length) && (!resEvents || !resEvents.length)) return [];
+
+  if (messages?.length && isOpenAIInput(messages)) {
+    messages = normalizeOpenAIInput(messages);
+  }
 
   // Phase 1a: Build tool_use_id → tool_result map
   const resultMap = new Map();
@@ -283,94 +322,26 @@ function buildMergedSteps(messages, resEvents) {
   }
 
   // Phase 3: Build current turn steps from resEvents
+  // Event parsing is dispatched to RENDERERS[provider].processEvent()
   if (resEvents && resEvents.length) {
-    let curThinking = null;
-    let curThinkingStart = null;
-    let curThinkingEnd = null;
-    const curToolUses = [];  // { index, name, id, inputChunks[] }
-    const openAIToolUseById = new Map();
-    let curText = '';
+    const renderer = (typeof getRenderer === 'function') ? getRenderer(provider) : null;
+    const state = {
+      curThinking: null,
+      curThinkingStart: null,
+      curThinkingEnd: null,
+      curToolUses: [],
+      openAIToolUseById: new Map(),
+      curText: '',
+      eventIndex: 0,
+    };
 
     for (let eventIndex = 0; eventIndex < resEvents.length; eventIndex++) {
-      const ev = resEvents[eventIndex];
-      const payload = getResponseEventPayload(ev);
-      if (ev.type === 'content_block_start') {
-        if (ev.content_block?.type === 'thinking') {
-          curThinking = '';
-          curThinkingStart = ev._ts || null;
-        } else if (ev.content_block?.type === 'tool_use') {
-          curToolUses.push({
-            index: ev.index,
-            name: ev.content_block.name,
-            id: ev.content_block.id,
-            inputChunks: [],
-          });
-        }
-      } else if (ev.type === 'content_block_delta') {
-        if (ev.delta?.type === 'thinking_delta') {
-          if (curThinking !== null) curThinking += ev.delta.thinking || '';
-        } else if (ev.delta?.type === 'input_json_delta') {
-          const tu = curToolUses.find(t => t.index === ev.index);
-          if (tu) tu.inputChunks.push(ev.delta.partial_json || '');
-        } else if (ev.delta?.type === 'text_delta') {
-          curText += ev.delta.text || '';
-        }
-      } else if (ev.type === 'response.output_text.delta') {
-        curText += ev.delta || payload.delta || '';
-      } else if (ev.type === 'response.output_text.done' && !curText) {
-        curText += ev.text || payload.text || '';
-      } else if (ev.type === 'response.reasoning_text.delta') {
-        if (curThinking === null) {
-          curThinking = '';
-          curThinkingStart = ev._ts || null;
-        }
-        curThinking += ev.delta || payload.delta || '';
-      } else if (ev.type === 'response.reasoning_summary_part.added') {
-        if (curThinking === null) {
-          curThinking = '';
-          curThinkingStart = ev._ts || null;
-        }
-        const part = payload.part || ev.part || {};
-        curThinking += part.text || payload.text || ev.text || '';
-      } else if (ev.type === 'response.reasoning_summary_text.delta') {
-        if (curThinking === null) {
-          curThinking = '';
-          curThinkingStart = ev._ts || null;
-        }
-        curThinking += ev.delta || payload.delta || '';
-      } else if (ev.type === 'response.output_item.added') {
-        const item = payload.item || ev.item || {};
-        if (item.type === 'function_call' || item.type === 'tool_call') {
-          const id = getResponseEventItemId(payload, eventIndex);
-          const toolUse = {
-            index: payload.output_index ?? eventIndex,
-            name: getResponseFunctionCallName(item),
-            id,
-            inputChunks: [],
-          };
-          if (item.arguments) toolUse.inputChunks.push(typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments));
-          openAIToolUseById.set(id, toolUse);
-          curToolUses.push(toolUse);
-        }
-      } else if (ev.type === 'response.function_call_arguments.delta') {
-        const id = getResponseEventItemId(payload, payload.output_index ?? eventIndex);
-        const tu = openAIToolUseById.get(id) || curToolUses.find(t => t.index === payload.output_index);
-        if (tu) tu.inputChunks.push(ev.delta || payload.delta || '');
-      } else if (ev.type === 'response.output_item.done') {
-        const item = payload.item || ev.item || {};
-        if (item.type === 'function_call' || item.type === 'tool_call') {
-          const id = getResponseEventItemId(payload, eventIndex);
-          const tu = openAIToolUseById.get(id) || curToolUses.find(t => t.index === payload.output_index);
-          if (tu && item.arguments && !tu.inputChunks.length) {
-            tu.inputChunks.push(typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments));
-          }
-        }
-      } else if (ev.type === 'response.completed' || ev.type === 'response.done') {
-        if (curThinkingStart && !curThinkingEnd) curThinkingEnd = ev._ts || null;
-      } else if (ev.type === 'content_block_stop') {
-        if (curThinkingStart && !curThinkingEnd) curThinkingEnd = ev._ts || null;
-      }
+      state.eventIndex = eventIndex;
+      if (renderer) renderer.processEvent(resEvents[eventIndex], state);
     }
+
+    let { curThinking, curThinkingStart, curThinkingEnd, curText } = state;
+    const curToolUses = state.curToolUses;
 
     // Build current turn tool calls
     const currentCalls = curToolUses.map(tu => {
@@ -422,22 +393,21 @@ let currentSteps = []; // cached merged steps for current turn
 let _stepsCache = { msgs: null, res: null, steps: [] };
 
 // Memoized buildMergedSteps — returns cached result if inputs unchanged (by reference)
-function getCachedSteps(messages, resEvents) {
+function getCachedSteps(messages, resEvents, provider) {
   if (messages === _stepsCache.msgs && resEvents === _stepsCache.res) {
     return _stepsCache.steps;
   }
-  const steps = buildMergedSteps(messages, resEvents);
+  const steps = buildMergedSteps(messages, resEvents, provider);
   _stepsCache = { msgs: messages, res: resEvents, steps };
   return steps;
 }
 
-// Build timeline steps and cache them
-function prepareTimelineSteps(messages, resEvents) {
+function prepareTimelineSteps(messages, resEvents, provider) {
   if ((!messages || !messages.length) && (!resEvents || !resEvents.length)) {
     currentSteps = [];
     return;
   }
-  currentSteps = getCachedSteps(messages, resEvents);
+  currentSteps = getCachedSteps(messages, resEvents, provider);
 }
 
 // Generate the step list HTML (used in both accordion and split-pane modes)

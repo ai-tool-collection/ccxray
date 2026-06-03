@@ -260,6 +260,31 @@ function tokenizeRequest(body) {
       return { role: m.role, tokens, blocks };
     });
     breakdown.messages = total;
+  } else if (Array.isArray(body.input) && body.input.length) {
+    let total = 0;
+    breakdown.perMessage = body.input.map(item => {
+      let tokens = 0;
+      const blocks = [];
+      if (item.type === 'function_call_output') {
+        const t = safeCountTokens(item.output || '');
+        tokens = t;
+        if (t > 0) blocks.push({ type: 'tool_result', tokens: t });
+      } else if (typeof item.content === 'string') {
+        const t = safeCountTokens(item.content);
+        tokens = t;
+        if (t > 0) blocks.push({ type: 'text', tokens: t });
+      } else if (Array.isArray(item.content)) {
+        for (const b of item.content) {
+          const text = b.text || '';
+          const t = safeCountTokens(text);
+          tokens += t;
+          if (t > 0) blocks.push({ type: 'text', tokens: t });
+        }
+      }
+      total += tokens;
+      return { role: item.role || 'user', tokens, blocks };
+    });
+    breakdown.messages = total;
   } else if (body.input != null) {
     const text = typeof body.input === 'string' ? body.input : JSON.stringify(body.input);
     breakdown.messages = safeCountTokens(text);
@@ -267,28 +292,6 @@ function tokenizeRequest(body) {
   breakdown.total = (breakdown.system || 0) + (breakdown.tools || 0) + (breakdown.messages || 0);
   breakdown.contextBreakdown = analyzeContext(body);
   return breakdown;
-}
-
-function extractUsage(resData) {
-  if (!Array.isArray(resData)) return null;
-  const msgStart = resData.find(e => e.type === 'message_start');
-  const msgDelta = resData.find(e => e.type === 'message_delta');
-  const u = msgStart?.message?.usage || {};
-  const result = {
-    input_tokens: u.input_tokens || 0,
-    output_tokens: msgDelta?.usage?.output_tokens || u.output_tokens || 0,
-    cache_creation_input_tokens: u.cache_creation_input_tokens || 0,
-    cache_read_input_tokens: u.cache_read_input_tokens || 0,
-  };
-  // Preserve nested cache_creation ephemeral TTL split — plan-detector uses
-  // ephemeral_5m_input_tokens vs ephemeral_1h_input_tokens to infer Pro vs Max.
-  if (u.cache_creation && typeof u.cache_creation === 'object') {
-    result.cache_creation = {
-      ephemeral_5m_input_tokens: u.cache_creation.ephemeral_5m_input_tokens || 0,
-      ephemeral_1h_input_tokens: u.cache_creation.ephemeral_1h_input_tokens || 0,
-    };
-  }
-  return result;
 }
 
 // Pure: { turn, step } from a Claude API messages[] array.
@@ -650,6 +653,34 @@ function buildToolSources(entry) {
 }
 
 // ── Tool usage extraction ────────────────────────────────────────────
+// Server-side alias map for Codex tool names (mirrors client CODEX_TOOL_ALIASES).
+const OPENAI_TOOL_ALIASES = { exec_command: 'Bash', shell: 'Bash', read_mcp_resource: 'Read', apply_patch: 'Edit' };
+
+// Extract tool call counts from Codex Responses API event stream.
+// Scans response.output_item.done events for function_call items.
+// Falls back to response.output_item.added if .done events are absent.
+function extractOpenAIToolCalls(responseEventsOrOutput) {
+  const counts = {};
+  if (!Array.isArray(responseEventsOrOutput)) return counts;
+  const seen = new Set();
+  for (const ev of responseEventsOrOutput) {
+    // WS events: wrapped in { type: 'response.output_item.done', item: {...} }
+    // HTTP output[]: flat items { type: 'function_call', name: '...', ... }
+    const isEvent = typeof ev.type === 'string' && ev.type.startsWith('response.');
+    if (isEvent && ev.type !== 'response.output_item.done' && ev.type !== 'response.output_item.added') continue;
+    const item = isEvent ? ((ev.data && ev.data.item) || ev.item || {}) : ev;
+    if (item.type !== 'function_call' && item.type !== 'tool_call') continue;
+    const itemKey = item.call_id || item.id || '';
+    if (itemKey && seen.has(itemKey)) continue;
+    if (itemKey) seen.add(itemKey);
+    const rawName = item.name || item.function?.name;
+    if (!rawName) continue;
+    const name = OPENAI_TOOL_ALIASES[rawName] || rawName;
+    counts[name] = (counts[name] || 0) + 1;
+  }
+  return counts;
+}
+
 function extractToolCalls(messages) {
   const counts = {};
   (messages || []).forEach(m => {
@@ -761,7 +792,6 @@ module.exports = {
   categorizeTools,
   analyzeContext,
   tokenizeRequest,
-  extractUsage,
   summarizeRequest,
   computeTurnStep,
   renderAttributionPrefix,
@@ -776,6 +806,7 @@ module.exports = {
   extractFirstUserText,
   hasToolFail,
   extractToolCalls,
+  extractOpenAIToolCalls,
   extractDuplicateToolCalls,
   scanCredentials,
   entryHasCredential,

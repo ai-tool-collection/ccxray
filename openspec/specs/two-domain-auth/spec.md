@@ -31,15 +31,19 @@ Upstream-domain requests SHALL be authenticated by the `X-Ccxray-Auth` header co
 - **THEN** request SHALL be allowed (carve-out: cannot carry custom headers without breaking OAuth)
 
 ### Requirement: Dashboard authentication via HttpOnly cookie
-Dashboard-domain requests SHALL be authenticated by an `HttpOnly; SameSite=Strict` cookie (`ccxray_s`) containing an HMAC-signed stateless payload. Cookie is minted via the bootstrap flow.
+Dashboard-domain **data** endpoints (`/_api/*`, `/_events`, intercept, costs) SHALL require authentication by one of: a valid `HttpOnly; SameSite=Strict` `ccxray_s` cookie (HMAC-signed stateless payload, minted via the bootstrap flow), `Authorization: Bearer <AUTH_TOKEN>` (permanent), or a valid `X-Ccxray-Auth` header. The static shell (`/`, `/index.html`) and client assets (CSS/JS) carry no conversation data and SHALL be served WITHOUT authentication, so the inline bootstrap script can run before any cookie exists.
 
 #### Scenario: Valid session cookie
-- **WHEN** dashboard request carries `ccxray_s` cookie with valid HMAC
+- **WHEN** a dashboard data request carries `ccxray_s` cookie with valid HMAC
 - **THEN** request SHALL be allowed
 
-#### Scenario: No cookie, no legacy auth
-- **WHEN** dashboard request has no `ccxray_s` cookie and no `Authorization: Bearer`
+#### Scenario: No cookie, no credential
+- **WHEN** a dashboard data request has no `ccxray_s` cookie, no `Authorization: Bearer`, and no valid `X-Ccxray-Auth`
 - **THEN** request SHALL be rejected with 401 (Phase 2); allowed with warn (Phase 1)
+
+#### Scenario: Static shell served unauthenticated
+- **WHEN** an unauthenticated request arrives at `/`, `/index.html`, or a client asset (e.g. `/style.css`, `/app.js`)
+- **THEN** ccxray SHALL serve it with 200 — only data endpoints are gated — so `ccxray open`'s bootstrap script can redeem the token and mint the first cookie
 
 ### Requirement: Browser bootstrap flow (ccxray open)
 Users SHALL authenticate the browser via `ccxray open` which mints a one-time 60s bootstrap token, opens a URL with the token in the fragment (`#k=`), and the browser redeems it at `POST /_auth/redeem` to receive a session cookie.
@@ -56,6 +60,27 @@ Users SHALL authenticate the browser via `ccxray open` which mints a one-time 60
 #### Scenario: Replayed bootstrap token
 - **WHEN** browser POSTs to `/_auth/redeem` with an already-redeemed token
 - **THEN** server SHALL respond 401
+
+### Requirement: Launcher auto-bootstrap for local startup
+When ccxray launches an agent (`ccxray claude`, `ccxray codex`) or starts standalone (`ccxray`) and would auto-open the dashboard in a browser, the launcher SHALL mint a one-time bootstrap token and open `http://localhost:<port>/#k=<token>` instead of the bare dashboard URL. The same single-use 60s primitive as `ccxray open` is reused — no new mechanism, no new escape hatch.
+
+This preserves the "launch → see the dashboard" zero-friction UX after dashboard auth was flipped to enforce: the local user invoking the CLI already holds the root secret, so the launcher legitimately mints a session for the browser it opens itself. LAN peers, additional browsers, and re-auth after cookie expiry still go through manual `ccxray open`.
+
+#### Scenario: Standalone or agent launch with auto-open
+- **WHEN** ccxray starts in standalone mode (or via `ccxray claude` / `ccxray codex`) and auto-open is not suppressed (`--no-browser` unset, `BROWSER` ≠ `none`, no `CI`, no `SSH_TTY`)
+- **THEN** the launcher SHALL mint a fresh bootstrap token and exec the OS open command with `http://localhost:<port>/#k=<token>`
+
+#### Scenario: Hub mode first client
+- **WHEN** the first client connects to a hub and that client's auto-open is not suppressed
+- **THEN** the first-client auto-open SHALL include `#k=<token>` so the browser bootstraps without a manual `ccxray open`
+
+#### Scenario: Auto-open suppressed
+- **WHEN** `--no-browser` is set, or `BROWSER=none`, or `CI`, or `SSH_TTY` is in the env
+- **THEN** no auto-open SHALL happen (unchanged from prior behavior); the user runs `ccxray open` manually when ready
+
+#### Scenario: Additional browsers or re-auth
+- **WHEN** the user opens the dashboard in a second browser, or returns after the session cookie expires
+- **THEN** they SHALL run `ccxray open` manually — launcher auto-bootstrap only covers the auto-opened browser at startup
 
 ### Requirement: Key derivation via HKDF
 All authentication keys SHALL be derived from a single root secret via HKDF-SHA256 with label separation: `K_upstream` (label `ccxray/v1/upstream`), `K_session` (label `ccxray/v1/session-hmac`), `K_bootstrap` (label `ccxray/v1/bootstrap`).
@@ -119,6 +144,11 @@ When `AUTH_TOKEN` is unset, ccxray SHALL default to ephemeral mode (auth enforce
 #### Scenario: Explicit loopback opt-in
 - **WHEN** `CCXRAY_LOOPBACK_NO_AUTH=1` is set
 - **THEN** loopback requests SHALL be allowed without authentication, with a startup warning banner
+
+#### Scenario: Non-loopback request with the flag set
+- **WHEN** `CCXRAY_LOOPBACK_NO_AUTH=1` is set AND a request arrives from a non-loopback `remoteAddress`
+- **THEN** authentication SHALL still be required (the bypass is loopback-scoped, checked at the gate via `req.socket.remoteAddress`)
+- **NOTE** ccxray binds all interfaces (`0.0.0.0`), so the guard limits a set flag to local-only. A same-host reverse proxy presents `remoteAddress = 127.0.0.1`, which defeats the guard — documented, not closed (design 決策 7).
 
 ### Requirement: WebSocket upgrade auth gate
 WebSocket upgrades on `/v1/responses` and `/v1/realtime` SHALL be subject to upstream auth. Phase 1: warn-only. Phase 2: reject without valid credential.

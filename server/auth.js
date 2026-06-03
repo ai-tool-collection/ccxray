@@ -1,12 +1,13 @@
 'use strict';
 
 /**
- * Auth primitives for the two-domain auth migration.
+ * Two-domain auth primitives.
  *
- * Phase 1.1: pure crypto + root secret resolution. Module is exported but
- * not yet wired into the request path (that lands in Phase 1.2). The
- * existing authMiddleware below is preserved unchanged so current behavior
- * is byte-identical until Phase 1.2 swaps the call site over.
+ * Upstream domain (`/v1/*`): X-Ccxray-Auth header (or scoped ChatGPT-OAuth
+ * carve-out). Dashboard domain (everything else): session cookie OR Bearer
+ * AUTH_TOKEN OR X-Ccxray-Auth. Loopback escape hatch (CCXRAY_LOOPBACK_NO_AUTH)
+ * bypasses both, guarded by req.socket.remoteAddress. Static shell is served
+ * before the gate so the bootstrap script can run without a cookie.
  *
  * Authoritative design: reason/260525-0055-ccxray-auth-design/candidate-AB.md
  * Implementation deviations: reason/260525-0055-ccxray-auth-design/errata.md
@@ -16,6 +17,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const config = require('./config');
 
 // ─── Root secret resolution ──────────────────────────────────────────
 
@@ -137,21 +139,10 @@ function compareSecret(provided, expected) {
   return crypto.timingSafeEqual(ph, eh) && provided.length === expected.length;
 }
 
-// ─── Two-domain dispatcher (Phase 1.2: warn-only) ────────────────────
+// ─── Two-domain dispatcher ───────────────────────────────────────────
 //
 // dispatch(req) classifies a request by path into upstream or dashboard
-// and returns the matching verifier. The verifiers are byte-identical
-// to authMiddleware on success/failure decisions — they internally
-// delegate to it. The only new behavior is X-Ccxray-Deprecation
-// response headers on requests that used credential forms slated for
-// removal in Phase 2:
-//   - dashboard: ?token= → deprecation (Bearer stays permanent)
-//   - upstream:  Bearer or ?token= → deprecation
-//
-// The headers are set via setHeader so they survive the downstream
-// handler's writeHead call; setHeader can never affect status code
-// or body, so this code is incapable of breaking a request that
-// authMiddleware would have allowed.
+// and returns the matching verifier.
 
 const UPSTREAM_PREFIXES = ['/v1/'];
 
@@ -168,26 +159,6 @@ function classifyDomain(req) {
     }
   }
   return 'dashboard';
-}
-
-function whichLegacyMechanism(req) {
-  // Re-derive the same checks authMiddleware did, so we know which
-  // legacy form succeeded. Returns 'bearer' | 'token-query' | null.
-  const token = process.env.AUTH_TOKEN;
-  if (!token) return null;
-  const authHeader = req.headers['authorization'] || '';
-  if (authHeader === `Bearer ${token}`) return 'bearer';
-  try {
-    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-    if (url.searchParams.get('token') === token) return 'token-query';
-  } catch {}
-  return null;
-}
-
-function setDeprecation(res, value) {
-  if (typeof res.setHeader === 'function') {
-    res.setHeader('X-Ccxray-Deprecation', value);
-  }
 }
 
 // ─── Phase 1.3: cookie path + bootstrap flow ─────────────────────────
@@ -228,6 +199,26 @@ function mintBootstrapToken() {
   const tok = crypto.randomBytes(24).toString('base64url');
   pendingBootstraps.set(_hashBootstrap(tok), Date.now() + BOOTSTRAP_TTL_MS);
   return tok;
+}
+
+// Phase 2.4: launcher auto-bootstrap. The CLI that spawned the agent already
+// holds the root secret, so for the browser it opens itself it can legitimately
+// mint a fresh single-use token and pre-load it in the URL fragment — saving
+// the user a manual `ccxray open` for the common local-launch case. No new
+// primitive: same 60s single-use token, same redeem endpoint.
+//
+// formatAutoOpenUrl is a pure builder. Use it directly when the token MUST be
+// minted in a different process (hub mode: redeem runs in the hub process, so
+// pendingBootstraps has to live there — the client process gets the token via
+// the hub socket's `bootstrap-token` command). mintAutoOpenUrl is the in-
+// process convenience that mints + formats; safe only when this process is
+// also the one whose /_auth/redeem will be hit.
+function formatAutoOpenUrl(port, token) {
+  return `http://localhost:${port}/#k=${token}`;
+}
+
+function mintAutoOpenUrl(port) {
+  return formatAutoOpenUrl(port, mintBootstrapToken());
 }
 
 function _isAllowedHost(host) {
@@ -321,20 +312,21 @@ function redeemBootstrap(req, res) {
   });
 }
 
+// Single source of truth for "is this dashboard request authenticated?" —
+// pure boolean, no side effects. Shared by verifyDashboard (the gate) and
+// authStatus (the /_auth/status browser probe) so the two never disagree.
+//
+// Accepts (in order) the loopback escape hatch, a valid session cookie, a
+// valid X-Ccxray-Auth (base64url K_upstream — lets scripts/CI reach /_api/*
+// without the bootstrap dance), or `Authorization: Bearer <AUTH_TOKEN>`
+// (permanent dashboard credential per spec). 'chatgpt-oauth' is deliberately
+// NOT accepted: codex markers are not a dashboard credential.
 function _isDashboardAuthenticated(req) {
-  // 1. Cookie path — fastest if present and valid.
+  if (isLoopbackBypass(req)) return true;
   const cookieValue = _readSessionCookie(req);
   if (cookieValue && _verifySessionCookieValue(cookieValue)) return true;
-  // 2. Bearer / ?token= path via legacy authMiddleware.
-  //    We can't call authMiddleware directly because it writes 401 on miss;
-  //    instead replicate its accept checks without the side effect.
-  if (!AUTH_TOKEN) return true;
-  const authHeader = req.headers['authorization'] || '';
-  if (authHeader === `Bearer ${AUTH_TOKEN}`) return true;
-  try {
-    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-    if (url.searchParams.get('token') === AUTH_TOKEN) return true;
-  } catch {}
+  if (verifyUpstreamCredential(req.headers) === 'ok') return true;
+  if (AUTH_TOKEN && (req.headers['authorization'] || '') === `Bearer ${AUTH_TOKEN}`) return true;
   return false;
 }
 
@@ -347,27 +339,108 @@ function authStatus(req, res) {
 }
 
 function verifyDashboard(req, res) {
-  // Cookie path first — succeeds silently with no deprecation header.
-  const cookieValue = _readSessionCookie(req);
-  if (cookieValue && _verifySessionCookieValue(cookieValue)) return true;
-
-  // Fall through to legacy authMiddleware (byte-identical Phase 1.2 behavior
-  // for callers that never used the cookie path).
-  const ok = authMiddleware(req, res);
-  if (!ok) return false;
-  if (whichLegacyMechanism(req) === 'token-query') {
-    setDeprecation(res, 'token-query');
+  if (!_isDashboardAuthenticated(req)) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      error: 'unauthorized',
+      message: 'Dashboard requires a session cookie — run: ccxray open',
+    }));
+    return false;
   }
   return true;
 }
 
+// ─── Loopback-guarded escape hatch (Phase 2.3, design 決策 7) ─────────
+//
+// CCXRAY_LOOPBACK_NO_AUTH=1 disables the auth gate, but only for loopback
+// peers. ccxray binds 0.0.0.0, so a blunt header-only bypass (as shipped in
+// 2.2) would expose /v1/* and the dashboard to the whole LAN the moment the
+// flag is set. The check lives in the gate functions (verifyUpstream, WS
+// isAuthorized, verifyDashboard) because they hold req.socket; the taxonomy
+// helper verifyUpstreamCredential(headers) cannot see the peer address.
+//
+// Residual gap: a same-host reverse proxy presents remoteAddress = 127.0.0.1,
+// defeating the guard. That needs double opt-in (proxy + flag) and the startup
+// banner warns regardless — documented, not closed (errata §5).
+
+const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+function isLoopbackAddress(addr) {
+  return typeof addr === 'string' && LOOPBACK_ADDRESSES.has(addr);
+}
+
+function isLoopbackBypass(req) {
+  if (process.env.CCXRAY_LOOPBACK_NO_AUTH !== '1') return false;
+  return isLoopbackAddress(req && req.socket && req.socket.remoteAddress);
+}
+
+// ─── Upstream credential taxonomy (Phase 2.2) ────────────────────────
+//
+// Single source of truth for "is this /v1/* request allowed upstream?",
+// shared by verifyUpstream (HTTP) and ws-proxy isAuthorized (WS). Returns
+// 'ok' | 'chatgpt-oauth' | 'reject'.
+//
+// X-Ccxray-Auth carries base64url(K_upstream) — the value the launchers in
+// server/providers.js inject. We constant-time compare it to the locally
+// derived K_upstream, so this behaves identically whether the root secret
+// comes from AUTH_TOKEN or the ephemeral local-secret file.
+
+// JWT-shaped: "Bearer <header>.<payload>.<sig>" with a non-trivial header.
+function isJwtShaped(authHeader) {
+  if (!authHeader || typeof authHeader !== 'string') return false;
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) return false;
+  const parts = token.split('.');
+  return parts.length === 3 && parts[0].length > 10;
+}
+
+function verifyUpstreamCredential(headers) {
+  // Pure header taxonomy: no env-flag or peer-address awareness. The
+  // CCXRAY_LOOPBACK_NO_AUTH escape hatch is enforced by the gate functions
+  // (isLoopbackBypass), which alone can see req.socket.remoteAddress.
+  const headerVal = headers['x-ccxray-auth'];
+  if (headerVal) {
+    // Header present → it must be the real K_upstream. A forged value rejects
+    // outright; it is never rescued by the ChatGPT-OAuth carve-out below.
+    const { K_upstream } = getSecrets();
+    return compareSecret(headerVal, K_upstream.toString('base64url')) ? 'ok' : 'reject';
+  }
+  // ChatGPT-OAuth carve-out (errata §1.3): codex-on-ChatGPT cannot inject
+  // X-Ccxray-Auth, so accept its native markers instead.
+  if (headers['chatgpt-account-id'] && isJwtShaped(headers['authorization'])) return 'chatgpt-oauth';
+  return 'reject';
+}
+
+// Single source of truth for "is this /v1/* request authenticated?" — pure
+// boolean, shared by verifyUpstream (HTTP gate) and ws-proxy isAuthorized (WS
+// gate) so the two can't drift.
+//
+// Acceptors: the loopback escape hatch, a valid X-Ccxray-Auth, or the Codex-
+// on-ChatGPT carve-out IFF the request would route to the ChatGPT backend.
+// The carve-out exists because Codex on a ChatGPT login can't inject custom
+// headers (errata §1.3), but the markers (chatgpt-account-id + JWT-shaped
+// Authorization) are only meaningful on ChatGPT-routed paths. On Anthropic
+// /v1/messages they'd be a forgery attempt — caught by the upstream-routing
+// check (codex 2.4 P1).
+function isUpstreamAuthenticated(req) {
+  if (isLoopbackBypass(req)) return true;
+  const verdict = verifyUpstreamCredential(req.headers);
+  if (verdict === 'ok') return true;
+  if (verdict === 'chatgpt-oauth') {
+    const upstream = config.getUpstreamForRequestAndHeaders(req.url, req.headers);
+    return upstream === config.UPSTREAMS.openaiChatGPT;
+  }
+  return false;
+}
+
 function verifyUpstream(req, res) {
-  const ok = authMiddleware(req, res);
-  if (!ok) return false;
-  const mech = whichLegacyMechanism(req);
-  if (mech === 'bearer') setDeprecation(res, 'bearer-on-upstream');
-  else if (mech === 'token-query') setDeprecation(res, 'token-query');
-  return true;
+  if (isUpstreamAuthenticated(req)) return true;
+  res.writeHead(401, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    error: 'unauthorized',
+    message: 'Valid X-Ccxray-Auth required on /v1/* (run: ccxray secret upstream)',
+  }));
+  return false;
 }
 
 function dispatch(req) {
@@ -378,45 +451,36 @@ function dispatch(req) {
   };
 }
 
-// ─── Legacy middleware (call site swapped in Phase 1.2; kept exported
-//     so test/auth.test.js stays green and downstream code can still
-//     import it through the deprecation window) ───────────────────────
-
+// AUTH_TOKEN: the optional shared secret. When set, the SHA256 hash is the
+// root of HKDF derivation and `Bearer <AUTH_TOKEN>` is accepted on the
+// dashboard. When unset (ephemeral mode), the root falls back to
+// ~/.ccxray/local-secret. Module-local — not exported.
 const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
 
-function authMiddleware(req, res) {
-  if (!AUTH_TOKEN) return true; // no auth configured — allow all
-
-  const authHeader = req.headers['authorization'] || '';
-  if (authHeader === `Bearer ${AUTH_TOKEN}`) return true;
-
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  if (url.searchParams.get('token') === AUTH_TOKEN) return true;
-
-  res.writeHead(401, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: 'unauthorized', message: 'Valid AUTH_TOKEN required' }));
-  return false;
-}
-
 module.exports = {
-  // Phase 1.1 additions
+  // HKDF + cookie primitives
   deriveSecrets,
   getRootSecret,
   signCookie,
   verifyCookie,
   compareSecret,
-  // Phase 1.2 additions
+  // Two-domain dispatcher + gates
   dispatch,
   verifyDashboard,
   verifyUpstream,
-  // Phase 1.3 additions
+  // Shared upstream credential taxonomy (pure header check)
+  verifyUpstreamCredential,
+  // Shared upstream-gate predicate (HTTP + WS); scopes ChatGPT-OAuth carve-out
+  // to ChatGPT-routed requests.
+  isUpstreamAuthenticated,
+  // Loopback-guarded escape hatch, shared by all three gates.
+  isLoopbackBypass,
+  isLoopbackAddress,
+  // Bootstrap + browser session
   mintBootstrapToken,
+  mintAutoOpenUrl,
+  formatAutoOpenUrl,
   redeemBootstrap,
   authStatus,
   parseCookie,
-  // Legacy exports — call site swapped to dispatch() in Phase 1.2,
-  // but authMiddleware stays exported so test/auth.test.js and any
-  // downstream importer continue to work through the deprecation window.
-  authMiddleware,
-  AUTH_TOKEN,
 };

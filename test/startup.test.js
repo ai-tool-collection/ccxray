@@ -36,6 +36,10 @@ function spawnServer(args, opts = {}) {
     ...process.env,
     CCXRAY_HOME: TEST_HOME,
     BROWSER: 'none', // never open browser in tests
+    // 2.2: these tests exercise startup/forwarding/restore mechanics, not the
+    // upstream auth gate — bypass it so /v1 requests aren't 401'd. Auth itself
+    // is covered by the auth-*.test.js suites.
+    CCXRAY_LOOPBACK_NO_AUTH: '1',
     ...opts.env,
   };
   const child = spawn(process.execPath, [SERVER_SCRIPT, ...args], {
@@ -117,10 +121,9 @@ describe('S4: standalone mode', () => {
     assert.ok(html.includes('<!DOCTYPE html') || html.includes('<html'));
   });
 
-  it('serves hub status', async () => {
-    const data = await httpGet(port, '/_api/hub/status');
-    assert.equal(data.app, 'ccxray');
-    assert.ok(data.version);
+  it('hub routes return 410 (moved to socket)', async () => {
+    const res = await httpGetFull(port, '/_api/hub/status');
+    assert.equal(res.status, 410);
   });
 });
 
@@ -147,6 +150,39 @@ describe('S5: status subcommand', () => {
 
     // Lockfile should be cleaned up
     assert.ok(!fs.existsSync(lockPath));
+  });
+});
+
+// ── S5a: secret upstream subcommand ──────────────────────────────
+
+describe('S5a: secret upstream subcommand', () => {
+  it('prints base64url upstream token and exits 0', async () => {
+    const { stdout, code } = await spawnAndCollect(['secret', 'upstream']);
+    assert.equal(code, 0, `expected exit 0, got ${code}`);
+    const token = stdout.trim();
+    assert.ok(/^[A-Za-z0-9_-]{20,}$/.test(token), `expected base64url token, got: ${token}`);
+  });
+
+  it('prints same token on repeated calls (deterministic from local-secret)', async () => {
+    const { stdout: a } = await spawnAndCollect(['secret', 'upstream']);
+    const { stdout: b } = await spawnAndCollect(['secret', 'upstream']);
+    assert.equal(a.trim(), b.trim());
+  });
+
+  // Codex 1.10.0 P3 regression guard: previously `secret` was allow-listed
+  // out of unknownCommand to let `secret upstream` reach its handler, but no
+  // catch-all rejected typos — `ccxray secret foo` or bare `ccxray secret`
+  // silently started the proxy instead of erroring.
+  it('`ccxray secret foo` (unknown subcommand) → exits 1 with error', async () => {
+    const { stderr, code } = await spawnAndCollect(['secret', 'foo']);
+    assert.equal(code, 1, `expected exit 1, got ${code}`);
+    assert.match(stderr, /unknown secret subcommand|secret subcommand/i);
+  });
+
+  it('`ccxray secret` (no subcommand) → exits 1 with error', async () => {
+    const { stderr, code } = await spawnAndCollect(['secret']);
+    assert.equal(code, 1, `expected exit 1, got ${code}`);
+    assert.match(stderr, /unknown secret subcommand|secret subcommand|missing/i);
   });
 });
 
@@ -181,13 +217,17 @@ describe('S6: hub mode startup', () => {
     assert.deepEqual(data, { ok: true });
   });
 
-  it('accepts client registration', async () => {
-    const data = await httpPost(port, '/_api/hub/register', { pid: 77777, cwd: '/test' });
-    assert.equal(data.ok, true);
-    assert.equal(data.firstClient, true);
+  it('accepts client registration via socket', async () => {
+    const lockPath = path.join(TEST_HOME, 'hub.json');
+    const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    assert.ok(lock.sockPath, 'lockfile should contain sockPath');
+    const hub = require('../server/hub');
+    const res = await hub.hubSocketRequest(lock.sockPath, { cmd: 'register', pid: 77777, cwd: '/test' });
+    assert.equal(res.ok, true);
+    assert.equal(res.firstClient, true);
 
     // Cleanup
-    await httpPost(port, '/_api/hub/unregister', { pid: 77777 });
+    await hub.hubSocketRequest(lock.sockPath, { cmd: 'unregister', pid: 77777 });
   });
 });
 
@@ -745,6 +785,28 @@ describe('OpenAI Responses raw capture', () => {
       req.on('data', c => { body += c; });
       req.on('end', () => {
         receivedReq = { method: req.method, url: req.url, headers: req.headers, body };
+        if (req.url.includes('stream=1') && req.url.includes('tools=1')) {
+          // SSE response with function_call output item
+          res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          res.end([
+            'event: response.output_item.done',
+            'data: ' + JSON.stringify({
+              type: 'response.output_item.done',
+              item: { type: 'function_call', name: 'exec_command', call_id: 'call_t1', status: 'completed', arguments: '{"cmd":"ls"}' },
+              output_index: 0,
+            }),
+            '',
+            'event: response.completed',
+            'data: ' + JSON.stringify({
+              type: 'response.completed',
+              response: { id: 'resp_sse_tools', object: 'response', model: 'gpt-5.5', status: 'completed',
+                usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+                output: [{ type: 'function_call', name: 'exec_command', call_id: 'call_t1' }] },
+            }),
+            '',
+          ].join('\n'));
+          return;
+        }
         if (req.url.includes('stream=1')) {
           res.writeHead(200, { 'Content-Type': 'application/json', 'x-openai-mock': 'responses-stream' });
           res.end([
@@ -768,6 +830,18 @@ describe('OpenAI Responses raw capture', () => {
             }),
             '',
           ].join('\n'));
+          return;
+        }
+        if (req.url.includes('tools=1')) {
+          // Non-SSE JSON response with function_call in output[]
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            id: 'resp_json_tools', object: 'response', model: 'gpt-5.5', status: 'completed',
+            output: [
+              { type: 'function_call', name: 'exec_command', call_id: 'call_j1' },
+              { type: 'function_call', name: 'apply_patch', call_id: 'call_j2' },
+            ],
+          }));
           return;
         }
         res.writeHead(200, { 'Content-Type': 'application/json', 'x-openai-mock': 'responses' });
@@ -868,6 +942,33 @@ describe('OpenAI Responses raw capture', () => {
     const finalEvent = resLog[resLog.length - 1];
     assert.equal(finalEvent.type, 'response.completed');
     assert.equal(finalEvent.data.response.output[0].content[0].text, 'stream ok');
+  });
+
+  it('HTTP SSE OpenAI response with function_call populates entry.toolCalls', async () => {
+    const requestBody = JSON.stringify({ model: 'gpt-5.5', input: 'run ls', stream: true });
+    await sendOpenAIResponsesRequest(proxyPort, requestBody, '/v1/responses?stream=1&tools=1');
+    await new Promise(r => setTimeout(r, 500));
+
+    const logsDir = path.join(TEST_HOME, 'logs');
+    const indexEntries = fs.readFileSync(path.join(logsDir, 'index.ndjson'), 'utf8')
+      .trim().split('\n').map(line => JSON.parse(line));
+    const entry = indexEntries.find(e => e.responseMetadata?.id === 'resp_sse_tools');
+    assert.ok(entry, 'expected SSE tools entry');
+    assert.equal(entry.toolCalls.Bash, 1, 'exec_command should be aliased to Bash');
+  });
+
+  it('HTTP non-SSE OpenAI JSON with function_call in output[] populates entry.toolCalls', async () => {
+    const requestBody = JSON.stringify({ model: 'gpt-5.5', input: 'edit file' });
+    await sendOpenAIResponsesRequest(proxyPort, requestBody, '/v1/responses?tools=1');
+    await new Promise(r => setTimeout(r, 500));
+
+    const logsDir = path.join(TEST_HOME, 'logs');
+    const indexEntries = fs.readFileSync(path.join(logsDir, 'index.ndjson'), 'utf8')
+      .trim().split('\n').map(line => JSON.parse(line));
+    const entry = indexEntries.find(e => e.provider === 'openai' && e.responseMetadata?.id === 'resp_json_tools');
+    assert.ok(entry, 'expected non-SSE JSON tools entry');
+    assert.equal(entry.toolCalls.Bash, 1, 'exec_command should be aliased to Bash');
+    assert.equal(entry.toolCalls.Edit, 1, 'apply_patch should be aliased to Edit');
   });
 
   it('groups Codex turns by session_id header and marks OpenAI subagents', async () => {
@@ -1681,6 +1782,20 @@ function httpGetRaw(port, urlPath) {
       let data = '';
       res.on('data', c => { data += c; });
       res.on('end', () => resolve(data));
+    }).on('error', reject);
+  });
+}
+
+function httpGetFull(port, urlPath) {
+  return new Promise((resolve, reject) => {
+    http.get(`http://localhost:${port}${urlPath}`, res => {
+      let data = '';
+      res.on('data', c => { data += c; });
+      res.on('end', () => {
+        let body;
+        try { body = JSON.parse(data); } catch { body = data; }
+        resolve({ status: res.statusCode, body });
+      });
     }).on('error', reject);
   });
 }

@@ -14,17 +14,15 @@ const { warmUp: warmUpCosts } = require('./cost-budget');
 const { forwardRequest, setStatusLineEnabled, getStatusLineEnabled } = require('./forward');
 const { readSettings } = require('./settings');
 const { broadcastSessionStatus, broadcastPendingRequest } = require('./sse-broadcast');
-const { dispatch } = require('./auth');
-const { extractAgentType, extractPromptAgentType, splitB2IntoBlocks } = require('./system-prompt');
+const { dispatch, mintAutoOpenUrl, formatAutoOpenUrl } = require('./auth');
 const { findSharedPrefix } = require('./delta-helpers');
 const providers = require('./providers');
 const { handleWebSocketUpgrade, drainWebSocketProxy } = require('./ws-proxy');
+const { WIRE_PARSERS, getParser } = require('./wire-parsers');
 const {
   getCodexRawSessionId,
   isOpenAISubagent,
-  detectOpenAISession,
-  withCodexMetadata,
-} = require('./openai-session');
+} = require('./wire-parsers/openai');
 
 // ── CLI: parse flags and detect provider launchers ──
 const portIdx = process.argv.indexOf('--port');
@@ -40,8 +38,12 @@ if (portIdx !== -1) {
   explicitPort = true;
   process.argv.splice(portIdx, 2);
 }
-const hubMode = process.argv.includes('--hub-mode');
+let hubMode = process.argv.includes('--hub-mode');
 if (hubMode) process.argv.splice(process.argv.indexOf('--hub-mode'), 1);
+if (hubMode && process.platform === 'win32') {
+  console.error('\x1b[31mHub mode requires Unix sockets (macOS/Linux). On Windows, use --port for standalone mode.\x1b[0m');
+  process.exit(1);
+}
 const allowUpstreamLoop = process.argv.includes('--allow-upstream-loop') || process.env.CCXRAY_ALLOW_UPSTREAM_LOOP === '1';
 if (process.argv.includes('--allow-upstream-loop')) process.argv.splice(process.argv.indexOf('--allow-upstream-loop'), 1);
 const noBrowser = process.argv.includes('--no-browser');
@@ -50,12 +52,26 @@ const cliCommand = process.argv[2];
 const unknownCommand = cliCommand
   && cliCommand !== 'status'
   && cliCommand !== 'open'
+  && cliCommand !== 'secret'
   && !cliCommand.startsWith('-')
   && !providers.isAgentProvider(cliCommand);
 if (unknownCommand) {
   console.error(`\x1b[31mError: unsupported provider "${cliCommand}". Supported providers: ${providers.supportedProviderList()}\x1b[0m`);
   process.exit(1);
 }
+// ── "secret <subcommand>" — early exit, no side effects ──
+if (process.argv[2] === 'secret') {
+  const sub = process.argv[3];
+  if (sub === 'upstream') {
+    const auth = require('./auth');
+    const { K_upstream } = auth.deriveSecrets(auth.getRootSecret());
+    process.stdout.write(K_upstream.toString('base64url') + '\n');
+    process.exit(0);
+  }
+  console.error(`\x1b[31mError: unknown secret subcommand "${sub || ''}". Supported: upstream\x1b[0m`);
+  process.exit(1);
+}
+
 const agentCommand = providers.isAgentProvider(cliCommand) ? cliCommand : null;
 const agentMode = Boolean(agentCommand);
 const agentArgs = agentMode ? process.argv.slice(3) : [];
@@ -155,36 +171,6 @@ function getOpenAICwd(parsedBody) {
   return parsedBody?.metadata?.cwd || getCodexCwdFallback();
 }
 
-function registerPromptVersion({ provider, parsedBody, sharedFile, promptText, firstSeen, notify = true }) {
-  if (!promptText) return null;
-  const { key: agentKey, label: agentLabel } = extractPromptAgentType(provider, parsedBody);
-  if (!agentKey || agentKey === 'unknown') return null;
-  const coreHash = crypto.createHash('md5').update(promptText).digest('hex').slice(0, 12);
-  const idxKey = `${agentKey}::${coreHash}`;
-  const version = coreHash;
-  const existing = store.versionIndex.get(idxKey);
-  if (existing) {
-    if (sharedFile) existing.sharedFile = sharedFile;
-    return { coreHash, agentKey, agentLabel, version };
-  }
-  const now = firstSeen || new Date().toISOString().slice(0, 10);
-  store.versionIndex.set(idxKey, {
-    reqId: null,
-    sharedFile,
-    b2Len: promptText.length,
-    coreLen: promptText.length,
-    coreHash,
-    firstSeen: now,
-    agentKey,
-    agentLabel,
-    version,
-  });
-  if (notify) {
-    const vData = JSON.stringify({ _type: 'version_detected', version, b2Len: promptText.length, agentKey, agentLabel });
-    for (const res of store.sseClients) res.write(`data: ${vData}\n\n`);
-  }
-  return { coreHash, agentKey, agentLabel, version };
-}
 
 // ── Server ──────────────────────────────────────────────────────────
 const server = http.createServer((clientReq, clientRes) => {
@@ -199,11 +185,16 @@ const server = http.createServer((clientReq, clientRes) => {
   // authenticated?" without itself enforcing auth.
   if (handleAuthRoutes(clientReq, clientRes)) return;
 
-  // ── Auth check (Phase 1.2 dispatcher; legacy-compatible) ──
-  if (!dispatch(clientReq).verify(clientReq, clientRes)) return;
-
   // ── Static files (HTML, CSS, JS) ──
+  // Served BEFORE the auth gate (Phase 2.3): the shell + client assets carry
+  // no user data, and the dashboard now enforces auth — so the HTML must stay
+  // reachable without a cookie, otherwise the inline bootstrap script (redeem
+  // #k= / probe /_auth/status) can never run and `ccxray open` can't mint the
+  // first cookie. Conversation data lives behind the gate (/_api/*, /_events).
   if (serveStatic(clientReq.url, clientRes)) return;
+
+  // ── Auth check (Phase 1.2 dispatcher; Phase 2.3 enforce) ──
+  if (!dispatch(clientReq).verify(clientReq, clientRes)) return;
 
   // ── SSE ──
   if (handleSSERoute(clientReq, clientRes)) return;
@@ -238,11 +229,10 @@ const server = http.createServer((clientReq, clientRes) => {
       return;
     }
 
-    // Codex platform RPC: forward but don't create dashboard entries. These
-    // are codex's internal startup polls (plugin lists, connectors, apps,
-    // usage) — not conversation data. Without this guard, codex 0.133+
-    // pollutes the timeline with ~30 entries before the first user prompt.
-    if (config.isCodexPlatformNoisePath(clientReq.url)) {
+    // Provider noise RPC: forward but don't create dashboard entries.
+    // Each WIRE_PARSER defines its own noise patterns (e.g. codex startup
+    // polls for plugins/connectors/apps/usage).
+    if (Object.values(WIRE_PARSERS).some(p => p.isNoiseRequest(clientReq.url, clientReq.headers, parsedBody))) {
       const upstream = config.getUpstreamForRequestAndHeaders(clientReq.url, clientReq.headers);
       const fwdHeaders = buildForwardHeaders(clientReq.headers, upstream);
       forwardRequest({ id, ts, startTime, parsedBody, rawBody, clientReq, clientRes, fwdHeaders, reqSessionId: null, reqWritePromise: null, skipEntry: true, upstream });
@@ -251,8 +241,9 @@ const server = http.createServer((clientReq, clientRes) => {
 
     const upstream = config.getUpstreamForRequestAndHeaders(clientReq.url, clientReq.headers);
     const provider = upstream.provider || 'anthropic';
-    if (provider === 'openai' && parsedBody) {
-      parsedBody = withCodexMetadata(parsedBody, clientReq.headers);
+    const parser = getParser(provider);
+    if (parsedBody && parser?.preprocessBody) {
+      parsedBody = parser.preprocessBody(parsedBody, clientReq.headers);
     }
 
     let reqWritePromise = null;
@@ -280,12 +271,9 @@ const server = http.createServer((clientReq, clientRes) => {
         if (sysHash) {
           config.storage.writeSharedIfAbsent(`openai_instructions_${sysHash}.json`, JSON.stringify(parsedBody.instructions))
             .catch(e => console.error('Write OpenAI instructions failed:', e.message));
-          const promptInfo = typeof parsedBody.instructions === 'string' ? registerPromptVersion({
-            provider,
-            parsedBody,
-            sharedFile: `openai_instructions_${sysHash}.json`,
-            promptText: parsedBody.instructions,
-          }) : null;
+          const promptInfo = getParser('openai')?.registerPromptVersion?.({
+            parsedBody, sysHash, sharedFile: `openai_instructions_${sysHash}.json`,
+          }) || null;
           if (promptInfo) {
             config.storage.writeSharedIfAbsent(`openai_prompt_meta_${sysHash}.json`, JSON.stringify({
               agentKey: promptInfo.agentKey,
@@ -310,6 +298,7 @@ const server = http.createServer((clientReq, clientRes) => {
         const forceFull = !prev ||
           (config.DELTA_SNAPSHOT_N > 0 && (prev.deltaCount || 0) >= config.DELTA_SNAPSHOT_N);
 
+        const meta = peekSid ? { session_id: peekSid } : undefined;
         if (!forceFull && sharedCount >= 2) {
           stripped = {
             model: parsedBody.model,
@@ -319,14 +308,16 @@ const server = http.createServer((clientReq, clientRes) => {
             messages: currMessages.slice(sharedCount),
             sysHash,
             toolsHash,
+            ...(meta && { metadata: meta }),
           };
           sessionLastReq.set(peekSid, { id, messages: currMessages, deltaCount: (prev.deltaCount || 0) + 1 });
         } else {
-          stripped = { model: parsedBody.model, max_tokens: parsedBody.max_tokens, messages: currMessages, sysHash, toolsHash };
+          stripped = { model: parsedBody.model, max_tokens: parsedBody.max_tokens, messages: currMessages, sysHash, toolsHash, ...(meta && { metadata: meta }) };
           sessionLastReq.set(peekSid, { id, messages: currMessages, deltaCount: 0 });
         }
       } else {
-        stripped = { model: parsedBody.model, max_tokens: parsedBody.max_tokens, messages: currMessages, sysHash, toolsHash };
+        const meta = peekSid ? { session_id: peekSid } : undefined;
+        stripped = { model: parsedBody.model, max_tokens: parsedBody.max_tokens, messages: currMessages, sysHash, toolsHash, ...(meta && { metadata: meta }) };
       }
 
       reqWritePromise = config.storage.write(id, '_req.json', JSON.stringify(stripped))
@@ -334,7 +325,7 @@ const server = http.createServer((clientReq, clientRes) => {
     }
 
     const detectedSession = parsedBody
-      ? (provider === 'openai' ? detectOpenAISession(clientReq.headers, parsedBody) : store.detectSession(parsedBody))
+      ? parser.detectSession(clientReq, clientReq.headers, parsedBody)
       : null;
     const { sessionId: reqSessionId, isNewSession, inferred: sessionInferred } = parsedBody
       ? detectedSession
@@ -351,33 +342,9 @@ const server = http.createServer((clientReq, clientRes) => {
     }
 
     // Detect new cc_version for live requests; compute coreHash for all qualifying requests
-    if (parsedBody && provider === 'anthropic' && Array.isArray(parsedBody.system) && parsedBody.system.length >= 3) {
-      const b0 = (parsedBody.system[0].text || '');
-      const b2 = (parsedBody.system[2].text || '');
-      const liveM = b0.match(/cc_version=(\S+?)[; ]/);
-      const liveVer = liveM ? liveM[1] : null;
-      const { key: agentKey, label: agentLabel } = extractAgentType(parsedBody.system);
-      if (b2.length >= 500) {
-        const coreText = splitB2IntoBlocks(b2).coreInstructions || '';
-        coreHash = crypto.createHash('md5').update(coreText).digest('hex').slice(0, 12);
-        if (liveVer) {
-          const coreLen = coreText.length;
-          const idxKey = `${agentKey}::${coreHash}`;
-          const existing = store.versionIndex.get(idxKey);
-          if (existing) {
-            // Same coreInstructions, just update to latest cc_version and shared file
-            existing.version = liveVer;
-            if (sysHash) existing.sharedFile = `sys_${sysHash}.json`;
-          } else {
-            const now = new Date().toISOString().slice(0, 10);
-            const sharedFile = sysHash ? `sys_${sysHash}.json` : null;
-            store.versionIndex.set(idxKey, { reqId: null, sharedFile, b2Len: b2.length, coreLen, coreHash, firstSeen: now, agentKey, agentLabel, version: liveVer });
-            // Notify dashboard of new unique version
-            const vData = JSON.stringify({ _type: 'version_detected', version: liveVer, b2Len: b2.length, agentKey, agentLabel });
-            for (const res of store.sseClients) res.write(`data: ${vData}\n\n`);
-          }
-        }
-      }
+    if (parsedBody && provider === 'anthropic') {
+      const anthropicPromptInfo = getParser('anthropic')?.registerPromptVersion?.({ parsedBody, sysHash }) || null;
+      if (anthropicPromptInfo) coreHash = anthropicPromptInfo.coreHash;
     }
 
     // Track active requests
@@ -500,26 +467,41 @@ function spawnStandaloneAgent(port, command, args) {
 if (process.argv[2] === 'open') {
   const lock = hub.readHubLock();
   const port = lock?.port || config.PORT;
-  const http = require('http');
-  const body = JSON.stringify({});
-  const reqOpts = {
-    hostname: 'localhost',
-    port,
-    path: '/_api/hub/bootstrap-token',
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-    timeout: 3000,
-  };
-  const req = http.request(reqOpts, res => {
-    let buf = '';
-    res.on('data', c => { buf += c; });
-    res.on('end', () => {
-      if (res.statusCode !== 200) {
-        console.error(`\x1b[31mFailed to mint bootstrap token: HTTP ${res.statusCode}\x1b[0m`);
-        process.exit(1);
-      }
+
+  (async () => {
+    try {
       let token;
-      try { token = JSON.parse(buf).token; } catch {}
+      if (lock?.sockPath) {
+        const res = await hub.hubSocketRequest(lock.sockPath, { cmd: 'bootstrap-token' });
+        token = res?.token;
+      } else {
+        // Fallback to HTTP for standalone mode (no hub socket). The endpoint is
+        // now auth-gated (codex R3 P1), so send X-Ccxray-Auth derived from the
+        // shared root secret — the same credential the launchers inject. Only a
+        // caller that can read the secret (same user) can mint a token.
+        const auth = require('./auth');
+        const upstreamTok = auth.deriveSecrets(auth.getRootSecret()).K_upstream.toString('base64url');
+        token = await new Promise((resolve, reject) => {
+          const body = JSON.stringify({});
+          const req = http.request({
+            hostname: 'localhost', port,
+            path: '/_auth/bootstrap-token', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'X-Ccxray-Auth': upstreamTok },
+            timeout: 3000,
+          }, res => {
+            let buf = '';
+            res.on('data', c => { buf += c; });
+            res.on('end', () => {
+              if (res.statusCode !== 200) return resolve(null);
+              try { resolve(JSON.parse(buf).token); } catch { resolve(null); }
+            });
+          });
+          req.on('error', reject);
+          req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+          req.end(body);
+        });
+      }
+
       if (!token) {
         console.error('\x1b[31mHub did not return a token. Run "ccxray status" to check.\x1b[0m');
         process.exit(1);
@@ -533,15 +515,12 @@ if (process.argv[2] === 'open') {
         exec(`${cmd} ${JSON.stringify(url)}`);
       }
       process.exit(0);
-    });
-  });
-  req.on('error', err => {
-    console.error(`\x1b[31mCannot reach ccxray on port ${port}: ${err.message}\x1b[0m`);
-    console.error('\x1b[90mStart ccxray first (e.g. "ccxray claude") and try again.\x1b[0m');
-    process.exit(1);
-  });
-  req.on('timeout', () => { req.destroy(); });
-  req.end(body);
+    } catch (err) {
+      console.error(`\x1b[31mCannot reach ccxray on port ${port}: ${err.message}\x1b[0m`);
+      console.error('\x1b[90mStart ccxray first (e.g. "ccxray claude") and try again.\x1b[0m');
+      process.exit(1);
+    }
+  })();
   return; // prevent falling through to startup
 }
 
@@ -557,36 +536,50 @@ if (process.argv[2] === 'status') {
     hub.deleteHubLock();
     process.exit(1);
   }
-  hub.checkHubHealth(lock.port).then(ok => {
-    if (!ok) {
-      console.log(`Hub pid ${lock.pid} alive but not responding on port ${lock.port}.`);
-      console.log(`Check ${hub.HUB_LOG_PATH}`);
-      process.exit(1);
-    }
-    const http = require('http');
-    http.get(`http://localhost:${lock.port}/_api/hub/status`, res => {
-      let data = '';
-      res.on('data', c => { data += c; });
-      res.on('end', () => {
-        try {
-          const s = JSON.parse(data);
-          console.log(`Hub: http://localhost:${s.port} (pid ${s.pid}, uptime ${s.uptime}s, v${s.version})`);
-          if (s.clients.length === 0) {
-            console.log('No connected clients.');
-          } else {
-            console.log(`Connected clients (${s.clients.length}):`);
-            s.clients.forEach((c, i) => {
-              console.log(`  [${i + 1}] pid ${c.pid} — ${c.cwd} (since ${c.connectedAt})`);
+
+  (async () => {
+    try {
+      let s;
+      if (lock.sockPath) {
+        const health = await hub.hubSocketRequest(lock.sockPath, { cmd: 'health' }, 2000);
+        if (!health || !health.ok) {
+          console.log(`Hub pid ${lock.pid} alive but socket not responding.`);
+          console.log(`Check ${hub.HUB_LOG_PATH}`);
+          process.exit(1);
+        }
+        s = await hub.hubSocketRequest(lock.sockPath, { cmd: 'status' });
+      } else {
+        const ok = await hub.checkHubHealth(lock.port);
+        if (!ok) {
+          console.log(`Hub pid ${lock.pid} alive but not responding on port ${lock.port}.`);
+          console.log(`Check ${hub.HUB_LOG_PATH}`);
+          process.exit(1);
+        }
+        s = await new Promise((resolve, reject) => {
+          http.get(`http://localhost:${lock.port}/_api/hub/status`, res => {
+            let data = '';
+            res.on('data', c => { data += c; });
+            res.on('end', () => {
+              try { resolve(JSON.parse(data)); } catch { reject(new Error(data)); }
             });
-          }
-        } catch { console.log(data); }
-        process.exit(0);
-      });
-    }).on('error', err => {
+          }).on('error', reject);
+        });
+      }
+      console.log(`Hub: http://localhost:${s.port} (pid ${s.pid}, uptime ${s.uptime}s, v${s.version})`);
+      if (s.clients.length === 0) {
+        console.log('No connected clients.');
+      } else {
+        console.log(`Connected clients (${s.clients.length}):`);
+        s.clients.forEach((c, i) => {
+          console.log(`  [${i + 1}] pid ${c.pid} — ${c.cwd} (since ${c.connectedAt})`);
+        });
+      }
+      process.exit(0);
+    } catch (err) {
       console.error(`Failed to query hub: ${err.message}`);
       process.exit(1);
-    });
-  });
+    }
+  })();
   return; // prevent falling through to startup
 }
 
@@ -609,7 +602,7 @@ async function startClientMode(lock) {
   }
 
   try {
-    const reg = await hub.registerClient(lock.port, process.pid, process.cwd());
+    const reg = await hub.registerClient(lock, process.pid, process.cwd());
     if (!reg) {
       console.error('\x1b[31mHub rejected client registration.\x1b[0m');
       process.exit(1);
@@ -624,7 +617,20 @@ async function startClientMode(lock) {
       if (!noOpen) {
         const { exec } = require('child_process');
         const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-        exec(`${cmd} http://localhost:${lock.port}`);
+        // Phase 2.4 (hub mode): the redeem endpoint runs in the HUB process,
+        // so the token must be minted there too — pendingBootstraps is a
+        // module-local Map in whichever process called mintBootstrapToken
+        // (codex 2.4 P2). Ask the hub via the socket the same way
+        // `ccxray open` does; on socket failure, warn + skip auto-open
+        // (don't open an unauthenticated URL; user can `ccxray open` manually).
+        let openUrl = null;
+        try {
+          const res = await hub.hubSocketRequest(lock.sockPath, { cmd: 'bootstrap-token' });
+          if (res && res.token) openUrl = formatAutoOpenUrl(lock.port, res.token);
+        } catch (e) {
+          console.error(`\x1b[33m[ccxray] auto-bootstrap mint failed (${e.message}); run \`ccxray open\` manually if needed.\x1b[0m`);
+        }
+        if (openUrl) exec(`${cmd} ${openUrl}`);
       }
     }
   } catch (err) {
@@ -634,13 +640,13 @@ async function startClientMode(lock) {
 
   // Monitor hub health and auto-recover
   hub.startHubMonitor(lock.pid, lock.port, (newLock) => {
-    // Re-register with new hub
-    hub.registerClient(newLock.port, process.pid, process.cwd()).catch(() => {});
+    // Re-register with new hub (newLock has sockPath from lockfile)
+    hub.registerClient(newLock, process.pid, process.cwd()).catch(() => {});
   });
 
   // Spawn agent pointing to hub
   spawnAgent(agentCommand, lock.port, agentArgs, (code) => {
-    hub.unregisterClient(lock.port, process.pid).finally(() => {
+    hub.unregisterClient(lock, process.pid).finally(() => {
       process.exit(code);
     });
   });
@@ -648,6 +654,15 @@ async function startClientMode(lock) {
 
 // ── Hub/Server startup ──
 async function runPostListenStartupTasks() {
+  // Loud, always-visible (stderr survives the agent/hub console.log muting)
+  // warning: the auth gate is bypassed for loopback peers. Phase 2.3 made the
+  // hatch loopback-guarded (isLoopbackBypass), so the bypass no longer reaches
+  // the LAN; the same-host reverse-proxy gap stays documented (design 決策 7).
+  // The banner is still the real safeguard against forgetting the flag is set.
+  if (process.env.CCXRAY_LOOPBACK_NO_AUTH === '1') {
+    console.error('\x1b[41m\x1b[97m CCXRAY_LOOPBACK_NO_AUTH=1 \x1b[0m \x1b[31mauth is DISABLED for loopback — any local process can reach /v1/* without X-Ccxray-Auth. Unset it unless you know why you need it.\x1b[0m');
+  }
+
   store.setRestoreState({
     phase: 'restoring',
     restoring: true,
@@ -750,14 +765,19 @@ async function startServer() {
 
   runPostListenStartupTasks();
 
-  // Hub mode only: write lockfile as readiness signal, start client lifecycle
+  // Hub mode only: create socket, write lockfile as readiness signal, start client lifecycle
   // Do NOT write lockfile in agent mode with --port (that's independent mode)
   if (hubMode) {
     hub.setHubPort(actualPort);
-    hub.writeHubLock(actualPort, process.pid);
+    // Ensure hub dir has correct permissions + clean up stale socket
+    try { fs.chmodSync(hub.HUB_DIR, 0o700); } catch {}
+    await hub.cleanupStaleSocket();
+    await hub.createHubSocket();
+    // Write lockfile after BOTH http + socket are ready (readiness signal)
+    hub.writeHubLock(actualPort, process.pid, undefined, hub.SOCK_PATH);
     hub.startDeadClientCheck();
     hub.setOnShutdown(() => gracefulExit(0));
-    const cleanup = () => { hub.deleteHubLock(); gracefulExit(0); };
+    const cleanup = () => hub.shutdownHub(); // closes socket + deletes lockfile + gracefulExit via onShutdown
     process.on('SIGTERM', cleanup);
     process.on('SIGINT', cleanup);
   } else if (!agentMode) {
@@ -798,7 +818,8 @@ async function startServer() {
   if (!noOpen) {
     const { exec } = require('child_process');
     const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-    exec(`${cmd} http://localhost:${actualPort}`);
+    // Phase 2.4: pre-bootstrap the browser so it lands authenticated.
+    exec(`${cmd} ${mintAutoOpenUrl(actualPort)}`);
   }
 
   if (agentMode) spawnStandaloneAgent(actualPort, agentCommand, agentArgs);
@@ -816,6 +837,15 @@ async function startServer() {
       } else {
         console.error(`\x1b[31mStartup failed: ${err.message}\x1b[0m`);
       }
+      process.exit(1);
+    }
+    return;
+  }
+
+  // Windows: hub mode requires Unix sockets; fall back to standalone
+  if (process.platform === 'win32') {
+    try { await startServer(); } catch (err) {
+      console.error(`\x1b[31mStartup failed: ${err.message}\x1b[0m`);
       process.exit(1);
     }
     return;

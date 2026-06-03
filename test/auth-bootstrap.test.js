@@ -192,11 +192,11 @@ describe('/_auth/redeem — rejection cases', () => {
 describe('/_auth/status — probe endpoint for inline browser script', () => {
   beforeEach(() => { delete process.env.AUTH_TOKEN; });
 
-  it('returns 200 when no AUTH_TOKEN configured (ephemeral mode allows)', () => {
+  it('returns 401 when no AUTH_TOKEN configured and no credential (ephemeral now enforces)', () => {
     const auth = loadAuthFresh();
     const { req, res } = mockReqRes({ method: 'GET', url: '/_auth/status' });
     auth.authStatus(req, res);
-    assert.equal(res.statusCode, 200);
+    assert.equal(res.statusCode, 401);
   });
 
   it('returns 401 with AUTH_TOKEN configured and no credentials', () => {
@@ -278,7 +278,7 @@ describe('verifyDashboard — cookie path added in Phase 1.3', () => {
     delete process.env.AUTH_TOKEN;
   });
 
-  it('falls through to authMiddleware when cookie is absent', () => {
+  it('rejects with 401 when cookie is absent (AUTH_TOKEN set, no Bearer)', () => {
     process.env.AUTH_TOKEN = 'sec1';
     const auth = loadAuthFresh();
     const { req, res } = mockReqRes({ method: 'GET', url: '/_api/entries', headers: {} });
@@ -287,7 +287,7 @@ describe('verifyDashboard — cookie path added in Phase 1.3', () => {
     delete process.env.AUTH_TOKEN;
   });
 
-  it('falls through to authMiddleware when cookie is present but invalid', () => {
+  it('rejects with 401 when cookie is present but invalid', () => {
     process.env.AUTH_TOKEN = 'sec1';
     const auth = loadAuthFresh();
     const { req, res } = mockReqRes({
@@ -298,5 +298,133 @@ describe('verifyDashboard — cookie path added in Phase 1.3', () => {
     assert.equal(auth.verifyDashboard(req, res), false);
     assert.equal(res.statusCode, 401);
     delete process.env.AUTH_TOKEN;
+  });
+});
+
+// ── HTTP /_auth/bootstrap-token endpoint ──────────────────────────
+
+describe('/_auth/bootstrap-token via HTTP', () => {
+  const http = require('http');
+  const { handleAuthRoutes } = require('../server/routes/auth');
+  let server, port;
+
+  before(async () => {
+    server = http.createServer((req, res) => {
+      if (!handleAuthRoutes(req, res)) {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+    await new Promise(r => server.listen(0, '127.0.0.1', r));
+    port = server.address().port;
+  });
+
+  after(async () => {
+    await new Promise(r => server.close(r));
+  });
+
+  // base64url(K_upstream) from the same ephemeral local-secret the server uses
+  // — the credential `ccxray open` sends. Force AUTH_TOKEN unset + a fresh
+  // module so a prior describe's 'sec1'-cached secrets can't leak in.
+  function upstreamToken() {
+    delete process.env.AUTH_TOKEN;
+    delete require.cache[require.resolve('../server/auth')];
+    const auth = require('../server/auth');
+    return auth.deriveSecrets(auth.getRootSecret()).K_upstream.toString('base64url');
+  }
+
+  function postBootstrap(headers) {
+    return new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: '127.0.0.1', port,
+        path: '/_auth/bootstrap-token', method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+      }, res => {
+        let buf = '';
+        res.on('data', c => { buf += c; });
+        res.on('end', () => { let body = null; try { body = JSON.parse(buf); } catch {} resolve({ status: res.statusCode, body }); });
+      });
+      req.on('error', reject);
+      req.end('{}');
+    });
+  }
+
+  it('rejects loopback POST without a credential → 401 (codex R3 P1 gate)', async () => {
+    const data = await postBootstrap({});
+    assert.equal(data.status, 401);
+  });
+
+  it('returns a token on loopback POST with a valid X-Ccxray-Auth', async () => {
+    const data = await postBootstrap({ 'X-Ccxray-Auth': upstreamToken() });
+    assert.equal(data.status, 200);
+    assert.ok(data.body && data.body.token);
+    assert.equal(typeof data.body.token, 'string');
+  });
+});
+
+describe('mintAutoOpenUrl — launcher auto-bootstrap (Phase 2.4)', () => {
+  it('returns http://localhost:<port>/#k=<token> with a token that redeems → 204 + Set-Cookie', () => {
+    const auth = loadAuthFresh();
+    const url = auth.mintAutoOpenUrl(5577);
+    const m = url.match(/^http:\/\/localhost:5577\/#k=([A-Za-z0-9_-]{20,})$/);
+    assert.ok(m, `URL must carry #k= token, got: ${url}`);
+    const tok = m[1];
+    // Prove the token is in the pending set: redeem succeeds end-to-end.
+    const { req, res, setHeaderCalls } = mockReqRes({
+      headers: {
+        'x-ccxray-bootstrap': tok,
+        'sec-fetch-site': 'same-origin',
+        origin: 'http://localhost:5577',
+        host: 'localhost:5577',
+      },
+    });
+    auth.redeemBootstrap(req, res);
+    req._deliverBody('{}');
+    assert.equal(res.statusCode, 204);
+    assert.match(setHeaderCalls['set-cookie'] || '', /^ccxray_s=/);
+  });
+
+  it('each call mints a fresh, distinct single-use token', () => {
+    const auth = loadAuthFresh();
+    const t1 = auth.mintAutoOpenUrl(5577).match(/#k=([A-Za-z0-9_-]+)/)[1];
+    const t2 = auth.mintAutoOpenUrl(5577).match(/#k=([A-Za-z0-9_-]+)/)[1];
+    assert.notEqual(t1, t2);
+  });
+
+  it('reflects the supplied port in the URL', () => {
+    const auth = loadAuthFresh();
+    const url = auth.mintAutoOpenUrl(9999);
+    assert.match(url, /^http:\/\/localhost:9999\/#k=/);
+  });
+
+  it('formatAutoOpenUrl builds a URL from any caller-supplied token (hub-mode socket-minted)', () => {
+    const auth = loadAuthFresh();
+    assert.equal(auth.formatAutoOpenUrl(5577, 'tok-xyz'), 'http://localhost:5577/#k=tok-xyz');
+  });
+});
+
+describe('pending-bootstrap is per-process (hub-mode constraint, codex 2.4 P2 regression)', () => {
+  // Codex review caught: pre-fix, hub-mode `ccxray claude` called
+  // mintAutoOpenUrl() in the *client* process, but pendingBootstraps is a
+  // module-local Map that lives in whichever process minted. Redeem on the
+  // hub process therefore 401'd because the token was never in its map. The
+  // fix is to mint via the hub socket (`bootstrap-token` command) so the
+  // token lives where redeem checks. This test pins the per-process boundary
+  // so the bug can't silently come back via a future refactor.
+  it('a token minted in one auth instance is NOT redeemable on a separately-loaded instance', () => {
+    delete require.cache[require.resolve('../server/auth')];
+    const minter = require('../server/auth');
+    delete require.cache[require.resolve('../server/auth')];
+    const redeemer = require('../server/auth');
+    assert.notEqual(minter, redeemer, 'fresh instances should be distinct objects');
+
+    const url = minter.mintAutoOpenUrl(5577);
+    const tok = url.match(/#k=([A-Za-z0-9_-]+)/)[1];
+    const { req, res } = mockReqRes({
+      headers: { 'x-ccxray-bootstrap': tok, 'sec-fetch-site': 'same-origin', origin: 'http://localhost:5577', host: 'localhost:5577' },
+    });
+    redeemer.redeemBootstrap(req, res);
+    req._deliverBody('{}');
+    assert.equal(res.statusCode, 401);
   });
 });

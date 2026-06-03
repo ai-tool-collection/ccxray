@@ -3,7 +3,6 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  extractUsage,
   totalContextTokens,
   parseSSEEvents,
   extractResponseTitle,
@@ -22,65 +21,6 @@ const {
 } = require('../server/helpers');
 
 describe('helpers', () => {
-  describe('extractUsage', () => {
-    it('returns null for non-array input', () => {
-      assert.equal(extractUsage(null), null);
-      assert.equal(extractUsage('string'), null);
-      assert.equal(extractUsage({}), null);
-    });
-
-    it('extracts usage from SSE events', () => {
-      const events = [
-        { type: 'message_start', message: { usage: {
-          input_tokens: 1000,
-          output_tokens: 50,
-          cache_creation_input_tokens: 200,
-          cache_read_input_tokens: 300,
-        }}},
-        { type: 'content_block_delta', delta: { type: 'text_delta', text: 'hello' } },
-        { type: 'message_delta', usage: { output_tokens: 500 } },
-      ];
-      const usage = extractUsage(events);
-      assert.equal(usage.input_tokens, 1000);
-      assert.equal(usage.output_tokens, 500); // message_delta overrides
-      assert.equal(usage.cache_creation_input_tokens, 200);
-      assert.equal(usage.cache_read_input_tokens, 300);
-    });
-
-    it('handles missing usage gracefully', () => {
-      const usage = extractUsage([{ type: 'message_start', message: {} }]);
-      assert.equal(usage.input_tokens, 0);
-      assert.equal(usage.output_tokens, 0);
-    });
-
-    it('preserves nested cache_creation ephemeral TTL split', () => {
-      const events = [
-        { type: 'message_start', message: { usage: {
-          input_tokens: 1,
-          cache_creation_input_tokens: 1632,
-          cache_read_input_tokens: 332655,
-          cache_creation: {
-            ephemeral_5m_input_tokens: 0,
-            ephemeral_1h_input_tokens: 1632,
-          },
-        }}},
-      ];
-      const usage = extractUsage(events);
-      assert.equal(usage.cache_creation.ephemeral_1h_input_tokens, 1632);
-      assert.equal(usage.cache_creation.ephemeral_5m_input_tokens, 0);
-    });
-
-    it('omits cache_creation when not present in response', () => {
-      const events = [
-        { type: 'message_start', message: { usage: {
-          input_tokens: 100, cache_creation_input_tokens: 0,
-        }}},
-      ];
-      const usage = extractUsage(events);
-      assert.equal(usage.cache_creation, undefined);
-    });
-  });
-
   describe('totalContextTokens', () => {
     it('returns 0 for null', () => {
       assert.equal(totalContextTokens(null), 0);
@@ -223,6 +163,55 @@ describe('helpers', () => {
       const counts = extractToolCalls(messages);
       assert.equal(counts.Read, 2);
       assert.equal(counts.Edit, 1);
+    });
+  });
+
+  describe('extractOpenAIToolCalls', () => {
+    const { extractOpenAIToolCalls } = require('../server/helpers');
+
+    it('returns empty for null/empty', () => {
+      assert.deepEqual(extractOpenAIToolCalls(null), {});
+      assert.deepEqual(extractOpenAIToolCalls([]), {});
+    });
+
+    it('extracts from WS response.output_item.done events', () => {
+      const events = [
+        { type: 'response.output_item.done', item: { type: 'function_call', name: 'exec_command', call_id: 'c1' } },
+        { type: 'response.output_item.done', item: { type: 'function_call', name: 'exec_command', call_id: 'c2' } },
+        { type: 'response.output_item.done', item: { type: 'message', role: 'assistant' } },
+      ];
+      const counts = extractOpenAIToolCalls(events);
+      assert.equal(counts.Bash, 2);
+      assert.equal(Object.keys(counts).length, 1);
+    });
+
+    it('extracts from flat HTTP response.output[] items', () => {
+      const output = [
+        { type: 'function_call', name: 'apply_patch', call_id: 'c1' },
+        { type: 'function_call', name: 'exec_command', call_id: 'c2' },
+        { type: 'message', role: 'assistant' },
+      ];
+      const counts = extractOpenAIToolCalls(output);
+      assert.equal(counts.Edit, 1);
+      assert.equal(counts.Bash, 1);
+    });
+
+    it('skips meta-tools without .name', () => {
+      const output = [
+        { type: 'function_call', call_id: 'c1' },
+        { type: 'web_search', call_id: 'c2' },
+      ];
+      const counts = extractOpenAIToolCalls(output);
+      assert.deepEqual(counts, {});
+    });
+
+    it('deduplicates .added + .done for same call_id', () => {
+      const events = [
+        { type: 'response.output_item.added', item: { type: 'function_call', name: 'exec_command', call_id: 'c1' } },
+        { type: 'response.output_item.done', item: { type: 'function_call', name: 'exec_command', call_id: 'c1' } },
+      ];
+      const counts = extractOpenAIToolCalls(events);
+      assert.equal(counts.Bash, 1);
     });
   });
 

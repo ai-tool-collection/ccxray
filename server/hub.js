@@ -3,11 +3,13 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const net = require('net');
 const http = require('http');
 
 const HUB_DIR = process.env.CCXRAY_HOME || path.join(os.homedir(), '.ccxray');
 const HUB_LOCK_PATH = path.join(HUB_DIR, 'hub.json');
 const HUB_LOG_PATH = path.join(HUB_DIR, 'hub.log');
+const SOCK_PATH = path.join(HUB_DIR, 'hub.sock');
 const FORK_LOCK_PATH = path.join(HUB_DIR, 'hub.fork.lock');
 const FORK_LOCK_STALE_MS = 15000;
 const IDLE_TIMEOUT_MS = 5000;
@@ -32,10 +34,11 @@ function readHubLock() {
   }
 }
 
-function writeHubLock(port, pid, versionOverride) {
+function writeHubLock(port, pid, versionOverride, sockPath) {
   ensureHubDir();
   const version = versionOverride || require('../package.json').version;
   const data = { port, pid, version, startedAt: new Date().toISOString() };
+  if (sockPath) data.sockPath = sockPath;
   fs.writeFileSync(HUB_LOCK_PATH, JSON.stringify(data));
   return data;
 }
@@ -103,7 +106,18 @@ async function discoverHub(defaultPort) {
       deleteHubLock();
       return null;
     }
-    const healthy = await checkHubHealth(lock.port);
+    // Prefer socket probe when sockPath is available
+    let healthy;
+    if (lock.sockPath) {
+      try {
+        const res = await hubSocketRequest(lock.sockPath, { cmd: 'health' }, 2000);
+        healthy = res && res.ok === true;
+      } catch {
+        healthy = false;
+      }
+    } else {
+      healthy = await checkHubHealth(lock.port);
+    }
     if (!healthy) {
       deleteHubLock();
       // Do NOT kill lock.pid here: hub.json may be stale from a crash, and the pid
@@ -115,7 +129,19 @@ async function discoverHub(defaultPort) {
     return lock;
   }
 
-  // Lockfile missing — probe default port for orphan hub
+  // Lockfile missing — probe for orphan hub
+  // Try socket first (deterministic path), then HTTP health as fallback
+  if (fs.existsSync(SOCK_PATH)) {
+    try {
+      const res = await hubSocketRequest(SOCK_PATH, { cmd: 'status' }, 2000);
+      if (res && res.app === 'ccxray' && res.pid && isPidAlive(res.pid)) {
+        const recovered = writeHubLock(res.port, res.pid, res.version, SOCK_PATH);
+        return recovered;
+      }
+    } catch {}
+  }
+
+  // HTTP fallback for orphan detection (probes arbitrary ports)
   if (!defaultPort) return null;
   const status = await probeHubStatus(defaultPort);
   if (!status) return null;
@@ -236,9 +262,138 @@ function waitForHubReady(timeoutMs = READINESS_TIMEOUT_MS) {
   });
 }
 
-// ── Client registration (HTTP calls to hub) ─────────────────────────
+// ── Unix socket IPC ────────────────────────────────────────────────
 
-function registerClient(port, pid, cwd) {
+let hubSocket = null; // socket server instance, set by createHubSocket
+
+function cleanupStaleSocket() {
+  return new Promise(resolve => {
+    if (!fs.existsSync(SOCK_PATH)) return resolve();
+
+    const lock = readHubLock();
+    // No lockfile or lockfile pid is dead → orphan socket file, unlink directly
+    if (!lock || !isPidAlive(lock.pid)) {
+      try { fs.unlinkSync(SOCK_PATH); } catch {}
+      return resolve();
+    }
+
+    // Pid alive — probe socket to confirm it's actually responding
+    const probe = net.connect(SOCK_PATH);
+    const timer = setTimeout(() => {
+      probe.destroy();
+      try { fs.unlinkSync(SOCK_PATH); } catch {}
+      resolve();
+    }, 1000);
+    probe.on('connect', () => {
+      clearTimeout(timer);
+      probe.destroy();
+      resolve(); // live socket, don't remove
+    });
+    probe.on('error', () => {
+      clearTimeout(timer);
+      try { fs.unlinkSync(SOCK_PATH); } catch {}
+      resolve();
+    });
+  });
+}
+
+function createHubSocket() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer(socket => {
+      let buf = '';
+      socket.on('data', chunk => {
+        buf += chunk.toString();
+        let nl;
+        while ((nl = buf.indexOf('\n')) !== -1) {
+          const line = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          let msg;
+          try { msg = JSON.parse(line); } catch {
+            socket.write(JSON.stringify({ error: 'parse_error' }) + '\n');
+            continue;
+          }
+          handleSocketCommand(msg, socket);
+        }
+      });
+      socket.on('error', () => {}); // ignore client disconnect errors
+    });
+
+    srv.on('error', reject);
+    srv.listen(SOCK_PATH, () => {
+      try { fs.chmodSync(SOCK_PATH, 0o600); } catch {}
+      hubSocket = srv;
+      resolve(srv);
+    });
+  });
+}
+
+function handleSocketCommand(msg, socket) {
+  const { cmd } = msg;
+  switch (cmd) {
+    case 'health':
+      socket.write(JSON.stringify({ ok: true }) + '\n');
+      break;
+    case 'register': {
+      const wasEmpty = clients.size === 0;
+      addClient(msg.pid, msg.cwd);
+      socket.write(JSON.stringify({ ok: true, firstClient: wasEmpty }) + '\n');
+      break;
+    }
+    case 'unregister':
+      removeClient(msg.pid);
+      socket.write(JSON.stringify({ ok: true }) + '\n');
+      break;
+    case 'bootstrap-token': {
+      const auth = require('./auth');
+      const token = auth.mintBootstrapToken();
+      socket.write(JSON.stringify({ token }) + '\n');
+      break;
+    }
+    case 'status':
+      socket.write(JSON.stringify(getHubStatus()) + '\n');
+      break;
+    default:
+      socket.write(JSON.stringify({ error: 'unknown_command' }) + '\n');
+  }
+}
+
+function hubSocketRequest(sockPath, msg, timeoutMs = 3000) {
+  return new Promise((resolve, reject) => {
+    const client = net.connect(sockPath);
+    let buf = '';
+    const timer = setTimeout(() => {
+      client.destroy();
+      reject(new Error('hubSocketRequest timeout'));
+    }, timeoutMs);
+
+    client.on('connect', () => {
+      client.write(JSON.stringify(msg) + '\n');
+    });
+    client.on('data', chunk => {
+      buf += chunk.toString();
+      const nl = buf.indexOf('\n');
+      if (nl !== -1) {
+        clearTimeout(timer);
+        const parsed = JSON.parse(buf.slice(0, nl));
+        client.destroy();
+        resolve(parsed);
+      }
+    });
+    client.on('error', err => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+// ── Client registration (socket-preferred, HTTP fallback) ──────────
+
+function registerClient(lockInfoOrPort, pid, cwd) {
+  const sockPath = typeof lockInfoOrPort === 'object' ? lockInfoOrPort.sockPath : null;
+  if (sockPath) {
+    return hubSocketRequest(sockPath, { cmd: 'register', pid, cwd });
+  }
+  const port = typeof lockInfoOrPort === 'object' ? lockInfoOrPort.port : lockInfoOrPort;
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({ pid, cwd });
     const req = http.request(`http://localhost:${port}/_api/hub/register`, {
@@ -259,7 +414,12 @@ function registerClient(port, pid, cwd) {
   });
 }
 
-function unregisterClient(port, pid) {
+function unregisterClient(lockInfoOrPort, pid) {
+  const sockPath = typeof lockInfoOrPort === 'object' ? lockInfoOrPort.sockPath : null;
+  if (sockPath) {
+    return hubSocketRequest(sockPath, { cmd: 'unregister', pid }).catch(() => {});
+  }
+  const port = typeof lockInfoOrPort === 'object' ? lockInfoOrPort.port : lockInfoOrPort;
   return new Promise(resolve => {
     const body = JSON.stringify({ pid });
     const req = http.request(`http://localhost:${port}/_api/hub/unregister`, {
@@ -335,6 +495,11 @@ function setOnShutdown(fn) { onShutdown = fn; }
 
 function shutdownHub() {
   if (deadCheckInterval) clearInterval(deadCheckInterval);
+  if (hubSocket) {
+    try { hubSocket.close(); } catch {}
+    try { fs.unlinkSync(SOCK_PATH); } catch {}
+    hubSocket = null;
+  }
   deleteHubLock();
   if (onShutdown) onShutdown();
   else process.exit(0);
@@ -381,59 +546,11 @@ function handleHubRoutes(clientReq, clientRes) {
     return true;
   }
 
-  // Phase 1.3: bootstrap-token. Restricted to loopback peers; the real
-  // peer-UID gate lands with Phase 2.3 when we move to a Unix socket.
-  if (pathname === '/_api/hub/bootstrap-token' && clientReq.method === 'POST') {
-    if (!_isLoopbackPeer(clientReq)) {
-      clientRes.writeHead(403, { 'Content-Type': 'application/json' });
-      clientRes.end(JSON.stringify({ error: 'loopback_only' }));
-      return true;
-    }
-    const auth = require('./auth');
-    const token = auth.mintBootstrapToken();
-    clientRes.writeHead(200, { 'Content-Type': 'application/json' });
-    clientRes.end(JSON.stringify({ token }));
-    return true;
-  }
-
-  if (pathname === '/_api/hub/status' && clientReq.method === 'GET') {
-    clientRes.writeHead(200, { 'Content-Type': 'application/json' });
-    clientRes.end(JSON.stringify(getHubStatus()));
-    return true;
-  }
-
-  if (pathname === '/_api/hub/register' && clientReq.method === 'POST') {
-    let body = '';
-    clientReq.on('data', c => { body += c; });
-    clientReq.on('end', () => {
-      try {
-        const { pid, cwd } = JSON.parse(body);
-        const wasEmpty = clients.size === 0;
-        addClient(pid, cwd);
-        clientRes.writeHead(200, { 'Content-Type': 'application/json' });
-        clientRes.end(JSON.stringify({ ok: true, firstClient: wasEmpty }));
-      } catch {
-        clientRes.writeHead(400);
-        clientRes.end('Bad request');
-      }
-    });
-    return true;
-  }
-
-  if (pathname === '/_api/hub/unregister' && clientReq.method === 'POST') {
-    let body = '';
-    clientReq.on('data', c => { body += c; });
-    clientReq.on('end', () => {
-      try {
-        const { pid } = JSON.parse(body);
-        removeClient(pid);
-        clientRes.writeHead(200, { 'Content-Type': 'application/json' });
-        clientRes.end(JSON.stringify({ ok: true }));
-      } catch {
-        clientRes.writeHead(400);
-        clientRes.end('Bad request');
-      }
-    });
+  // Phase 2.1: hub IPC moved to Unix socket. HTTP hub routes return 410.
+  if (pathname.startsWith('/_api/hub/')) {
+    clientReq.resume(); // drain any request body
+    clientRes.writeHead(410, { 'Content-Type': 'application/json' });
+    clientRes.end(JSON.stringify({ error: 'gone', message: 'Upgrade ccxray to use socket-based hub IPC' }));
     return true;
   }
 
@@ -503,6 +620,7 @@ module.exports = {
   HUB_DIR,
   HUB_LOCK_PATH,
   HUB_LOG_PATH,
+  SOCK_PATH,
   readHubLock,
   writeHubLock,
   deleteHubLock,
@@ -515,6 +633,9 @@ module.exports = {
   releaseForkLock,
   forkHub,
   waitForHubReady,
+  cleanupStaleSocket,
+  createHubSocket,
+  hubSocketRequest,
   registerClient,
   unregisterClient,
   truncateHubLog,

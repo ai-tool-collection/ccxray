@@ -4,15 +4,28 @@ const WebSocket = require('ws');
 const config = require('./config');
 const store = require('./store');
 const helpers = require('./helpers');
+const { calculateCost } = require('./pricing');
 const { broadcast, broadcastSessionStatus } = require('./sse-broadcast');
-const { AUTH_TOKEN } = require('./auth');
+const { isUpstreamAuthenticated } = require('./auth');
 const { stripAuthParams } = require('./url-sanitize');
+const { agentForProvider } = require('./providers');
+const { buildIndexLine } = require('./entry');
 const {
-  detectOpenAISession,
+  detectSession: _detectOpenAISession3,
   getCodexSessionId,
   getOpenAIAgentTypeFromHeaders,
   parseCodexTurnMetadata,
-} = require('./openai-session');
+  extractUsage: extractOpenAIUsage,
+} = require('./wire-parsers/openai');
+const detectOpenAISession = (headers, body) => _detectOpenAISession3(null, headers, body);
+
+// Large envelope events skipped from responseEvents capture (~35KB each).
+// usage and model are extracted before this filter (lines below), so skipping
+// these loses no data. Tool-call extraction uses response.output_item.done events.
+const WS_SKIP_EVENTS = new Set([
+  'response.created', 'response.in_progress', 'response.completed', 'response.done',
+  'codex.rate_limits',
+]);
 
 const HOP_BY_HOP_HEADERS = new Set([
   'connection',
@@ -69,6 +82,7 @@ function isOpenAIWebSocket(req, upstream) {
   return upstream?.provider === 'openai' && OPENAI_WS_PATHS.has(pathname) && isUpgradeRequest(req);
 }
 
+
 function writeSocketResponse(socket, statusCode, reason) {
   if (socket.destroyed) return;
   socket.write(
@@ -81,15 +95,9 @@ function writeSocketResponse(socket, statusCode, reason) {
 }
 
 function isAuthorized(req) {
-  if (!AUTH_TOKEN) return true;
-  const authHeader = req.headers.authorization || '';
-  if (authHeader === `Bearer ${AUTH_TOKEN}`) return true;
-  try {
-    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-    return url.searchParams.get('token') === AUTH_TOKEN;
-  } catch {
-    return false;
-  }
+  // Same predicate as the HTTP gate: loopback bypass, valid X-Ccxray-Auth, or
+  // the ChatGPT-OAuth carve-out scoped to ChatGPT-routed requests.
+  return isUpstreamAuthenticated(req);
 }
 
 const CCXRAY_INTERNAL_HEADERS = new Set(['x-ccxray-auth', 'x-ccxray-bootstrap']);
@@ -134,7 +142,10 @@ function getWorkspaceCwd(turnMetadata) {
   const first = Object.values(workspaces).find(v => typeof v === 'string');
   if (first) return first;
   const nested = Object.values(workspaces).find(v => v && typeof v === 'object' && typeof v.cwd === 'string');
-  return nested?.cwd || null;
+  if (nested?.cwd) return nested.cwd;
+  // Codex format: keys are paths, values are metadata objects
+  const pathKey = Object.keys(workspaces).find(k => k.startsWith('/'));
+  return pathKey || null;
 }
 
 function safeSend(target, data, isBinary) {
@@ -203,33 +214,55 @@ function normalizeCloseCode(code) {
 
 async function recordWebSocketEntry(ctx, result) {
   const elapsed = ((Date.now() - ctx.startTime) / 1000).toFixed(1);
-  const reqLog = {
-    transport: 'websocket',
-    capture: 'transport-only',
-    method: ctx.req.method,
-    url: stripAuthParams(ctx.req.url),
-    endpoint: ctx.endpoint,
-    headers: {
-      openaiBeta: ctx.req.headers['openai-beta'] || null,
-      sessionId: ctx.sessionId,
-      agentType: ctx.agentType,
-    },
-    metadata: ctx.turnMetadata || null,
+  const cr = ctx.clientRequest;
+  const baseHeaders = {
+    openaiBeta: ctx.req.headers['openai-beta'] || null,
+    sessionId: ctx.sessionId,
+    agentType: ctx.agentType,
   };
-  const resLog = {
-    transport: 'websocket',
-    capture: 'transport-only',
-    frameCounts: ctx.frameCounts,
-    byteCounts: ctx.byteCounts,
-    close: result.close || null,
-    error: result.error || null,
-  };
+  const reqLog = cr
+    ? {
+      provider: 'openai',
+      model: cr.model,
+      instructions: cr.instructions,
+      input: cr.input,
+      tools: cr.tools,
+      tool_choice: cr.tool_choice,
+      previous_response_id: cr.previous_response_id,
+      transport: 'websocket',
+      method: ctx.req.method,
+      url: stripAuthParams(ctx.req.url),
+      endpoint: ctx.endpoint,
+      headers: baseHeaders,
+      metadata: ctx.turnMetadata || null,
+    }
+    : {
+      transport: 'websocket',
+      capture: 'transport-only',
+      method: ctx.req.method,
+      url: stripAuthParams(ctx.req.url),
+      endpoint: ctx.endpoint,
+      headers: baseHeaders,
+      metadata: ctx.turnMetadata || null,
+    };
+  const hasEvents = ctx.responseEvents.length > 0;
+  const resLog = hasEvents
+    ? ctx.responseEvents
+    : {
+      transport: 'websocket',
+      capture: 'transport-only',
+      frameCounts: ctx.frameCounts,
+      byteCounts: ctx.byteCounts,
+      close: result.close || null,
+      error: result.error || null,
+    };
 
   const reqWritePromise = config.storage.write(ctx.id, '_req.json', JSON.stringify(reqLog))
     .catch(e => console.error('Write ws req.json failed:', e.message));
   const resWritePromise = config.storage.write(ctx.id, '_res.json', JSON.stringify(resLog))
     .catch(e => console.error('Write ws res.json failed:', e.message));
 
+  const { getParser } = require('./wire-parsers');
   const responseMetadata = {
     transport: 'websocket',
     capture: 'transport-only',
@@ -242,37 +275,27 @@ async function recordWebSocketEntry(ctx, result) {
   const entry = {
     id: ctx.id,
     ts: ctx.ts,
-    sessionId: ctx.sessionId,
     method: ctx.req.method,
     url: stripAuthParams(ctx.req.url),
-    provider: 'openai',
-    agent: 'codex',
     req: reqLog,
     res: resLog,
     elapsed,
     status: result.status,
     isSSE: false,
-    tokens: null,
-    usage: null,
-    cost: null,
-    responseMetadata,
-    maxContext: null,
-    cwd: store.sessionMeta[ctx.sessionId]?.cwd || null,
     receivedAt: ctx.startTime,
+    tokens: cr ? helpers.tokenizeRequest(reqLog) : null,
     duplicateToolCalls: null,
-    model: null,
-    msgCount: 0,
-    toolCount: 0,
-    toolCalls: {},
-    isSubagent: ctx.agentType === 'explorer' || ctx.agentType === 'worker',
-    sessionInferred: ctx.sessionInferred,
-    title: 'Codex WebSocket session',
-    stopReason: result.close?.reason || result.error?.message || null,
-    toolFail: false,
-    sysHash: null,
-    toolsHash: null,
-    coreHash: null,
-    thinkingStripped: undefined,
+    ...getParser('openai').buildEntryFields({
+      provider: 'openai', transport: 'websocket',
+      parsedBody: cr || {}, responseEvents: ctx.responseEvents,
+      responseMetadata, lastUsage: ctx.lastUsage, lastModel: ctx.lastModel,
+      proxyRes: { statusCode: result.status },
+      sessionId: ctx.sessionId, sessionInferred: ctx.sessionInferred,
+      isSubagent: ctx.agentType === 'explorer' || ctx.agentType === 'worker',
+      cwd: store.sessionMeta[ctx.sessionId]?.cwd || null,
+      wsCloseReason: result.close?.reason || null,
+      wsErrorMessage: result.error?.message || null,
+    }),
   };
   entry.hasCredential = helpers.entryHasCredential(entry) || undefined;
   entry.toolSources = helpers.buildToolSources(entry) || undefined;
@@ -281,42 +304,12 @@ async function recordWebSocketEntry(ctx, result) {
   store.trimEntries();
   broadcast(entry);
 
-  const indexLine = JSON.stringify({
-    id: entry.id,
-    ts: entry.ts,
-    sessionId: entry.sessionId,
-    provider: entry.provider,
-    agent: entry.agent,
-    model: entry.model,
-    msgCount: entry.msgCount,
-    toolCount: entry.toolCount,
-    toolCalls: entry.toolCalls,
-    isSubagent: entry.isSubagent,
-    sessionInferred: entry.sessionInferred,
-    cwd: entry.cwd,
-    isSSE: entry.isSSE,
-    usage: entry.usage,
-    cost: entry.cost,
-    maxContext: entry.maxContext,
-    responseMetadata,
-    stopReason: entry.stopReason,
-    title: entry.title,
-    thinkingDuration: null,
-    toolFail: entry.toolFail,
-    elapsed,
-    status: entry.status,
-    receivedAt: entry.receivedAt,
-    sysHash: null,
-    toolsHash: null,
-    coreHash: null,
-    thinkingStripped: entry.thinkingStripped,
-    hasCredential: entry.hasCredential,
-    toolSources: entry.toolSources,
-  });
+  const indexLine = buildIndexLine(entry);
   config.storage.appendIndex(indexLine + '\n').catch(e => console.error('Write ws index failed:', e.message));
   entry.req = null;
   entry.res = null;
   entry._loaded = false;
+  ctx.clientRequest = null;
 }
 
 function handleWebSocketUpgrade(req, socket, head) {
@@ -328,11 +321,6 @@ function handleWebSocketUpgrade(req, socket, head) {
   if (!isAuthorized(req)) {
     writeSocketResponse(socket, 401, 'Unauthorized');
     return true;
-  }
-
-  const authClass = classifyUpstreamAuth(req.headers);
-  if (authClass === 'warn') {
-    console.warn('[ccxray] WebSocket upgrade without X-Ccxray-Auth header (warn-only, Phase 2.1 will enforce)');
   }
 
   const id = helpers.timestamp();
@@ -371,6 +359,10 @@ function handleWebSocketUpgrade(req, socket, head) {
       sessionInferred: detected.inferred || !getCodexSessionId(req.headers, null),
       frameCounts: { clientToUpstream: 0, upstreamToClient: 0 },
       byteCounts: { clientToUpstream: 0, upstreamToClient: 0 },
+      responseEvents: [],
+      lastUsage: null,
+      lastModel: null,
+      clientRequest: null,
     };
     // Only client→upstream needs queueing; clientWs is already OPEN inside this
     // callback so upstream→client can always send directly via safeSend().
@@ -428,6 +420,23 @@ function handleWebSocketUpgrade(req, socket, head) {
       refreshIdleTimer();
       ctx.frameCounts.clientToUpstream += 1;
       ctx.byteCounts.clientToUpstream += frameSize(data);
+      if (!isBinary) {
+        try {
+          const parsed = JSON.parse(typeof data === 'string' ? data : data.toString());
+          if (parsed.type === 'response.create' && !ctx.clientRequest && parsed.generate !== false) {
+            ctx.clientRequest = {
+              model: parsed.model || null,
+              instructions: parsed.instructions || null,
+              input: parsed.input || null,
+              tools: parsed.tools || null,
+              tool_choice: parsed.tool_choice || null,
+              previous_response_id: parsed.previous_response_id || null,
+            };
+          } else if (parsed.type === 'session.update' && parsed.session?.instructions) {
+            if (ctx.clientRequest) ctx.clientRequest.instructions = parsed.session.instructions;
+          }
+        } catch {}
+      }
       const result = bufferOrSend(upstreamWs, upstreamBuffer, data, isBinary);
       if (result.overflow) {
         closeBoth(1009, 'client buffer exceeded');
@@ -438,6 +447,20 @@ function handleWebSocketUpgrade(req, socket, head) {
       refreshIdleTimer();
       ctx.frameCounts.upstreamToClient += 1;
       ctx.byteCounts.upstreamToClient += frameSize(data);
+      if (!isBinary) {
+        try {
+          const parsed = JSON.parse(data.toString());
+          if (parsed.type) {
+            // Extract metadata from envelope events before skipping their large body
+            const r = parsed.response || parsed;
+            if (r.usage) ctx.lastUsage = extractOpenAIUsage({ usage: r.usage }) || r.usage;
+            if (r.model) ctx.lastModel = r.model;
+            if (!WS_SKIP_EVENTS.has(parsed.type)) {
+              ctx.responseEvents.push(parsed);
+            }
+          }
+        } catch {}
+      }
       safeSend(clientWs, data, isBinary);
     });
     clientWs.on('ping', data => {
@@ -506,26 +529,10 @@ async function drainWebSocketProxy() {
   await Promise.allSettled([...pendingEntries]);
 }
 
-// JWT-shaped: "Bearer <header>.<payload>.<signature>" where header is base64url JSON
-function isJwtShaped(authHeader) {
-  if (!authHeader || typeof authHeader !== 'string') return false;
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-  if (!token) return false;
-  const parts = token.split('.');
-  return parts.length === 3 && parts[0].length > 10;
-}
-
-function classifyUpstreamAuth(headers) {
-  if (headers['x-ccxray-auth']) return 'authed';
-  if (headers['chatgpt-account-id'] && isJwtShaped(headers.authorization)) return 'chatgpt-oauth';
-  return 'warn';
-}
-
 module.exports = {
   handleWebSocketUpgrade,
   buildWebSocketHeaders,
   isOpenAIWebSocket,
   normalizeCloseCode,
   drainWebSocketProxy,
-  classifyUpstreamAuth,
 };

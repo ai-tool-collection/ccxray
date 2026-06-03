@@ -194,8 +194,6 @@ describe('hub server routes', () => {
   });
 
   after(async () => {
-    // Clear clients registered during tests
-    hub.removeClient(33333);
     await new Promise(resolve => server.close(resolve));
   });
 
@@ -204,30 +202,24 @@ describe('hub server routes', () => {
     assert.deepEqual(data, { ok: true });
   });
 
-  it('GET /_api/hub/status → 200 with clients array', async () => {
-    const data = await httpGet(port, '/_api/hub/status');
-    assert.ok(Array.isArray(data.clients));
-    assert.ok(typeof data.uptime === 'number');
-    assert.ok(data.version);
+  it('GET /_api/hub/status → 410 (moved to socket)', async () => {
+    const statusCode = await httpGetStatus(port, '/_api/hub/status');
+    assert.equal(statusCode, 410);
   });
 
-  it('POST /_api/hub/register → adds client', async () => {
-    const res = await httpPost(port, '/_api/hub/register', { pid: 33333, cwd: '/test' });
-    assert.equal(res.ok, true);
-    assert.equal(typeof res.firstClient, 'boolean');
-    const status = await httpGet(port, '/_api/hub/status');
-    assert.ok(status.clients.some(c => c.pid === 33333));
+  it('POST /_api/hub/register → 410 (moved to socket)', async () => {
+    const statusCode = await httpPostRaw(port, '/_api/hub/register', '{}');
+    assert.equal(statusCode, 410);
   });
 
-  it('POST /_api/hub/unregister → removes client', async () => {
-    await httpPost(port, '/_api/hub/unregister', { pid: 33333 });
-    const status = await httpGet(port, '/_api/hub/status');
-    assert.ok(!status.clients.some(c => c.pid === 33333));
+  it('POST /_api/hub/unregister → 410 (moved to socket)', async () => {
+    const statusCode = await httpPostRaw(port, '/_api/hub/unregister', '{}');
+    assert.equal(statusCode, 410);
   });
 
-  it('POST /_api/hub/register with bad JSON → 400', async () => {
-    const statusCode = await httpPostRaw(port, '/_api/hub/register', 'not json');
-    assert.equal(statusCode, 400);
+  it('POST /_api/hub/bootstrap-token → 410 (moved to socket)', async () => {
+    const statusCode = await httpPostRaw(port, '/_api/hub/bootstrap-token', '{}');
+    assert.equal(statusCode, 410);
   });
 });
 
@@ -257,99 +249,62 @@ describe('hub discovery', () => {
     assert.equal(hub.readHubLock(), null);
   });
 
-  it('returns lock when pid alive and health check passes', async () => {
-    // Spin up a minimal health server
-    const srv = http.createServer((req, res) => {
-      hub.handleHubRoutes(req, res);
-    });
-    await new Promise(r => srv.listen(0, r));
-    const srvPort = srv.address().port;
-
-    hub.writeHubLock(srvPort, process.pid);
+  it('returns lock when pid alive and health check passes (via socket)', async () => {
+    const sockSrv = await hub.createHubSocket();
+    hub.writeHubLock(5577, process.pid, undefined, hub.SOCK_PATH);
     const result = await hub.discoverHub();
     assert.ok(result);
-    assert.equal(result.port, srvPort);
+    assert.equal(result.port, 5577);
+    assert.equal(result.sockPath, hub.SOCK_PATH);
 
     hub.deleteHubLock();
-    await new Promise(r => srv.close(r));
+    await new Promise(r => sockSrv.close(r));
   });
 });
 
 // ── Integration: orphan hub probe ───────────────────────────────────
 
 describe('orphan hub probe', () => {
-  let srv;
-  let srvPort;
+  let sockSrv;
 
   before(async () => {
-    srv = http.createServer((req, res) => {
-      hub.handleHubRoutes(req, res);
-    });
-    await new Promise(r => srv.listen(0, r));
-    srvPort = srv.address().port;
-    hub.setHubPort(srvPort);
+    hub.setHubPort(5577);
+    sockSrv = await hub.createHubSocket();
   });
 
   after(async () => {
     hub.deleteHubLock();
-    await new Promise(r => srv.close(r));
+    if (sockSrv) await new Promise(r => sockSrv.close(r));
   });
 
-  it('discovers orphan hub when lockfile is missing', async () => {
+  it('discovers orphan hub via socket when lockfile is missing', async () => {
     hub.deleteHubLock();
-    const result = await hub.discoverHub(srvPort);
-    assert.ok(result, 'should find orphan hub');
-    assert.equal(result.port, srvPort);
+    const result = await hub.discoverHub(5577);
+    assert.ok(result, 'should find orphan hub via socket');
     assert.equal(result.pid, process.pid);
-    // lockfile should be reconstructed
+    // lockfile should be reconstructed with sockPath (P1 regression)
     const lock = hub.readHubLock();
     assert.ok(lock, 'lockfile should be reconstructed');
-    assert.equal(lock.port, srvPort);
+    assert.equal(lock.sockPath, hub.SOCK_PATH, 'recovered lockfile must include sockPath');
   });
 
-  it('returns null when probed port has no server', async () => {
+  it('returns null when no socket and probed port has no server', async () => {
     hub.deleteHubLock();
+    // Close the socket server so orphan probe falls through to HTTP
+    await new Promise(r => sockSrv.close(r));
     const result = await hub.discoverHub(19997);
     assert.equal(result, null);
     assert.equal(hub.readHubLock(), null);
+    // Re-create socket for other tests
+    sockSrv = await hub.createHubSocket();
   });
 
-  it('returns null when probed port has non-ccxray service', async () => {
-    const fakeSrv = http.createServer((req, res) => {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ hello: 'world' }));
-    });
-    await new Promise(r => fakeSrv.listen(0, r));
-    const fakePort = fakeSrv.address().port;
-
+  it('returns null when no defaultPort provided and no socket', async () => {
     hub.deleteHubLock();
-    const result = await hub.discoverHub(fakePort);
-    assert.equal(result, null);
-
-    await new Promise(r => fakeSrv.close(r));
-  });
-
-  it('rejects lookalike service with hub-shaped payload but no app marker', async () => {
-    const fakeSrv = http.createServer((req, res) => {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      const fakePort = fakeSrv.address().port;
-      res.end(JSON.stringify({ pid: process.pid, version: '1.0.0', port: fakePort }));
-    });
-    await new Promise(r => fakeSrv.listen(0, r));
-    const fakePort = fakeSrv.address().port;
-
-    hub.deleteHubLock();
-    const result = await hub.discoverHub(fakePort);
-    assert.equal(result, null, 'should reject service without app:ccxray marker');
-    assert.equal(hub.readHubLock(), null);
-
-    await new Promise(r => fakeSrv.close(r));
-  });
-
-  it('returns null when no defaultPort provided', async () => {
-    hub.deleteHubLock();
+    await new Promise(r => sockSrv.close(r));
     const result = await hub.discoverHub();
     assert.equal(result, null);
+    sockSrv = await hub.createHubSocket();
   });
 });
 
@@ -380,11 +335,17 @@ describe('checkHubHealth', () => {
 describe('hub fork and readiness', () => {
   let hubPid = null;
 
-  after(() => {
+  after(async () => {
     if (hubPid) {
       try { process.kill(hubPid, 'SIGTERM'); } catch {}
+      // Wait for forked hub to fully exit (it unlinks socket on shutdown)
+      await new Promise(r => {
+        const check = () => hub.isPidAlive(hubPid) ? setTimeout(check, 100) : r();
+        check();
+      });
     }
     hub.deleteHubLock();
+    try { fs.unlinkSync(hub.SOCK_PATH); } catch {}
   });
 
   it('forkHub + waitForHubReady produces a lockfile', async () => {
@@ -408,37 +369,33 @@ describe('hub fork and readiness', () => {
   });
 });
 
-// ── Integration: register/unregister via HTTP ───────────────────────
+// ── Integration: register/unregister via socket ─────────────────────
 
-describe('register/unregister via HTTP', () => {
-  let server;
-  let port;
+describe('register/unregister via socket', () => {
+  let sockSrv;
 
   before(async () => {
-    server = http.createServer((req, res) => {
-      if (!hub.handleHubRoutes(req, res)) {
-        res.writeHead(404);
-        res.end();
-      }
-    });
-    await new Promise(r => server.listen(0, r));
-    port = server.address().port;
+    clearAllClients();
+    await hub.cleanupStaleSocket();
+    sockSrv = await hub.createHubSocket();
   });
 
   after(async () => {
-    await new Promise(r => server.close(r));
+    clearAllClients();
+    if (sockSrv) await new Promise(r => sockSrv.close(r));
   });
 
-  it('registerClient + unregisterClient round-trip', async () => {
-    const reg = await hub.registerClient(port, 44444, '/test/project');
+  it('registerClient + unregisterClient round-trip via socket', async () => {
+    const lockInfo = { port: 9999, sockPath: hub.SOCK_PATH };
+    const reg = await hub.registerClient(lockInfo, 44444, '/test/project');
     assert.equal(reg.ok, true);
 
-    const status = await httpGet(port, '/_api/hub/status');
+    const status = hub.getHubStatus();
     assert.ok(status.clients.some(c => c.pid === 44444));
 
-    await hub.unregisterClient(port, 44444);
+    await hub.unregisterClient(lockInfo, 44444);
 
-    const status2 = await httpGet(port, '/_api/hub/status');
+    const status2 = hub.getHubStatus();
     assert.ok(!status2.clients.some(c => c.pid === 44444));
   });
 });
@@ -450,51 +407,47 @@ function clearAllClients() {
   }
 }
 
-// ── L1: firstClient flag ───────────────────────────────────────────
+// ── L1: firstClient flag (via socket) ─────────────────────────────
 
 describe('firstClient flag', () => {
-  let server;
-  let port;
+  let sockSrv;
 
   before(async () => {
     clearAllClients();
-    server = http.createServer((req, res) => {
-      if (!hub.handleHubRoutes(req, res)) {
-        res.writeHead(404);
-        res.end();
-      }
-    });
-    await new Promise(r => server.listen(0, r));
-    port = server.address().port;
+    await hub.cleanupStaleSocket();
+    sockSrv = await hub.createHubSocket();
   });
 
   after(async () => {
     clearAllClients();
-    await new Promise(r => server.close(r));
+    if (sockSrv) await new Promise(r => sockSrv.close(r));
   });
 
+  async function socketCmd(cmd) {
+    return hub.hubSocketRequest(hub.SOCK_PATH, cmd);
+  }
+
   it('first client registered → firstClient: true', async () => {
-    // Ensure hub is truly empty
     clearAllClients();
-    const res = await httpPost(port, '/_api/hub/register', { pid: 50001, cwd: '/a' });
+    const res = await socketCmd({ cmd: 'register', pid: 50001, cwd: '/a' });
     assert.equal(res.ok, true);
     assert.equal(res.firstClient, true);
   });
 
   it('second client registered → firstClient: false', async () => {
-    const res = await httpPost(port, '/_api/hub/register', { pid: 50002, cwd: '/b' });
+    const res = await socketCmd({ cmd: 'register', pid: 50002, cwd: '/b' });
     assert.equal(res.ok, true);
     assert.equal(res.firstClient, false);
   });
 
   it('after all disconnect, next client → firstClient: true again', async () => {
-    await httpPost(port, '/_api/hub/unregister', { pid: 50001 });
-    await httpPost(port, '/_api/hub/unregister', { pid: 50002 });
+    await socketCmd({ cmd: 'unregister', pid: 50001 });
+    await socketCmd({ cmd: 'unregister', pid: 50002 });
 
-    const status = await httpGet(port, '/_api/hub/status');
+    const status = await socketCmd({ cmd: 'status' });
     assert.equal(status.clients.length, 0);
 
-    const res = await httpPost(port, '/_api/hub/register', { pid: 50003, cwd: '/c' });
+    const res = await socketCmd({ cmd: 'register', pid: 50003, cwd: '/c' });
     assert.equal(res.ok, true);
     assert.equal(res.firstClient, true);
   });
@@ -577,46 +530,37 @@ describe('dead client cleanup logic', () => {
 
 // ── L7: firstClient flag on idle cycle ─────────────────────────────
 
-describe('firstClient on idle cycle via HTTP', () => {
-  let server;
-  let port;
+describe('firstClient on idle cycle via socket', () => {
+  let sockSrv;
 
   before(async () => {
     clearAllClients();
-    server = http.createServer((req, res) => {
-      if (!hub.handleHubRoutes(req, res)) {
-        res.writeHead(404);
-        res.end();
-      }
-    });
-    await new Promise(r => server.listen(0, r));
-    port = server.address().port;
+    await hub.cleanupStaleSocket();
+    sockSrv = await hub.createHubSocket();
   });
 
   after(async () => {
     clearAllClients();
-    await new Promise(r => server.close(r));
+    if (sockSrv) await new Promise(r => sockSrv.close(r));
   });
 
-  it('full cycle: register → unregister all → register again gets firstClient true', async () => {
-    // Remove guard so hub is empty
-    await httpPost(port, '/_api/hub/unregister', { pid: 88888 });
+  async function socketCmd(cmd) {
+    return hub.hubSocketRequest(hub.SOCK_PATH, cmd);
+  }
 
-    // First register on empty hub
-    const r1 = await httpPost(port, '/_api/hub/register', { pid: 70001, cwd: '/cycle' });
+  it('full cycle: register → unregister all → register again gets firstClient true', async () => {
+    clearAllClients();
+
+    const r1 = await socketCmd({ cmd: 'register', pid: 70001, cwd: '/cycle' });
     assert.equal(r1.firstClient, true);
 
-    // Second register
-    const r2 = await httpPost(port, '/_api/hub/register', { pid: 70002, cwd: '/cycle2' });
+    const r2 = await socketCmd({ cmd: 'register', pid: 70002, cwd: '/cycle2' });
     assert.equal(r2.firstClient, false);
 
-    // Unregister both — triggers idle timer
-    await httpPost(port, '/_api/hub/unregister', { pid: 70001 });
-    await httpPost(port, '/_api/hub/unregister', { pid: 70002 });
+    await socketCmd({ cmd: 'unregister', pid: 70001 });
+    await socketCmd({ cmd: 'unregister', pid: 70002 });
 
-    // Hub is now empty — next register should be firstClient again
-    // (also cancels idle timer)
-    const r3 = await httpPost(port, '/_api/hub/register', { pid: 70003, cwd: '/cycle3' });
+    const r3 = await socketCmd({ cmd: 'register', pid: 70003, cwd: '/cycle3' });
     assert.equal(r3.firstClient, true);
   });
 });
@@ -744,6 +688,15 @@ function httpGet(port, path) {
         try { resolve(JSON.parse(data)); }
         catch { reject(new Error(`Bad JSON: ${data}`)); }
       });
+    }).on('error', reject);
+  });
+}
+
+function httpGetStatus(port, urlPath) {
+  return new Promise((resolve, reject) => {
+    http.get(`http://localhost:${port}${urlPath}`, res => {
+      res.resume();
+      resolve(res.statusCode);
     }).on('error', reject);
   });
 }
