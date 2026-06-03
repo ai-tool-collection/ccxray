@@ -1,10 +1,12 @@
 'use strict';
 
+const crypto = require('crypto');
 const store = require('../store');
 const helpers = require('../helpers');
 const config = require('../config');
 const { calculateCost } = require('../pricing');
 const { agentForProvider } = require('../providers');
+const { extractPromptAgentType } = require('../system-prompt');
 const {
   getOpenAIResponseFromEvents, getOpenAIInputSummary,
   getOpenAIOutputSummary, buildResponseMetadata,
@@ -209,6 +211,30 @@ function buildEntryFields(ctx) {
   };
 }
 
+function registerPromptVersion(ctx) {
+  const { parsedBody, sysHash, sharedFile } = ctx;
+  const promptText = typeof parsedBody?.instructions === 'string' ? parsedBody.instructions : null;
+  if (!promptText) return null;
+  const { key: agentKey, label: agentLabel } = extractPromptAgentType('openai', parsedBody);
+  const coreHash = crypto.createHash('md5').update(promptText).digest('hex').slice(0, 12);
+  const idxKey = `${agentKey}::${coreHash}`;
+  const existing = store.versionIndex.get(idxKey);
+  if (existing) {
+    if (sharedFile || sysHash) existing.sharedFile = sharedFile || `openai_instructions_${sysHash}.json`;
+    return { coreHash, agentKey, agentLabel };
+  }
+  const now = new Date().toISOString().slice(0, 10);
+  const sf = sharedFile || (sysHash ? `openai_instructions_${sysHash}.json` : null);
+  store.versionIndex.set(idxKey, {
+    reqId: null, sharedFile: sf, b2Len: promptText.length,
+    coreLen: promptText.length, coreHash, firstSeen: now,
+    agentKey, agentLabel, version: coreHash,
+  });
+  const vData = JSON.stringify({ _type: 'version_detected', version: coreHash, b2Len: promptText.length, agentKey, agentLabel });
+  for (const res of store.sseClients) res.write(`data: ${vData}\n\n`);
+  return { coreHash, agentKey, agentLabel };
+}
+
 module.exports = {
   // WIRE_PARSERS interface
   isNoiseRequest,
@@ -218,6 +244,7 @@ module.exports = {
   detectSession,
   preprocessBody,
   buildEntryFields,
+  registerPromptVersion,
   // Low-level exports for ws-proxy.js compatibility
   getCodexRawSessionId,
   firstHeader,

@@ -81,6 +81,28 @@ test('anthropic.buildEntryFields yields canonical fields', () => {
   assert.ok(f.maxContext > 0, 'maxContext inferred');
 });
 
+test('T9: anthropic.registerPromptVersion returns coreHash', () => {
+  const longB2 = 'You are Claude Code, Anthropic\'s official CLI for Claude. ' + 'x'.repeat(600);
+  const parsedBody = {
+    model: 'claude-sonnet-4-20250514',
+    system: [
+      { type: 'text', text: 'System config cc_version=1.0.30; block' },
+      { type: 'text', text: 'Block 1 instructions' },
+      { type: 'text', text: longB2, cache_control: { type: 'ephemeral' } },
+    ],
+    messages: [],
+  };
+  const out = getParser('anthropic').registerPromptVersion({ parsedBody });
+  assert.ok(out && typeof out.coreHash === 'string' && out.coreHash.length > 0);
+});
+
+test('T9: openai.registerPromptVersion returns coreHash', () => {
+  const out = getParser('openai').registerPromptVersion({
+    parsedBody: { instructions: 'You are a helpful coding assistant.', model: 'gpt-5.5' },
+  });
+  assert.ok(out && typeof out.coreHash === 'string' && out.coreHash.length > 0);
+});
+
 test('anthropic entry → buildIndexLine round-trip preserves key fields', () => {
   const parsedBody = loadFixture('anthropic', 'turn1_req.json');
   const usage = { input_tokens: 500, output_tokens: 100, total_tokens: 600 };

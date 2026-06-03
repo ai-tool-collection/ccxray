@@ -1,6 +1,7 @@
 'use strict';
 
-const { extractAgentType } = require('../system-prompt');
+const crypto = require('crypto');
+const { extractAgentType, splitB2IntoBlocks } = require('../system-prompt');
 const store = require('../store');
 const helpers = require('../helpers');
 const config = require('../config');
@@ -103,6 +104,37 @@ function buildEntryFields(ctx) {
   };
 }
 
+function registerPromptVersion(ctx) {
+  const { parsedBody, sysHash } = ctx;
+  if (!Array.isArray(parsedBody?.system) || parsedBody.system.length < 3) return null;
+  const b0 = parsedBody.system[0].text || '';
+  const b2 = parsedBody.system[2].text || '';
+  if (b2.length < 500) return null;
+  const { key: agentKey, label: agentLabel } = extractAgentType(parsedBody.system);
+  const coreText = splitB2IntoBlocks(b2).coreInstructions || '';
+  const coreHash = crypto.createHash('md5').update(coreText).digest('hex').slice(0, 12);
+  const liveM = b0.match(/cc_version=(\S+?)[; ]/);
+  const liveVer = liveM ? liveM[1] : null;
+  if (liveVer) {
+    const idxKey = `${agentKey}::${coreHash}`;
+    const existing = store.versionIndex.get(idxKey);
+    if (existing) {
+      existing.version = liveVer;
+      if (sysHash) existing.sharedFile = `sys_${sysHash}.json`;
+    } else {
+      const now = new Date().toISOString().slice(0, 10);
+      const sharedFile = sysHash ? `sys_${sysHash}.json` : null;
+      store.versionIndex.set(idxKey, {
+        reqId: null, sharedFile, b2Len: b2.length, coreLen: coreText.length,
+        coreHash, firstSeen: now, agentKey, agentLabel, version: liveVer,
+      });
+      const vData = JSON.stringify({ _type: 'version_detected', version: liveVer, b2Len: b2.length, agentKey, agentLabel });
+      for (const res of store.sseClients) res.write(`data: ${vData}\n\n`);
+    }
+  }
+  return { coreHash, agentKey, agentLabel };
+}
+
 module.exports = {
   isNoiseRequest,
   normalizeListMeta,
@@ -110,4 +142,5 @@ module.exports = {
   extractAgentType: extractAgentTypeMethod,
   detectSession,
   buildEntryFields,
+  registerPromptVersion,
 };
