@@ -12,6 +12,7 @@ const { appendSample, collectRatelimitHeaders } = require('./ratelimit-log');
 const hub = require('./hub');
 const { stripAuthParams } = require('./url-sanitize');
 const { getParser } = require('./wire-parsers');
+const { agentForProvider } = require('./providers');
 
 // For title-generator subagent responses, extract the clean title from the
 // JSON payload and (when attribution succeeds) stamp it onto the parent
@@ -585,7 +586,7 @@ function handleSSEResponse(ctx, proxyRes, clientRes) {
     const entry = {
       id, ts: ctx.ts, sessionId, method: ctx.clientReq.method, url: stripAuthParams(ctx.clientReq.url),
       provider: 'anthropic',
-      agent: 'claude',
+      agent: agentForProvider('anthropic'),
       req: parsedBody, res: events,
       elapsed, status: proxyRes.statusCode, isSSE: true,
       tokens: helpers.tokenizeRequest(parsedBody),
@@ -720,7 +721,7 @@ function handleOpenAISSE(ctx, proxyRes, clientRes) {
     const entry = {
       id, ts: ctx.ts, sessionId: reqSessionId, method: ctx.clientReq.method, url: stripAuthParams(ctx.clientReq.url),
       provider: 'openai',
-      agent: 'codex',
+      agent: agentForProvider('openai'),
       req: parsedBody, res: events,
       elapsed, status: proxyRes.statusCode, isSSE: true,
       tokens: helpers.tokenizeRequest(parsedBody),
@@ -862,7 +863,7 @@ function handleNonSSEResponse(ctx, proxyRes, clientRes) {
     const entry = {
       id, ts: ctx.ts, sessionId, method: ctx.clientReq.method, url: stripAuthParams(ctx.clientReq.url),
       provider,
-      agent: provider === 'openai' ? 'codex' : 'claude',
+      agent: agentForProvider(provider),
       req: parsedBody, res: resData,
       elapsed, status: proxyRes.statusCode, isSSE: !!openAIEvents,
       tokens: helpers.tokenizeRequest(parsedBody),

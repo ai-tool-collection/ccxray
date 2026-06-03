@@ -67,6 +67,13 @@ describe('agent provider registry', () => {
     assert.equal(launch.env.PATH, '/usr/bin');
   });
 
+  it('PROVIDER_AGENT maps upstream family to agent label', () => {
+    assert.equal(providers.agentForProvider('openai'), 'codex');
+    assert.equal(providers.agentForProvider('anthropic'), 'claude');
+    assert.equal(providers.agentForProvider('unknown'), 'claude');
+    assert.equal(providers.PROVIDER_AGENT.openai, 'codex');
+  });
+
   it('centralizes display names and unsupported-provider handling', () => {
     assert.equal(providers.getDisplayName('claude', {}), 'ccxray');
     assert.equal(providers.getDisplayName('codex', {}), 'ccxray');

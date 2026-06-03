@@ -77,6 +77,9 @@ const AGENT_PROVIDERS = Object.freeze({
   }),
 });
 
+const PROVIDER_AGENT = Object.freeze({ anthropic: 'claude', openai: 'codex' });
+function agentForProvider(provider) { return PROVIDER_AGENT[provider] || 'claude'; }
+
 function listAgentProviderIds() {
   return Object.keys(AGENT_PROVIDERS);
 }
@@ -114,6 +117,8 @@ function getAgentLaunch(id, port, args = [], env = process.env) {
 
 module.exports = {
   AGENT_PROVIDERS,
+  PROVIDER_AGENT,
+  agentForProvider,
   getAgentLaunch,
   getAgentProvider,
   getDisplayName,

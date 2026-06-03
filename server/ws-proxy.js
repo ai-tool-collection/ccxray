@@ -8,6 +8,7 @@ const { calculateCost } = require('./pricing');
 const { broadcast, broadcastSessionStatus } = require('./sse-broadcast');
 const { isUpstreamAuthenticated } = require('./auth');
 const { stripAuthParams } = require('./url-sanitize');
+const { agentForProvider } = require('./providers');
 const {
   detectSession: _detectOpenAISession3,
   getCodexSessionId,
@@ -276,7 +277,7 @@ async function recordWebSocketEntry(ctx, result) {
     method: ctx.req.method,
     url: stripAuthParams(ctx.req.url),
     provider: 'openai',
-    agent: 'codex',
+    agent: agentForProvider('openai'),
     req: reqLog,
     res: resLog,
     elapsed,

@@ -1,6 +1,7 @@
 'use strict';
 
 const store = require('./store');
+const { agentForProvider } = require('./providers');
 
 // Strip req/res from broadcast — browser only needs summary for the turn list
 function summarizeEntry(entry) {
@@ -8,7 +9,7 @@ function summarizeEntry(entry) {
   return {
     id: entry.id, ts: entry.ts, sessionId: entry.sessionId,
     provider: entry.provider || 'anthropic',
-    agent: entry.agent || (entry.provider === 'openai' ? 'codex' : 'claude'),
+    agent: entry.agent || agentForProvider(entry.provider),
     method: entry.method, url: entry.url,
     elapsed: entry.elapsed, status: entry.status, isSSE: entry.isSSE,
     receivedAt: entry.receivedAt || null,
