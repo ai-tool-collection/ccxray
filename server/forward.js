@@ -13,6 +13,7 @@ const hub = require('./hub');
 const { stripAuthParams } = require('./url-sanitize');
 const { getParser } = require('./wire-parsers');
 const { agentForProvider } = require('./providers');
+const { buildIndexLine } = require('./entry');
 
 // For title-generator subagent responses, extract the clean title from the
 // JSON payload and (when attribution succeeds) stamp it onto the parent
@@ -620,24 +621,7 @@ function handleSSEResponse(ctx, proxyRes, clientRes) {
     broadcast(entry);
 
     // Persist to index (fire-and-forget after broadcast)
-    const indexLine = JSON.stringify({
-      id, ts: ctx.ts, sessionId,
-      provider: entry.provider,
-      agent: entry.agent,
-      model: entry.model, msgCount: entry.msgCount, toolCount: entry.toolCount,
-      toolCalls: entry.toolCalls, isSubagent: entry.isSubagent, sessionInferred: entry.sessionInferred,
-      cwd: entry.cwd, isSSE: true,
-      usage, cost: costInfo, maxContext,
-      stopReason, title, thinkingDuration,
-      toolFail,
-      elapsed, status: proxyRes.statusCode,
-      receivedAt: startTime,
-      sysHash: entry.sysHash, toolsHash: entry.toolsHash,
-      coreHash: entry.coreHash,
-      thinkingStripped: entry.thinkingStripped,
-      hasCredential: entry.hasCredential,
-      toolSources: entry.toolSources,
-    });
+    const indexLine = buildIndexLine(entry);
     config.storage.appendIndex(indexLine + '\n').catch(e => console.error('Write index failed:', e.message));
 
     // Release req/res from memory — data is on disk (or being written), lazy-load on demand
@@ -752,23 +736,7 @@ function handleOpenAISSE(ctx, proxyRes, clientRes) {
     store.trimEntries();
     broadcast(entry);
 
-    const indexLine = JSON.stringify({
-      id, ts: ctx.ts, sessionId: reqSessionId,
-      provider: entry.provider,
-      agent: entry.agent,
-      model: entry.model, msgCount: entry.msgCount, toolCount: entry.toolCount,
-      toolCalls: entry.toolCalls, isSubagent: entry.isSubagent, sessionInferred: entry.sessionInferred,
-      cwd: entry.cwd, isSSE: true,
-      usage, cost: null, maxContext: null,
-      responseMetadata,
-      stopReason: entry.stopReason, title: entry.title, thinkingDuration: null,
-      toolFail: false,
-      elapsed, status: proxyRes.statusCode,
-      receivedAt: startTime,
-      sysHash: entry.sysHash, toolsHash: entry.toolsHash,
-      coreHash: entry.coreHash,
-      hasCredential: entry.hasCredential,
-    });
+    const indexLine = buildIndexLine(entry);
     config.storage.appendIndex(indexLine + '\n').catch(e => console.error('Write index failed:', e.message));
 
     entry.req = null;
@@ -899,25 +867,7 @@ function handleNonSSEResponse(ctx, proxyRes, clientRes) {
     store.propagateLoadedSkills(entry, sessionId);
     broadcast(entry);
 
-    const indexLine = JSON.stringify({
-      id, ts: ctx.ts, sessionId,
-      provider: entry.provider,
-      agent: entry.agent,
-      model: entry.model, msgCount: entry.msgCount, toolCount: entry.toolCount,
-      toolCalls: entry.toolCalls, isSubagent: entry.isSubagent, sessionInferred: entry.sessionInferred,
-      cwd: entry.cwd, isSSE: entry.isSSE,
-      usage, cost: null, maxContext,
-      responseMetadata,
-      stopReason, title, thinkingDuration: null,
-      toolFail,
-      elapsed, status: proxyRes.statusCode,
-      receivedAt: startTime,
-      sysHash: ctx.sysHash || null, toolsHash: ctx.toolsHash || null,
-      coreHash: entry.coreHash,
-      thinkingStripped: entry.thinkingStripped,
-      hasCredential: entry.hasCredential,
-      toolSources: entry.toolSources,
-    });
+    const indexLine = buildIndexLine(entry);
     config.storage.appendIndex(indexLine + '\n').catch(e => console.error('Write index failed:', e.message));
 
     // Release req/res from memory — data is on disk (or being written), lazy-load on demand

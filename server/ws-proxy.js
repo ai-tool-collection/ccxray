@@ -9,6 +9,7 @@ const { broadcast, broadcastSessionStatus } = require('./sse-broadcast');
 const { isUpstreamAuthenticated } = require('./auth');
 const { stripAuthParams } = require('./url-sanitize');
 const { agentForProvider } = require('./providers');
+const { buildIndexLine } = require('./entry');
 const {
   detectSession: _detectOpenAISession3,
   getCodexSessionId,
@@ -312,38 +313,7 @@ async function recordWebSocketEntry(ctx, result) {
   store.trimEntries();
   broadcast(entry);
 
-  const indexLine = JSON.stringify({
-    id: entry.id,
-    ts: entry.ts,
-    sessionId: entry.sessionId,
-    provider: entry.provider,
-    agent: entry.agent,
-    model: entry.model,
-    msgCount: entry.msgCount,
-    toolCount: entry.toolCount,
-    toolCalls: entry.toolCalls,
-    isSubagent: entry.isSubagent,
-    sessionInferred: entry.sessionInferred,
-    cwd: entry.cwd,
-    isSSE: entry.isSSE,
-    usage: entry.usage,
-    cost: entry.cost,
-    maxContext: entry.maxContext,
-    responseMetadata,
-    stopReason: entry.stopReason,
-    title: entry.title,
-    thinkingDuration: null,
-    toolFail: entry.toolFail,
-    elapsed,
-    status: entry.status,
-    receivedAt: entry.receivedAt,
-    sysHash: null,
-    toolsHash: null,
-    coreHash: null,
-    thinkingStripped: entry.thinkingStripped,
-    hasCredential: entry.hasCredential,
-    toolSources: entry.toolSources,
-  });
+  const indexLine = buildIndexLine(entry);
   config.storage.appendIndex(indexLine + '\n').catch(e => console.error('Write ws index failed:', e.message));
   entry.req = null;
   entry.res = null;
