@@ -218,7 +218,7 @@ describe('Auth header injection E2E (1.4)', () => {
     }
   });
 
-  it('prints a loud startup banner when CCXRAY_LOOPBACK_NO_AUTH=1', async () => {
+  it('prints deprecation banner when CCXRAY_LOOPBACK_NO_AUTH=1', async () => {
     const proxyPort = await findFreePort();
     const home = makeTmpHome();
 
@@ -238,9 +238,37 @@ describe('Auth header injection E2E (1.4)', () => {
 
     try {
       await waitForPort(proxyPort);
-      await new Promise(r => setTimeout(r, 300)); // let the banner flush
+      await new Promise(r => setTimeout(r, 300));
       assert.match(stderr, /CCXRAY_LOOPBACK_NO_AUTH/,
-        'startup banner should name the flag so the operator knows auth is disabled');
+        'startup banner should name the flag so the operator knows upstream auth is disabled');
+    } finally {
+      await killAndWait(child);
+    }
+  });
+
+  it('prints paranoid-mode banner when CCXRAY_LOOPBACK_REQUIRE_AUTH=1', async () => {
+    const proxyPort = await findFreePort();
+    const home = makeTmpHome();
+
+    let stderr = '';
+    const child = spawn(process.execPath, [SERVER_SCRIPT, '--port', String(proxyPort), '--no-browser'], {
+      env: {
+        ...process.env,
+        CCXRAY_HOME: home,
+        CCXRAY_LOOPBACK_REQUIRE_AUTH: '1',
+        BROWSER: 'none',
+        RESTORE_DAYS: '0',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    child.stdout.on('data', () => {});
+    child.stderr.on('data', d => { stderr += d.toString(); });
+
+    try {
+      await waitForPort(proxyPort);
+      await new Promise(r => setTimeout(r, 300));
+      assert.match(stderr, /CCXRAY_LOOPBACK_REQUIRE_AUTH/,
+        'startup banner should name the paranoid flag');
     } finally {
       await killAndWait(child);
     }
@@ -251,13 +279,11 @@ describe('Auth header injection E2E (1.4)', () => {
     const proxyPort = await findFreePort();
     const home = makeTmpHome();
 
-    // Create a simple WebSocket echo upstream
     const upstreamWss = new WebSocket.Server({ noServer: true });
     const upstreamHttp = http.createServer();
     upstreamHttp.on('upgrade', (req, socket, head) => {
       upstreamWss.handleUpgrade(req, socket, head, ws => {
         ws.on('message', data => ws.send(data));
-        // Auto close after 1s to keep test short
         setTimeout(() => ws.close(1000, 'done'), 500);
       });
     });
@@ -269,6 +295,7 @@ describe('Auth header injection E2E (1.4)', () => {
         OPENAI_TEST_HOST: '127.0.0.1',
         OPENAI_TEST_PORT: String(upstreamPort),
         OPENAI_TEST_PROTOCOL: 'http',
+        CCXRAY_LOOPBACK_REQUIRE_AUTH: '1',
         CCXRAY_HOME: home,
         BROWSER: 'none',
         RESTORE_DAYS: '0',

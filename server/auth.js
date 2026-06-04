@@ -5,9 +5,9 @@
  *
  * Upstream domain (`/v1/*`): X-Ccxray-Auth header (or scoped ChatGPT-OAuth
  * carve-out). Dashboard domain (everything else): session cookie OR Bearer
- * AUTH_TOKEN OR X-Ccxray-Auth. Loopback escape hatch (CCXRAY_LOOPBACK_NO_AUTH)
- * bypasses both, guarded by req.socket.remoteAddress. Static shell is served
- * before the gate so the bootstrap script can run without a cookie.
+ * AUTH_TOKEN OR X-Ccxray-Auth. Loopback peers are trusted by default for both
+ * domains. Set CCXRAY_LOOPBACK_REQUIRE_AUTH=1 to re-gate loopback.
+ * Static shell is served before the gate so the bootstrap script can run.
  *
  * Authoritative design: reason/260525-0055-ccxray-auth-design/candidate-AB.md
  * Implementation deviations: reason/260525-0055-ccxray-auth-design/errata.md
@@ -350,18 +350,16 @@ function verifyDashboard(req, res) {
   return true;
 }
 
-// ─── Loopback-guarded escape hatch (Phase 2.3, design 決策 7) ─────────
+// ─── Loopback trust (default-on) ────────────────────────────────────
 //
-// CCXRAY_LOOPBACK_NO_AUTH=1 disables the auth gate, but only for loopback
-// peers. ccxray binds 0.0.0.0, so a blunt header-only bypass (as shipped in
-// 2.2) would expose /v1/* and the dashboard to the whole LAN the moment the
-// flag is set. The check lives in the gate functions (verifyUpstream, WS
-// isAuthorized, verifyDashboard) because they hold req.socket; the taxonomy
-// helper verifyUpstreamCredential(headers) cannot see the peer address.
+// Loopback peers (127.0.0.1, ::1, ::ffff:127.0.0.1) are trusted by
+// default — dashboard, upstream /v1/*, and WS all bypass auth. ccxray
+// binds 0.0.0.0, so non-loopback requests still require full auth.
 //
-// Residual gap: a same-host reverse proxy presents remoteAddress = 127.0.0.1,
-// defeating the guard. That needs double opt-in (proxy + flag) and the startup
-// banner warns regardless — documented, not closed (errata §5).
+// CCXRAY_LOOPBACK_REQUIRE_AUTH=1 re-gates loopback for paranoid setups
+// (e.g. same-host reverse proxy presenting remoteAddress=127.0.0.1).
+//
+// Legacy CCXRAY_LOOPBACK_NO_AUTH=1 is no longer needed (silently ignored).
 
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
@@ -370,7 +368,7 @@ function isLoopbackAddress(addr) {
 }
 
 function isLoopbackBypass(req) {
-  if (process.env.CCXRAY_LOOPBACK_NO_AUTH !== '1') return false;
+  if (process.env.CCXRAY_LOOPBACK_REQUIRE_AUTH === '1') return false;
   return isLoopbackAddress(req && req.socket && req.socket.remoteAddress);
 }
 
