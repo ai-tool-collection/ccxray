@@ -368,6 +368,44 @@ async function persistEditedRequest(ctx) {
   }
 }
 
+// ── Upstream error classification ───────────────────────────────────
+const RETRYABLE_CODES = new Set(['ETIMEDOUT', 'ENOTFOUND', 'EHOSTUNREACH', 'ECONNREFUSED', 'EAI_AGAIN']);
+
+function describeUpstreamError(err, host) {
+  const code = err.code || '';
+  const labels = {
+    ETIMEDOUT: 'connection timed out',
+    ENOTFOUND: 'DNS lookup failed',
+    EHOSTUNREACH: 'host unreachable',
+    ECONNREFUSED: 'connection refused',
+    EAI_AGAIN: 'DNS temporarily unavailable',
+    ECONNRESET: 'connection reset by peer',
+    EPIPE: 'broken pipe',
+  };
+  const hints = {
+    ETIMEDOUT: 'check your network connection',
+    ENOTFOUND: 'check your network or DNS settings',
+    EHOSTUNREACH: 'check your network connection',
+    ECONNREFUSED: 'is the upstream API available?',
+    EAI_AGAIN: 'DNS will likely recover on its own',
+  };
+  const label = labels[code] || err.message || code || 'unknown error';
+  const codeTag = code ? ` (${code})` : '';
+  let agentVer = null;
+  for (const e of store.versionIndex.values()) {
+    if (e.version && (!agentVer || e.version > agentVer.v)) {
+      agentVer = { v: e.version, label: e.agentLabel };
+    }
+  }
+  const verTag = agentVer ? ` [${agentVer.label} ${agentVer.v}]` : '';
+  return {
+    code,
+    summary: `${host}: ${label}${codeTag}${verTag}`,
+    hint: hints[code] || null,
+    retryable: RETRYABLE_CODES.has(code),
+  };
+}
+
 // ── Forward request to Anthropic ─────────────────────────────────────
 function forwardRequest(ctx) {
   const { id, ts, startTime, parsedBody, rawBody, clientReq, clientRes, fwdHeaders, reqSessionId } = ctx;
@@ -439,57 +477,79 @@ function forwardRequest(ctx) {
 
   const transport = upstream.protocol === 'http' ? http : https;
   const tunnelAgent = getTunnelAgent(upstream);
-  const proxyReq = transport.request({
-    hostname: upstream.host, port: upstream.port,
-    path: config.joinUpstreamPath(upstream, stripAuthParams(clientReq.url)), method: clientReq.method,
-    headers: { ...fwdHeaders, 'content-length': bodyToSend.length },
-    ...(tunnelAgent ? { agent: tunnelAgent } : {}),
-  }, (proxyRes) => {
-    const isSSE = (proxyRes.headers['content-type'] || '').includes('text/event-stream');
 
-    // Capture rate limit headers once, share with state + sample log.
-    const parsedRL = collectRatelimitHeaders(proxyRes.headers);
-    if (parsedRL && parsedRL.tokensLimit != null) {
-      store.setRateLimitState({ ...parsedRL, updatedAt: Date.now() });
-    }
-    if (parsedRL) {
-      appendSample({
-        parsed: parsedRL,
-        model: parsedBody?.model || null,
-        planHint: process.env.CCXRAY_PLAN || null,
-      });
-    }
-    clientRes.writeHead(proxyRes.statusCode, proxyRes.headers);
+  function sendUpstream(attempt) {
+    if (clientRes.destroyed) return;
+    const proxyReq = transport.request({
+      hostname: upstream.host, port: upstream.port,
+      path: config.joinUpstreamPath(upstream, stripAuthParams(clientReq.url)), method: clientReq.method,
+      headers: { ...fwdHeaders, 'content-length': bodyToSend.length },
+      ...(tunnelAgent ? { agent: tunnelAgent } : {}),
+    }, (proxyRes) => {
+      const isSSE = (proxyRes.headers['content-type'] || '').includes('text/event-stream');
 
-    if (isSSE) {
-      handleSSEResponse(ctx, proxyRes, clientRes);
-    } else {
-      handleNonSSEResponse(ctx, proxyRes, clientRes);
-    }
-  });
+      // Capture rate limit headers once, share with state + sample log.
+      const parsedRL = collectRatelimitHeaders(proxyRes.headers);
+      if (parsedRL && parsedRL.tokensLimit != null) {
+        store.setRateLimitState({ ...parsedRL, updatedAt: Date.now() });
+      }
+      if (parsedRL) {
+        appendSample({
+          parsed: parsedRL,
+          model: parsedBody?.model || null,
+          planHint: process.env.CCXRAY_PLAN || null,
+        });
+      }
+      clientRes.writeHead(proxyRes.statusCode, proxyRes.headers);
 
-  proxyReq.on('error', (err) => {
-    console.error(`\x1b[31m❌ PROXY ERROR: ${err.message || err.code || String(err)}\x1b[0m`);
-    if (reqSessionId) {
-      store.activeRequests[reqSessionId] = Math.max(0, (store.activeRequests[reqSessionId] || 1) - 1);
-      broadcastSessionStatus(reqSessionId);
-    }
-    if (!clientRes.headersSent) {
-      clientRes.writeHead(502, { 'Content-Type': 'application/json' });
-    }
-    clientRes.end(JSON.stringify({ error: 'proxy_error', message: err.message }));
-  });
-
-  // Late socket errors (EPIPE / ECONNRESET after the response has been received)
-  // are emitted on the underlying TLS/TCP socket and may not re-emit on the
-  // ClientRequest. Without a listener they crash the entire proxy process.
-  proxyReq.on('socket', (socket) => {
-    socket.on('error', (err) => {
-      console.error(`\x1b[31m❌ UPSTREAM SOCKET ERROR: ${err.code || err.message}\x1b[0m`);
+      if (isSSE) {
+        handleSSEResponse(ctx, proxyRes, clientRes);
+      } else {
+        handleNonSSEResponse(ctx, proxyRes, clientRes);
+      }
     });
-  });
 
-  proxyReq.end(bodyToSend);
+    let reqErrorHandled = false;
+    proxyReq.on('error', (err) => {
+      reqErrorHandled = true;
+      const info = describeUpstreamError(err, upstream.host);
+
+      if (info.retryable && attempt === 0 && !clientRes.headersSent && !clientRes.destroyed) {
+        console.error(`\x1b[33m⏳ ${info.summary} — retrying…\x1b[0m`);
+        setTimeout(() => sendUpstream(1), 1000);
+        return;
+      }
+
+      const suffix = attempt > 0 ? ' — retry failed' : '';
+      console.error(`\x1b[31m❌ ${info.summary}${suffix}\x1b[0m`);
+      if (info.hint) console.error(`\x1b[31m   → ${info.hint}\x1b[0m`);
+      if (reqSessionId) {
+        store.activeRequests[reqSessionId] = Math.max(0, (store.activeRequests[reqSessionId] || 1) - 1);
+        broadcastSessionStatus(reqSessionId);
+      }
+      if (!clientRes.headersSent) {
+        clientRes.writeHead(502, { 'Content-Type': 'application/json' });
+      }
+      clientRes.end(JSON.stringify({ error: 'proxy_error', message: err.message }));
+    });
+
+    // Late socket errors (EPIPE / ECONNRESET after response received) may not
+    // re-emit on the ClientRequest. Listener prevents uncaught-exception crash.
+    // Deferred check avoids duplicate logging when proxyReq 'error' already fired.
+    proxyReq.on('socket', (socket) => {
+      socket.on('error', (err) => {
+        setImmediate(() => {
+          if (!reqErrorHandled) {
+            console.error(`\x1b[31m❌ ${upstream.host}: socket error — ${err.code || err.message}\x1b[0m`);
+          }
+        });
+      });
+    });
+
+    proxyReq.end(bodyToSend);
+  }
+
+  sendUpstream(0);
 }
 
 function handleSSEResponse(ctx, proxyRes, clientRes) {
@@ -931,6 +991,7 @@ module.exports = {
   applyModelPrefix,
   stripInjectedStats,
   buildEditSummary,
+  describeUpstreamError,
   setStatusLineEnabled,
   getStatusLineEnabled,
   parseSSEFrame,

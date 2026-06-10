@@ -6,6 +6,7 @@ const {
   resolveProxyAgent,
   applyModelPrefix,
   stripInjectedStats,
+  describeUpstreamError,
   setStatusLineEnabled,
   getStatusLineEnabled,
   parseSSEFrame,
@@ -114,6 +115,53 @@ describe('stripInjectedStats', () => {
   it('returns false when messages is absent', () => {
     assert.equal(stripInjectedStats({}), false);
     assert.equal(stripInjectedStats(null), false);
+  });
+});
+
+describe('describeUpstreamError', () => {
+  it('classifies ETIMEDOUT as retryable with hint', () => {
+    const info = describeUpstreamError({ code: 'ETIMEDOUT' }, 'api.anthropic.com');
+    assert.equal(info.retryable, true);
+    assert.match(info.summary, /api\.anthropic\.com.*timed out.*ETIMEDOUT/);
+    assert.ok(info.hint);
+  });
+
+  it('classifies ENOTFOUND as retryable with hint', () => {
+    const info = describeUpstreamError({ code: 'ENOTFOUND' }, 'api.anthropic.com');
+    assert.equal(info.retryable, true);
+    assert.match(info.summary, /DNS lookup failed/);
+    assert.ok(info.hint);
+  });
+
+  it('classifies EHOSTUNREACH as retryable', () => {
+    const info = describeUpstreamError({ code: 'EHOSTUNREACH' }, 'example.com');
+    assert.equal(info.retryable, true);
+    assert.match(info.summary, /unreachable/);
+  });
+
+  it('classifies ECONNRESET as non-retryable', () => {
+    const info = describeUpstreamError({ code: 'ECONNRESET' }, 'example.com');
+    assert.equal(info.retryable, false);
+    assert.match(info.summary, /reset/);
+    assert.equal(info.hint, null);
+  });
+
+  it('classifies EPIPE as non-retryable', () => {
+    const info = describeUpstreamError({ code: 'EPIPE' }, 'example.com');
+    assert.equal(info.retryable, false);
+  });
+
+  it('falls back to err.message for unknown codes', () => {
+    const info = describeUpstreamError({ code: 'EWHATEVER', message: 'something broke' }, 'host');
+    assert.equal(info.retryable, false);
+    assert.match(info.summary, /something broke/);
+  });
+
+  it('handles missing code gracefully', () => {
+    const info = describeUpstreamError({ message: 'oops' }, 'host');
+    assert.equal(info.retryable, false);
+    assert.match(info.summary, /oops/);
+    assert.equal(info.code, '');
   });
 });
 
