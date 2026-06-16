@@ -114,9 +114,6 @@ function renderAccounts(blockData) {
   }
 
   el.innerHTML = html;
-  // Move accounts card to end of fp-content (after daily/monthly)
-  const fp = card.parentElement;
-  if (fp) fp.appendChild(card);
   const copyBtn = document.getElementById('cp-copy-cmd');
   if (copyBtn) {
     const originalSvg = copyBtn.innerHTML;
@@ -204,7 +201,7 @@ function renderFilterBar(container, accounts) {
   const arrowStyle = (active, color) =>
     `font-size:10px;padding:2px 4px 2px 0;border:none;cursor:pointer;background:${active ? (color || 'var(--accent)') : 'var(--surface)'};color:${active ? '#000' : (color || 'var(--dim)')}`;
 
-  let html = '<div id="cp-filter-bar" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;max-width:400px;align-items:flex-start">';
+  let html = '<div id="cp-filter-bar" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;align-items:flex-start">';
   html += `<button class="cp-filter-btn" data-filter="" style="${btnStyle(allActive, null)};border-radius:10px;border:1px solid ${allActive ? 'var(--accent)' : 'var(--border)'}">All</button>`;
 
   for (const p of providers) {
@@ -282,7 +279,7 @@ function renderFilterBar(container, accounts) {
 function renderDailyHeatmap(dailyData) {
   let container = document.getElementById('cp-daily');
   if (!container) {
-    const fp = document.querySelector('#cost-page .fp-content');
+    const fp = document.getElementById('cp-right');
     if (!fp) return;
     container = document.createElement('div');
     container.id = 'cp-daily';
@@ -296,7 +293,8 @@ function renderDailyHeatmap(dailyData) {
   const f = _costActiveFilter;
   const maxCost = Math.max(...recent.map(d => filteredCost(d, f)), 0.01);
 
-  let html = '<div class="cost-card-label">Daily Cost (last 30 days)</div>';
+  const dateRange = recent.length ? `${recent[0].date} – ${recent[recent.length - 1].date}` : '';
+  let html = `<div class="cost-card-label">Daily Cost <span style="text-transform:none;letter-spacing:0">(${esc(dateRange)})</span></div>`;
   html += '<div style="display:flex;flex-direction:column;gap:2px">';
 
   for (const day of recent) {
@@ -331,14 +329,14 @@ function renderDailyHeatmap(dailyData) {
   const activeDays = recent.filter(d => filteredCost(d, f) > 0).length;
   const avgPerDay = activeDays > 0 ? total30 / activeDays : 0;
   html += `<div style="display:flex;justify-content:space-between;font-size:11px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">`;
-  html += `<span style="color:var(--dim)">30-day total: <span style="color:var(--text);font-weight:600">$${total30.toFixed(2)}</span></span>`;
+  html += `<span style="color:var(--dim)">Last ${recent.length} days: <span style="color:var(--text);font-weight:600">$${total30.toFixed(2)}</span></span>`;
   html += `<span style="color:var(--dim)">avg $${avgPerDay.toFixed(2)}/active day</span>`;
   html += `</div>`;
 
   container.innerHTML = html;
 
   // Re-render filter bar properly (with event handler)
-  const fp = document.querySelector('#cost-page .fp-content');
+  const fp = document.getElementById('cp-right');
   if (fp) {
     let existing = document.getElementById('cp-filter-bar');
     if (existing) existing.remove();
@@ -350,7 +348,7 @@ function renderDailyHeatmap(dailyData) {
 function renderMonthlySummary(monthlyResp) {
   let container = document.getElementById('cp-monthly');
   if (!container) {
-    const fp = document.querySelector('#cost-page .fp-content');
+    const fp = document.getElementById('cp-right');
     if (!fp) return;
     container = document.createElement('div');
     container.id = 'cp-monthly';
