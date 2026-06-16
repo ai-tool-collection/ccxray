@@ -48,12 +48,15 @@ function acctColor(accountId) {
   if (!accountId) return 'var(--dim)';
   return accountId.startsWith('codex') ? _acctColors.openai : _acctColors.anthropic;
 }
-function acctLabel(accountId) {
+function acctLabel(accountId, allAccounts) {
   if (!accountId) return 'Unknown';
   const [provider, ...rest] = accountId.split('-');
   const alias = rest.join('-');
   const name = provider === 'codex' ? 'Codex' : 'Claude';
-  return alias === 'default' ? name : `${name} · ${alias}`;
+  if (alias !== 'default') return `${name} · ${alias}`;
+  // ponytail: show "default" when other accounts of same provider exist
+  if (allAccounts && allAccounts.some(a => a !== accountId && a.startsWith(provider + '-'))) return `${name} · default`;
+  return name;
 }
 
 // ── Accounts card ─────────────────────────────────────────────────────
@@ -151,14 +154,39 @@ function collectAccounts(dailyData) {
   return [...set].sort();
 }
 
+// ponytail: filter can be null (All), "claude:*" / "codex:*" (provider), or "claude-personal" (account)
+function filterMatchesAccount(filter, acctId) {
+  if (!filter) return true;
+  if (filter.endsWith(':*')) return acctId.startsWith(filter.slice(0, -2) + '-') || acctId === filter.slice(0, -2);
+  return filter === acctId;
+}
+function filteredCost(day, filter) {
+  if (!filter) return day.costUSD || 0;
+  if (!day.byAccount) return 0;
+  if (!filter.endsWith(':*')) return day.byAccount[filter]?.costUSD || 0;
+  let sum = 0;
+  for (const [k, v] of Object.entries(day.byAccount)) { if (filterMatchesAccount(filter, k)) sum += v.costUSD || 0; }
+  return sum;
+}
+
 function renderFilterBar(container, accounts) {
   if (!accounts.length) return;
+  const providers = [...new Set(accounts.map(a => a.split('-')[0]))].sort();
+  const hasMultiProvider = providers.length > 1;
+  const btn = (filter, label, color) => {
+    const active = _costActiveFilter === filter;
+    return `<button class="cp-filter-btn${active ? ' active' : ''}" data-filter="${esc(filter)}" style="font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid ${active ? (color || 'var(--accent)') : 'var(--border)'};background:${active ? (color || 'var(--accent)') : 'var(--surface)'};color:${active ? '#000' : (color || 'var(--dim)')};cursor:pointer">${esc(label)}</button>`;
+  };
   let html = '<div id="cp-filter-bar" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;max-width:400px">';
-  html += `<button class="cp-filter-btn${_costActiveFilter === null ? ' active' : ''}" data-filter="" style="font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);background:${_costActiveFilter === null ? 'var(--accent)' : 'var(--surface)'};color:${_costActiveFilter === null ? '#000' : 'var(--dim)'};cursor:pointer">All</button>`;
+  html += btn('', 'All', null);
+  if (hasMultiProvider) {
+    for (const p of providers) {
+      const name = p === 'codex' ? 'Codex' : 'Claude';
+      html += btn(p + ':*', name, acctColor(p + '-x'));
+    }
+  }
   for (const id of accounts) {
-    const active = _costActiveFilter === id;
-    const color = acctColor(id);
-    html += `<button class="cp-filter-btn${active ? ' active' : ''}" data-filter="${esc(id)}" style="font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid ${active ? color : 'var(--border)'};background:${active ? color : 'var(--surface)'};color:${active ? '#000' : color};cursor:pointer">${esc(acctLabel(id))}</button>`;
+    html += btn(id, acctLabel(id, accounts), acctColor(id));
   }
   html += '</div>';
   container.insertAdjacentHTML('afterbegin', html);
@@ -192,18 +220,14 @@ function renderDailyHeatmap(dailyData) {
 
   // Filter to last 30 days with data (or all if filter active)
   const recent = dailyData.slice(-30);
-  const maxCost = Math.max(...recent.map(d => {
-    if (_costActiveFilter) return (d.byAccount?.[_costActiveFilter]?.costUSD || 0);
-    return d.costUSD || 0;
-  }), 0.01);
+  const f = _costActiveFilter;
+  const maxCost = Math.max(...recent.map(d => filteredCost(d, f)), 0.01);
 
   let html = '<div class="cost-card-label">Daily Cost (last 30 days)</div>';
   html += '<div style="display:flex;flex-direction:column;gap:2px">';
 
   for (const day of recent) {
-    const cost = _costActiveFilter
-      ? (day.byAccount?.[_costActiveFilter]?.costUSD || 0)
-      : (day.costUSD || 0);
+    const cost = filteredCost(day, f);
     const pct = Math.min(100, (cost / maxCost) * 100);
     const weekday = new Date(day.date + 'T12:00:00').toLocaleDateString('en', { weekday: 'short' });
     const isWeekend = weekday === 'Sat' || weekday === 'Sun';
@@ -212,16 +236,15 @@ function renderDailyHeatmap(dailyData) {
     html += `<span style="width:56px;text-align:right;color:${isWeekend ? 'var(--dim)' : 'var(--text)'};flex-shrink:0">${day.date.slice(5)} ${weekday}</span>`;
     html += `<div style="flex:1;height:10px;background:var(--border);border-radius:3px;overflow:hidden;display:flex">`;
 
-    if (_costActiveFilter || !day.byAccount || !Object.keys(day.byAccount).length) {
-      const color = _costActiveFilter ? acctColor(_costActiveFilter) : 'var(--accent)';
+    if (f || !day.byAccount || !Object.keys(day.byAccount).length) {
+      const color = f ? acctColor(f.endsWith(':*') ? f.slice(0,-2)+'-x' : f) : 'var(--accent)';
       html += `<div style="height:100%;width:${pct}%;background:${color};border-radius:3px;min-width:${cost > 0 ? 2 : 0}px"></div>`;
     } else {
-      // Stacked segments by account
       const sorted = Object.entries(day.byAccount).sort((a, b) => a[0].localeCompare(b[0]));
       for (const [acctId, acctData] of sorted) {
         const aPct = Math.max(0, (acctData.costUSD / maxCost) * 100);
         if (aPct <= 0) continue;
-        html += `<div style="height:100%;width:${aPct}%;background:${acctColor(acctId)};min-width:1px" title="${esc(acctLabel(acctId))}: $${acctData.costUSD.toFixed(2)}"></div>`;
+        html += `<div style="height:100%;width:${aPct}%;background:${acctColor(acctId)};min-width:1px" title="${esc(acctLabel(acctId, accounts))}: $${acctData.costUSD.toFixed(2)}"></div>`;
       }
     }
     html += `</div>`;
@@ -231,10 +254,8 @@ function renderDailyHeatmap(dailyData) {
   html += '</div>';
 
   // 30-day total
-  const total30 = recent.reduce((s, d) => {
-    return s + (_costActiveFilter ? (d.byAccount?.[_costActiveFilter]?.costUSD || 0) : (d.costUSD || 0));
-  }, 0);
-  const activeDays = recent.filter(d => (_costActiveFilter ? (d.byAccount?.[_costActiveFilter]?.costUSD || 0) : (d.costUSD || 0)) > 0).length;
+  const total30 = recent.reduce((s, d) => s + filteredCost(d, f), 0);
+  const activeDays = recent.filter(d => filteredCost(d, f) > 0).length;
   const avgPerDay = activeDays > 0 ? total30 / activeDays : 0;
   html += `<div style="display:flex;justify-content:space-between;font-size:11px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">`;
   html += `<span style="color:var(--dim)">30-day total: <span style="color:var(--text);font-weight:600">$${total30.toFixed(2)}</span></span>`;
@@ -266,33 +287,30 @@ function renderMonthlySummary(monthlyResp) {
 
   const months = monthlyResp.monthly || [];
   if (!months.length) { container.innerHTML = ''; return; }
+  const accounts = collectAccounts(_costPageCache?.dailyData || []);
 
   let html = '<div class="cost-card-label">Monthly</div>';
   html += '<div style="display:flex;flex-direction:column;gap:4px">';
 
-  const maxCost = Math.max(...months.map(m => {
-    if (_costActiveFilter) return (m.byAccount?.[_costActiveFilter]?.costUSD || 0);
-    return m.costUSD || 0;
-  }), 0.01);
+  const f = _costActiveFilter;
+  const maxCost = Math.max(...months.map(m => filteredCost(m, f)), 0.01);
 
   for (const m of months) {
-    const cost = _costActiveFilter
-      ? (m.byAccount?.[_costActiveFilter]?.costUSD || 0)
-      : (m.costUSD || 0);
+    const cost = filteredCost(m, f);
     const pct = Math.min(100, (cost / maxCost) * 100);
     html += `<div style="display:flex;align-items:center;gap:8px;font-size:11px">`;
     html += `<span style="width:56px;text-align:right;color:var(--text);flex-shrink:0">${m.month}</span>`;
     html += `<div style="flex:1;height:14px;background:var(--border);border-radius:3px;overflow:hidden;display:flex">`;
 
-    if (_costActiveFilter || !m.byAccount || !Object.keys(m.byAccount).length) {
-      const color = _costActiveFilter ? acctColor(_costActiveFilter) : 'var(--accent)';
+    if (f || !m.byAccount || !Object.keys(m.byAccount).length) {
+      const color = f ? acctColor(f.endsWith(':*') ? f.slice(0,-2)+'-x' : f) : 'var(--accent)';
       html += `<div style="height:100%;width:${pct}%;background:${color};border-radius:3px;min-width:${cost > 0 ? 2 : 0}px"></div>`;
     } else {
       const sorted = Object.entries(m.byAccount).sort((a, b) => a[0].localeCompare(b[0]));
       for (const [acctId, acctData] of sorted) {
         const aPct = Math.max(0, (acctData.costUSD / maxCost) * 100);
         if (aPct <= 0) continue;
-        html += `<div style="height:100%;width:${aPct}%;background:${acctColor(acctId)};min-width:1px" title="${esc(acctLabel(acctId))}: $${acctData.costUSD.toFixed(2)}"></div>`;
+        html += `<div style="height:100%;width:${aPct}%;background:${acctColor(acctId)};min-width:1px" title="${esc(acctLabel(acctId, accounts))}: $${acctData.costUSD.toFixed(2)}"></div>`;
       }
     }
     html += `</div>`;
