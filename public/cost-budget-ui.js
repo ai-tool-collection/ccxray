@@ -169,39 +169,112 @@ function filteredCost(day, filter) {
   return sum;
 }
 
+function _applyFilter(filter) {
+  _costActiveFilter = filter || null;
+  if (_costPageCache) {
+    renderDailyHeatmap(_costPageCache.dailyData);
+    renderMonthlySummary(_costPageCache.monthlyResp);
+    renderAccounts(_costPageCache.blockData);
+  } else {
+    loadCostPage();
+  }
+}
+
+function _providerBtnLabel(provider, filter) {
+  const name = provider === 'codex' ? 'Codex' : 'Claude';
+  if (!filter || !filter.startsWith(provider)) return name;
+  if (filter === provider + ':*') return name;
+  const alias = filter.slice(provider.length + 1);
+  return `${name} · ${alias}`;
+}
+
+function _isProviderActive(provider, filter) {
+  if (!filter) return false;
+  return filter === provider + ':*' || (filter.startsWith(provider + '-'));
+}
+
 function renderFilterBar(container, accounts) {
   if (!accounts.length) return;
   const providers = [...new Set(accounts.map(a => a.split('-')[0]))].sort();
-  const hasMultiProvider = providers.length > 1;
-  const btn = (filter, label, color) => {
-    const active = _costActiveFilter === filter;
-    return `<button class="cp-filter-btn${active ? ' active' : ''}" data-filter="${esc(filter)}" style="font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid ${active ? (color || 'var(--accent)') : 'var(--border)'};background:${active ? (color || 'var(--accent)') : 'var(--surface)'};color:${active ? '#000' : (color || 'var(--dim)')};cursor:pointer">${esc(label)}</button>`;
-  };
-  let html = '<div id="cp-filter-bar" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;max-width:400px">';
-  html += btn('', 'All', null);
-  if (hasMultiProvider) {
-    for (const p of providers) {
-      const name = p === 'codex' ? 'Codex' : 'Claude';
-      html += btn(p + ':*', name, acctColor(p + '-x'));
+  const f = _costActiveFilter;
+  const allActive = !f;
+
+  const btnStyle = (active, color) =>
+    `font-size:10px;padding:2px 8px;border:none;cursor:pointer;background:${active ? (color || 'var(--accent)') : 'var(--surface)'};color:${active ? '#000' : (color || 'var(--dim)')}`;
+  const arrowStyle = (active, color) =>
+    `font-size:10px;padding:2px 4px 2px 0;border:none;cursor:pointer;background:${active ? (color || 'var(--accent)') : 'var(--surface)'};color:${active ? '#000' : (color || 'var(--dim)')}`;
+
+  let html = '<div id="cp-filter-bar" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;max-width:400px;align-items:flex-start">';
+  html += `<button class="cp-filter-btn" data-filter="" style="${btnStyle(allActive, null)};border-radius:10px;border:1px solid ${allActive ? 'var(--accent)' : 'var(--border)'}">All</button>`;
+
+  for (const p of providers) {
+    const color = acctColor(p + '-x');
+    const active = _isProviderActive(p, f);
+    const label = _providerBtnLabel(p, f);
+    const pAccounts = accounts.filter(a => a.startsWith(p + '-'));
+    const borderColor = active ? color : 'var(--border)';
+
+    html += `<span class="cp-provider-group" data-provider="${esc(p)}" style="position:relative;display:inline-flex;border-radius:10px;border:1px solid ${borderColor}">`;
+    html += `<button class="cp-filter-btn cp-provider-btn" data-filter="${esc(p + ':*')}" style="${btnStyle(active, color)};border-radius:10px 0 0 10px;padding-left:8px">${esc(label)}</button>`;
+    html += `<button class="cp-arrow-btn" data-provider="${esc(p)}" style="${arrowStyle(active, color)};border-radius:0 10px 10px 0">▾</button>`;
+
+    html += `<div class="cp-dropdown" data-provider="${esc(p)}" style="display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:100;background:var(--surface);border:1px solid var(--border);border-radius:6px;min-width:140px;padding:4px 0;box-shadow:0 4px 12px rgba(0,0,0,0.3)">`;
+    const providerName = p === 'codex' ? 'Codex' : 'Claude';
+    html += `<div class="cp-dropdown-item" data-filter="${esc(p + ':*')}" style="padding:4px 10px;font-size:10px;cursor:pointer;color:${color}">All ${esc(providerName)}</div>`;
+    for (const id of pAccounts) {
+      const alias = id.slice(p.length + 1);
+      html += `<div class="cp-dropdown-item" data-filter="${esc(id)}" style="padding:4px 10px 4px 18px;font-size:10px;cursor:pointer;color:var(--text)">· ${esc(alias)}</div>`;
     }
-  }
-  for (const id of accounts) {
-    html += btn(id, acctLabel(id, accounts), acctColor(id));
+    html += `</div>`;
+    html += `</span>`;
   }
   html += '</div>';
   container.insertAdjacentHTML('afterbegin', html);
-  container.querySelector('#cp-filter-bar').addEventListener('click', e => {
-    const btn = e.target.closest('.cp-filter-btn');
-    if (!btn) return;
-    _costActiveFilter = btn.dataset.filter || null;
-    // ponytail: re-render from cache, don't re-fetch
-    if (_costPageCache) {
-      renderDailyHeatmap(_costPageCache.dailyData);
-      renderMonthlySummary(_costPageCache.monthlyResp);
-      renderAccounts(_costPageCache.blockData);
-    } else {
-      loadCostPage();
+
+  const bar = container.querySelector('#cp-filter-bar');
+
+  // All button + provider button clicks
+  bar.addEventListener('click', e => {
+    const filterBtn = e.target.closest('.cp-filter-btn:not(.cp-provider-btn)');
+    if (filterBtn && filterBtn.dataset.filter === '') { _applyFilter(null); return; }
+    const provBtn = e.target.closest('.cp-provider-btn');
+    if (provBtn) { _applyFilter(provBtn.dataset.filter); return; }
+    const arrow = e.target.closest('.cp-arrow-btn');
+    if (arrow) {
+      e.stopPropagation();
+      const p = arrow.dataset.provider;
+      const dd = bar.querySelector(`.cp-dropdown[data-provider="${p}"]`);
+      const wasOpen = dd.style.display !== 'none';
+      bar.querySelectorAll('.cp-dropdown').forEach(d => d.style.display = 'none');
+      if (!wasOpen) dd.style.display = '';
+      return;
     }
+    const item = e.target.closest('.cp-dropdown-item');
+    if (item) {
+      bar.querySelectorAll('.cp-dropdown').forEach(d => d.style.display = 'none');
+      _applyFilter(item.dataset.filter);
+      return;
+    }
+  });
+
+  // Close dropdown on outside click
+  const closeHandler = e => {
+    if (!e.target.closest('.cp-provider-group')) {
+      bar.querySelectorAll('.cp-dropdown').forEach(d => d.style.display = 'none');
+    }
+  };
+  document.removeEventListener('click', window._cpDropdownClose);
+  window._cpDropdownClose = closeHandler;
+  document.addEventListener('click', closeHandler);
+
+  // Hover highlight on dropdown items
+  bar.addEventListener('mouseover', e => {
+    const item = e.target.closest('.cp-dropdown-item');
+    if (item) item.style.background = 'var(--surface-hover)';
+  });
+  bar.addEventListener('mouseout', e => {
+    const item = e.target.closest('.cp-dropdown-item');
+    if (item) item.style.background = '';
   });
 }
 
