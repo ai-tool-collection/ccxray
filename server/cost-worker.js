@@ -64,6 +64,7 @@ function discoverHomes(prefix) {
       results.push({ dir: subdir, alias: isNamed ? d.slice(prefix.length + 1) : 'default' });
     } catch {}
   }
+  results._inodes = inodes;
   return results;
 }
 
@@ -173,10 +174,8 @@ async function run() {
   // ponytail: XDG path for Linux — discoverHomes only scans $HOME/.claude*
   const xdgClaude = path.join(os.homedir(), '.config', 'claude', 'projects');
   try {
-    const ino = fs.statSync(xdgClaude).ino;
-    if (!claudeHomes.some(h => { try { return fs.statSync(h.dir).ino === ino; } catch { return false; } })) {
-      claudeHomes.push({ dir: xdgClaude, alias: 'default' });
-    }
+    const xdgIno = fs.statSync(xdgClaude).ino;
+    if (!claudeHomes._inodes.has(xdgIno)) claudeHomes.push({ dir: xdgClaude, alias: 'default' });
   } catch {}
   const codexHomes = discoverHomes('.codex');
 

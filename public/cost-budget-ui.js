@@ -157,7 +157,7 @@ function collectAccounts(dailyData) {
 // ponytail: filter can be null (All), "claude:*" / "codex:*" (provider), or "claude-personal" (account)
 function filterMatchesAccount(filter, acctId) {
   if (!filter) return true;
-  if (filter.endsWith(':*')) return acctId.startsWith(filter.slice(0, -2) + '-') || acctId === filter.slice(0, -2);
+  if (filter.endsWith(':*')) return acctId.startsWith(filter.slice(0, -2) + '-');
   return filter === acctId;
 }
 function filteredCost(day, filter) {
@@ -257,15 +257,15 @@ function renderFilterBar(container, accounts) {
     }
   });
 
-  // Close dropdown on outside click
-  const closeHandler = e => {
-    if (!e.target.closest('.cp-provider-group')) {
-      bar.querySelectorAll('.cp-dropdown').forEach(d => d.style.display = 'none');
-    }
-  };
-  document.removeEventListener('click', window._cpDropdownClose);
-  window._cpDropdownClose = closeHandler;
-  document.addEventListener('click', closeHandler);
+  // Close dropdown on outside click — single handler, no leak
+  if (!window._cpDropdownClose) {
+    window._cpDropdownClose = e => {
+      if (!e.target.closest('.cp-provider-group')) {
+        document.querySelectorAll('#cp-filter-bar .cp-dropdown').forEach(d => d.style.display = 'none');
+      }
+    };
+    document.addEventListener('click', window._cpDropdownClose);
+  }
 
   // Hover highlight on dropdown items
   bar.addEventListener('mouseover', e => {
