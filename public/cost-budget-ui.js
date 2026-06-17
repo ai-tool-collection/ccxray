@@ -34,8 +34,8 @@ async function loadCostPage() {
   ]);
 
   _costPageCache = { blockData, dailyData, monthlyResp };
-  renderDailyHeatmap(dailyData);
   renderMonthlySummary(monthlyResp);
+  renderDailyHeatmap(dailyData);
   renderAccounts(blockData);
 }
 
@@ -169,8 +169,8 @@ function filteredCost(day, filter) {
 function _applyFilter(filter) {
   _costActiveFilter = filter || null;
   if (_costPageCache) {
-    renderDailyHeatmap(_costPageCache.dailyData);
     renderMonthlySummary(_costPageCache.monthlyResp);
+    renderDailyHeatmap(_costPageCache.dailyData);
     renderAccounts(_costPageCache.blockData);
   } else {
     loadCostPage();
