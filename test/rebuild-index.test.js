@@ -248,6 +248,30 @@ describe('rebuild-index', () => {
     assert.deepEqual(ids, ['2026-06-01T04-00-00-000', '2026-06-01T05-00-00-000'], 'sorted by id');
   });
 
+  it('recovers a very old turn (>14 days) — rebuild has no age filter', async () => {
+    writeShared();
+    // A turn from 2024 — well beyond LOG_RETENTION_DAYS. As long as its
+    // _req/_res files survive on disk (e.g. star-protected from prune),
+    // rebuild-index must recover it. This locks the guarantee that rebuild
+    // scans ALL surviving files regardless of age.
+    const oldId = '2024-01-15T10-30-00-000';
+    writeReq(oldId, {
+      model: 'claude-x', max_tokens: 100, sysHash: SYS_HASH,
+      messages: [{ role: 'user', content: 'ancient question' }],
+      metadata: { session_id: 'S-old' },
+    });
+    writeRes(oldId, sseEvents());
+
+    const r = await rebuildIndex({ apply: true, storage, log });
+    assert.equal(r.recovered, 1);
+    const byId = new Map(readIndexIds().map(o => [o.id, o]));
+    const old = byId.get(oldId);
+    assert.ok(old, 'old turn must be recovered');
+    assert.equal(old.sessionId, 'S-old');
+    assert.equal(old.title, 'ancient question');
+    assert.equal(old.stopReason, 'end_turn');
+  });
+
   it('refuses to run while a live hub holds the index', async () => {
     hub.readHubLock = () => ({ pid: process.pid, port: 5577 }); // our own pid is alive
     try {
