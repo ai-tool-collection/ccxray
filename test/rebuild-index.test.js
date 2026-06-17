@@ -210,6 +210,44 @@ describe('rebuild-index', () => {
     assert.equal(after2, after1, 'second apply is a no-op');
   });
 
+  it('skips non-Anthropic records (OpenAI body + WS transport-only), never emits a bogus line', async () => {
+    writeShared();
+    // OpenAI/Codex turn (raw `input` body) — must be skipped, not rebuilt as Anthropic.
+    writeReq('2026-06-01T03-00-00-000', {
+      model: 'gpt-5.5', input: [{ role: 'user', content: 'hi' }], provider: 'openai',
+    });
+    // WS transport-only record (no payload) — must be skipped.
+    writeReq('2026-06-01T03-00-01-000', {
+      transport: 'websocket', capture: 'transport-only', headers: { sessionId: 'codex-x' }, metadata: null,
+    });
+    // A real Anthropic turn alongside them — must be recovered.
+    writeReq('2026-06-01T03-00-02-000', {
+      model: 'claude-x', max_tokens: 100, sysHash: SYS_HASH,
+      messages: [{ role: 'user', content: 'real one' }], metadata: { session_id: 'S3' },
+    });
+
+    const r = await rebuildIndex({ apply: true, storage, log });
+    assert.equal(r.recovered, 1, 'only the Anthropic turn');
+    assert.equal(r.unrecoverable, 2, 'OpenAI + WS transport-only skipped');
+    const byId = new Map(readIndexIds().map(o => [o.id, o]));
+    assert.equal(byId.has('2026-06-01T03-00-00-000'), false, 'OpenAI not emitted');
+    assert.equal(byId.has('2026-06-01T03-00-01-000'), false, 'WS transport-only not emitted');
+    assert.equal(byId.get('2026-06-01T03-00-02-000').provider, 'anthropic');
+  });
+
+  it('recovered lines are written in id order (older orphan sorts before newer existing line)', async () => {
+    writeShared();
+    // Existing index has a NEWER line; we recover an OLDER orphan → it must sort first.
+    writeIndexLine({ id: '2026-06-01T05-00-00-000', sessionId: 'S4', sessionInferred: false, cwd: '/p' });
+    writeReq('2026-06-01T04-00-00-000', {
+      model: 'claude-x', max_tokens: 100, sysHash: SYS_HASH,
+      messages: [{ role: 'user', content: 'older' }], metadata: { session_id: 'S4' },
+    });
+    await rebuildIndex({ apply: true, storage, log });
+    const ids = readIndexIds().map(o => o.id);
+    assert.deepEqual(ids, ['2026-06-01T04-00-00-000', '2026-06-01T05-00-00-000'], 'sorted by id');
+  });
+
   it('refuses to run while a live hub holds the index', async () => {
     hub.readHubLock = () => ({ pid: process.pid, port: 5577 }); // our own pid is alive
     try {

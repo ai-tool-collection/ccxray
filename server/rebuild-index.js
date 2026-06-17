@@ -59,12 +59,18 @@ async function reconstructReq(id, storage, cache, seen = new Set()) {
     return null;
   }
 
-  // OpenAI/Codex: the stored _req.json is the full body (no delta, no shared
-  // sys/tools split) — same discriminator loadEntryReqRes uses.
-  if (stripped.provider === 'openai' || Array.isArray(stripped.input)) {
-    const result = { provider: 'openai', parsedBody: stripped };
-    cache.set(id, result);
-    return result;
+  // Anthropic-only recovery. OpenAI/Codex turns (raw `input` body) and WS
+  // transport-only records (no payload — Codex's main traffic is recorded live
+  // through the WS proxy) cannot be faithfully replayed offline: their _res.json
+  // is not an SSE event array and their session id lives outside `metadata`.
+  // SKIP them (counted unrecoverable) rather than emit a mislabeled Anthropic
+  // line — a safe skip beats silent degradation. A real Anthropic turn always
+  // carries a `messages` array (anchor or delta slice).
+  if (stripped.provider === 'openai' || Array.isArray(stripped.input)
+      || stripped.transport != null || stripped.capture === 'transport-only'
+      || !Array.isArray(stripped.messages)) {
+    cache.set(id, null);
+    return null;
   }
 
   // Anthropic: rehydrate system/tools from content-addressed shared files (never
@@ -128,9 +134,8 @@ function stopReasonFromEvents(events) {
 }
 
 // Replay the live title logic (forward.js:705-711) over the data we have offline.
-// Title is the dashboard's turn label; both prototypes left it null.
-function recoverTitle(provider, parsedBody, events, isSubagent) {
-  if (provider !== 'anthropic') return null; // openai: best-effort, don't fabricate
+// Title is the dashboard's turn label; both prototypes left it null. Anthropic-only.
+function recoverTitle(parsedBody, events, isSubagent) {
   if (isSubagent) return helpers.extractFirstUserText(parsedBody) || null;
   return helpers.extractResponseTitle(Array.isArray(events) ? events : [])
     || helpers.extractLastUserText(parsedBody)
@@ -167,19 +172,22 @@ async function rebuildIndex({ apply = false, storage = config.storage, log = con
   await storage.init();
 
   // ── 1. Existing index → merge base + explicit-session timeline + cwd hints. ──
+  // Keep every parseable existing line verbatim (merge-only); unparseable lines
+  // are dropped exactly as restoreFromLogs already ignores them.
   const existingContent = await storage.readIndex();
   const existingIds = new Set();
-  const explicitTimeline = []; // [{ id, sid }] — explicit, non-inferred sessions
-  const sessionCwd = new Map(); // sid → cwd, for backfilling inferred turns
+  const existingLineObjs = []; // [{ id, line }] — preserved verbatim, re-sorted by id on write
+  const explicitTimeline = []; // [{ id, sid, cwd }] — explicit, non-inferred sessions
+  const sessionCwd = new Map(); // sid → latest cwd, for backfilling inferred turns
   for (const line of (existingContent || '').split('\n')) {
     if (!line.trim()) continue;
     let m;
     try { m = JSON.parse(line); } catch { continue; } // one bad line must not abort
     if (!m || !m.id) continue;
     existingIds.add(m.id);
+    existingLineObjs.push({ id: m.id, line });
     if (m.sessionId && !m.sessionInferred && m.sessionId !== 'direct-api') {
-      explicitTimeline.push({ id: m.id, sid: m.sessionId });
-      if (m.cwd && !sessionCwd.has(m.sessionId)) sessionCwd.set(m.sessionId, m.cwd);
+      explicitTimeline.push({ id: m.id, sid: m.sessionId, cwd: m.cwd || null });
     }
   }
 
@@ -193,28 +201,28 @@ async function rebuildIndex({ apply = false, storage = config.storage, log = con
     .sort();
 
   // ── 3. Pass 1: reconstruct every orphan body; extend the explicit timeline. ──
+  // (Only Anthropic turns survive reconstructReq; non-Anthropic/WS are skipped.)
   const cache = new Map();
-  const recon = []; // { id, provider, parsedBody, explicitSid }
+  const recon = []; // { id, parsedBody, explicitSid }
   let unrecoverable = 0;
   for (const id of orphanIds) {
     let r;
     try { r = await reconstructReq(id, storage, cache); } catch { r = null; }
     if (!r) { unrecoverable++; continue; }
-    const explicitSid = r.parsedBody?.metadata?.session_id || null;
-    recon.push({ id, provider: r.provider, parsedBody: r.parsedBody, explicitSid });
-    if (explicitSid) {
-      explicitTimeline.push({ id, sid: explicitSid });
-      if (r.provider === 'anthropic' && !sessionCwd.has(explicitSid)) {
-        const cwd = store.extractCwd(r.parsedBody);
-        if (cwd) sessionCwd.set(explicitSid, cwd);
-      }
-    }
+    // Canonical explicit-session read (handles metadata.session_id + the
+    // user_id-embedded formats), same primitive the live pipeline uses.
+    const explicitSid = store.extractSessionId(r.parsedBody);
+    recon.push({ id, parsedBody: r.parsedBody, explicitSid });
+    if (explicitSid) explicitTimeline.push({ id, sid: explicitSid, cwd: store.extractCwd(r.parsedBody) });
   }
   explicitTimeline.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  // Latest cwd wins per session (timeline is id-ascending) — mirrors the live
+  // pipeline using the session's current store.sessionMeta[sid].cwd.
+  for (const e of explicitTimeline) if (e.cwd) sessionCwd.set(e.sid, e.cwd);
 
-  // ── 4. Pass 2: project each orphan through the canonical pipeline. ──
-  const recovered = [];
-  for (const { id, provider, parsedBody, explicitSid } of recon) {
+  // ── 4. Pass 2: project each (Anthropic) orphan through the canonical pipeline. ──
+  const recovered = []; // [{ id, line }]
+  for (const { id, parsedBody, explicitSid } of recon) {
     const events = await readResEvents(storage, id);
 
     // Session attribution. Explicit metadata.session_id is authoritative (every
@@ -234,19 +242,14 @@ async function rebuildIndex({ apply = false, storage = config.storage, log = con
       sessionInferred = true;
     }
 
-    const isSubagent = provider === 'anthropic' ? store.isAnthropicSubagent(parsedBody) : false;
-    let cwd = null;
-    if (provider === 'anthropic') {
-      cwd = store.extractCwd(parsedBody) || sessionCwd.get(sessionId) || null;
-    }
-    const stopReason = provider === 'anthropic' ? stopReasonFromEvents(events) : '';
-    const title = recoverTitle(provider, parsedBody, events, isSubagent);
-    const thinkingDuration = (provider === 'anthropic' && Array.isArray(events))
-      ? helpers.computeThinkingDuration(events)
-      : null;
+    const isSubagent = store.isAnthropicSubagent(parsedBody);
+    const cwd = store.extractCwd(parsedBody) || sessionCwd.get(sessionId) || null;
+    const stopReason = stopReasonFromEvents(events);
+    const title = recoverTitle(parsedBody, events, isSubagent);
+    const thinkingDuration = Array.isArray(events) ? helpers.computeThinkingDuration(events) : null;
 
-    const fields = getParser(provider).buildEntryFields({
-      provider,
+    const fields = getParser('anthropic').buildEntryFields({
+      provider: 'anthropic',
       transport: 'sse',
       parsedBody,
       events,
@@ -266,15 +269,15 @@ async function rebuildIndex({ apply = false, storage = config.storage, log = con
     const entry = {
       id,
       ts: tsFromId(id),
-      // isSSE: we captured an SSE _res.json (anthropic) or it's openai (streaming).
-      isSSE: Array.isArray(events) || provider === 'openai',
-      // status: a captured response implies success; otherwise honestly unknown.
-      status: Array.isArray(events) ? 200 : null,
+      isSSE: Array.isArray(events),
+      // status: tie to an actual success signal (a captured stop_reason) rather
+      // than fabricating 200 for any captured stream — honestly null otherwise.
+      status: stopReason ? 200 : null,
       receivedAt: null,
       elapsed: null,
       ...fields,
     };
-    recovered.push(buildIndexLine(entry));
+    recovered.push({ id, line: buildIndexLine(entry) });
   }
 
   // ── 5. Report. ──
@@ -299,13 +302,17 @@ async function rebuildIndex({ apply = false, storage = config.storage, log = con
   }
   const indexPath = path.join(storage.location, 'index.ndjson');
   const tmpPath = `${indexPath}.rebuild-${process.pid}.tmp`;
-  const base = existingContent && !existingContent.endsWith('\n')
-    ? existingContent + '\n'
-    : (existingContent || '');
-  fs.writeFileSync(tmpPath, base + recovered.join('\n') + '\n');
+  // Merge existing (verbatim) + recovered, ordered by id so recovered turns land
+  // in chronological position instead of all at the end. Existing lines are never
+  // dropped or rewritten — only re-ordered into their canonical id order (the
+  // index is chronological already, so this is a no-op for the common case).
+  const merged = [...existingLineObjs, ...recovered]
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .map(o => o.line);
+  fs.writeFileSync(tmpPath, merged.join('\n') + '\n');
   fs.renameSync(tmpPath, indexPath);
   log(`  wrote ${indexPath} (${existingIds.size + N} lines). Restart the dashboard to see recovered turns.`);
   return { refused: false, recovered: N, total: M, unrecoverable, applied: true };
 }
 
-module.exports = { rebuildIndex, reconstructReq, tsFromId, nearestPrecedingSession, stopReasonFromEvents };
+module.exports = { rebuildIndex, reconstructReq, tsFromId, nearestPrecedingSession };

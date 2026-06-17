@@ -88,6 +88,20 @@ GitHub issue #48（做法 1：手動 CLI，merge-only / atomic / hub-safe / hone
 - browser-harness（CDP/Chrome）載 dashboard，斷言 Projects/Sessions/Turns 欄重現、entry 數 > 0
 - 截圖 + DOM/`/api` entry 數存證
 
+## Codex review 結果（已處理）
+
+codex（gpt-5.4）的正確性 review 全集中在 OpenAI/Codex 路徑，據此收斂：
+
+- **blocker #1+#2+#3（OpenAI/WS）** → **改為 Anthropic-only 復原**。OpenAI 原始 body、WS transport-only 記錄、無 messages 的記錄一律跳過（計入 unrecoverable），不產出可能誤標成 Anthropic 的損壞行。Codex 主流量走 WS 即時記錄，transport-only `_req.json` 本就無 payload 可重建 —— 跳過不損失可復原資料，且讓 never-degrade 真正成立。
+- **major #4（cwd 取 first-seen）** → 改 timeline 帶 cwd、排序後**最新者勝**，貼近 live 的 `sessionMeta[sid].cwd`。
+- **minor #5（append 非 id 序）** → 合併既有+復原後**依 id 排序**寫出，復原 turn 落在正確時序位置（既有行不丟不改，只回到 id 正序）。
+- **status 捏造 200** → 改為綁實際成功訊號（有 `stop_reason` 才記 200，否則誠實 null）。
+- 同 dir tmp+rename、newline、orphan 過濾、hub-lock 拒絕：codex 確認無誤。
+
+## /simplify 結果（已處理）
+
+4 個清理 agent（reuse/簡化/效率/altitude）。採用：(1) 第 203 行改用 canonical `store.extractSessionId`（取代手寫 `metadata.session_id`，並涵蓋 user_id 內嵌格式）；(2) 刪未用 export。跳過：抽 `spliceDeltaMessages` 共用 helper（要改 live restore.js，超出 diff，列 follow-up）；`!storage.location` 取代 supportsDelta（誤報，S3 location 為 truthy）；效率類（CLA 一次性，不值得）。
+
 ## 完成證據
 
 - `npm test` 全綠（含新測試），貼輸出。
