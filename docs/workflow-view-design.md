@@ -130,9 +130,17 @@ Issue: #91 — Session timeline can't express dynamic agent workflows
 - Full-width horizontal bar showing entire session at reduced scale
 - Scale labels: 0 / midpoint / total duration
 - Blue rectangle = current viewport, dimmed outside
-- Click/drag overview = pan viewport
+- **Viewport duration label**: blue pill badge at bottom-right of viewport rect
 - `+` / `−` / `⟲` buttons for zoom in / out / reset
 - Lane density bars proportional to turn activity
+
+**Overview interactions:**
+| State | Action | Result |
+|-------|--------|--------|
+| Not zoomed | Drag | Brush-to-zoom: draw selection range (crosshair cursor), zoom on release |
+| Zoomed, on edge | Drag left/right boundary | Resize viewport start/end time (col-resize cursor) |
+| Zoomed, inside | Drag | Pan viewport (grab cursor) |
+| Zoomed, outside | Drag | Brush-to-zoom (new selection) |
 
 ### Agent Card (240px, left side of detail area)
 
@@ -152,10 +160,11 @@ Issue: #91 — Session timeline can't express dynamic agent workflows
 - Tools summary, Tokens summary, Spawns count
 - ← main button (for subagent cards)
 
-### Timeline Steps (right side of detail area)
-- Step rows: ★ star → #num → model badge → tool chips → ctx% → duration
+### Timeline Steps (right side of detail area, production ccxray style)
+- Step rows: ★ star → #num → model badge → tool group → ctx% → duration
 - ★ appears **before** the step number (leftmost element)
-- Tool group brackets (┌ │ └)
+- **Tool group rendering** (matches `public/messages.js`): tools listed vertically with ┌│└ brackets when multiple; tool names in green (#3fb950) with ×count; spawn badges (`⑂ agent-name`) integrated in bracket group
+- **Thinking turns**: 🧠 indicator with duration for long thinks (>5s)
 - Selected step highlighted with blue left border
 - Scrollable; auto-scrolls to selected turn
 - **ctx% color**: gray (#8b949e) = cache warm (≥50% hit), yellow (#d29922) = cache cold (<50% hit)

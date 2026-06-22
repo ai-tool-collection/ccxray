@@ -252,6 +252,13 @@ function renderLaneSvg(lane, li, W, chartW, x, tRange, visLanes) {
   return svg;
 }
 
+// ponytail: deferred timeline render — agent card + steps update instantly, SVG on next frame
+let _pendingRender = 0;
+function deferTimeline() {
+  if (_pendingRender) return;
+  _pendingRender = requestAnimationFrame(() => { _pendingRender = 0; renderTimeline(); });
+}
+
 function renderTimeline() {
   if (!lanes.length) { $mainSvg.innerHTML = ''; $svg.innerHTML = ''; return; }
   const visLanes = getVisibleLanes();
@@ -459,7 +466,7 @@ function setupInteractions(W, chartW, tRange, visibleLanes) {
           const curLanes = getVisibleLanes();
           if (li >= 0 && li < curLanes.length) {
             if (curLanes[li].isCollapsedWorkflow) { toggleWorkflowCollapse(curLanes[li].workflowName); return; }
-            selectedLane = curLanes[li]; selectedTurnId = null; renderTimeline(); renderAgentCard(); renderSteps();
+            selectedLane = curLanes[li]; selectedTurnId = null; deferTimeline(); renderAgentCard(); renderSteps();
           }
         }
         return;
@@ -488,13 +495,13 @@ function setupInteractions(W, chartW, tRange, visibleLanes) {
         const target = document.elementFromPoint(ev.clientX, ev.clientY);
         if (target?.classList?.contains('turn-bar')) {
           const tid = target.getAttribute('data-turn-id'), lane = findLane(tid);
-          if (lane) { selectedLane = lane; selectedTurnId = tid; renderTimeline(); renderAgentCard(); renderSteps(tid); }
+          if (lane) { selectedLane = lane; selectedTurnId = tid; deferTimeline(); renderAgentCard(); renderSteps(tid); }
         } else if (target?.classList?.contains('lane-bg')) {
           const li = parseInt(target.getAttribute('data-lane'));
           const curLanes = getVisibleLanes();
           if (li >= 0 && li < curLanes.length && curLanes[li]) {
             if (curLanes[li].isCollapsedWorkflow) { toggleWorkflowCollapse(curLanes[li].workflowName); return; }
-            selectedLane = curLanes[li]; selectedTurnId = null; renderTimeline(); renderAgentCard(); renderSteps();
+            selectedLane = curLanes[li]; selectedTurnId = null; deferTimeline(); renderAgentCard(); renderSteps();
           }
         }
       };
@@ -730,7 +737,7 @@ function renderSteps(scrollTo) {
   $stepsList.querySelectorAll('.step-row').forEach(row => {
     row.onclick = () => {
       const tid = row.getAttribute('data-tid');
-      selectedTurnId = tid; renderTimeline(); renderAgentCard(); renderSteps(tid);
+      selectedTurnId = tid; deferTimeline(); renderAgentCard(); renderSteps(tid);
     };
   });
 
@@ -851,6 +858,9 @@ function drawAllSummaryCharts(lane) {
   if (!turns.length) return;
   const cacheData = lane._perTurnCache || [], costData = lane._perTurnCost || [];
   const selIdx = selectedTurnId ? turns.findIndex(t => t.id === selectedTurnId) : -1;
+  // ponytail: compute layout once, reuse across all 3 charts
+  const chartW = document.getElementById('ctx-minimap')?.clientWidth || 200;
+  const sharedLayout = computeChartLayout(turns, chartW);
 
   // Shared helpers using layout
   function attachClick(canvas, layout) {
@@ -861,7 +871,7 @@ function drawAllSummaryCharts(lane) {
         const d = Math.abs(layout.pos[i] + layout.bw / 2 - cx);
         if (d < bestD) { bestD = d; best = i; }
       }
-      selectedTurnId = turns[best].id; renderTimeline(); renderAgentCard(); renderSteps(turns[best].id);
+      selectedTurnId = turns[best].id; deferTimeline(); renderAgentCard(); renderSteps(turns[best].id);
     };
   }
   function drawCursor(c, layout, h, idx) {
@@ -897,7 +907,7 @@ function drawAllSummaryCharts(lane) {
   if (ctxCanvas) {
     const w = ctxCanvas.clientWidth, h = ctxCanvas.clientHeight;
     if (w && h) {
-      const layout = computeChartLayout(turns, w);
+      const layout = sharedLayout;
       ctxCanvas.width = w * 2; ctxCanvas.height = h * 2;
       const c = ctxCanvas.getContext('2d'); c.scale(2, 2);
       c.fillStyle = '#21262d'; c.fillRect(0, 0, w, h);
@@ -927,7 +937,7 @@ function drawAllSummaryCharts(lane) {
   if (cacheCanvas && cacheData.length) {
     const w = cacheCanvas.clientWidth, h = cacheCanvas.clientHeight;
     if (w && h) {
-      const layout = computeChartLayout(turns, w);
+      const layout = sharedLayout;
       cacheCanvas.width = w * 2; cacheCanvas.height = h * 2;
       const c = cacheCanvas.getContext('2d'); c.scale(2, 2);
       for (let i = 0; i < cacheData.length; i++) {
@@ -943,7 +953,7 @@ function drawAllSummaryCharts(lane) {
   if (costCanvas && costData.length) {
     const w = costCanvas.clientWidth, h = costCanvas.clientHeight;
     if (w && h) {
-      const layout = computeChartLayout(turns, w);
+      const layout = sharedLayout;
       costCanvas.width = w * 2; costCanvas.height = h * 2;
       const c = costCanvas.getContext('2d'); c.scale(2, 2);
       const maxCost = Math.max(...costData) || 1;
@@ -958,7 +968,7 @@ function drawAllSummaryCharts(lane) {
   }
 }
 
-window.selectMain = () => { selectedLane = lanes[0] || null; selectedTurnId = null; renderTimeline(); renderAgentCard(); renderSteps(); };
+window.selectMain = () => { selectedLane = lanes[0] || null; selectedTurnId = null; deferTimeline(); renderAgentCard(); renderSteps(); };
 window.addEventListener('resize', () => renderTimeline());
 
 // ── Resize handle: drag to adjust timeline vs detail split ───────────────
@@ -998,11 +1008,11 @@ document.addEventListener('keydown', (e) => {
   const curIdx = selectedTurnId ? turns.findIndex(t => t.id === selectedTurnId) : -1;
   if (e.key === 'ArrowDown' || e.key === 'j') {
     e.preventDefault(); const next = Math.min(turns.length - 1, curIdx + 1);
-    selectedTurnId = turns[next].id; renderTimeline(); renderAgentCard(); renderSteps(selectedTurnId);
+    selectedTurnId = turns[next].id; deferTimeline(); renderAgentCard(); renderSteps(selectedTurnId);
   }
   if (e.key === 'ArrowUp' || e.key === 'k') {
     e.preventDefault(); const prev = Math.max(0, curIdx - 1);
-    selectedTurnId = turns[prev].id; renderTimeline(); renderAgentCard(); renderSteps(selectedTurnId);
+    selectedTurnId = turns[prev].id; deferTimeline(); renderAgentCard(); renderSteps(selectedTurnId);
   }
   if (e.key === 'f') {
     if (selectedTurnId) { toggleTurnStar(selectedTurnId); }
@@ -1011,7 +1021,7 @@ document.addEventListener('keydown', (e) => {
     const starred = turns.filter(t => starredTurns.has(t.id));
     if (starred.length) {
       const after = starred.find(t => turns.indexOf(t) > curIdx) || starred[0];
-      selectedTurnId = after.id; renderTimeline(); renderAgentCard(); renderSteps(selectedTurnId);
+      selectedTurnId = after.id; deferTimeline(); renderAgentCard(); renderSteps(selectedTurnId);
     }
   }
 });
