@@ -1650,6 +1650,11 @@ function selectProject(name) {
   colTurns.querySelectorAll('.turn-item').forEach(el => { el.style.display = 'none'; });
   colSections.innerHTML = '';
   colDetail.innerHTML = '';
+  // Clear workflow timeline
+  if (typeof wfState !== 'undefined') wfState = null;
+  colTurns.classList.remove('wf-active');
+  var wfEl = document.getElementById('wf-timeline');
+  if (wfEl) wfEl.remove();
   renderBreadcrumb();
   setFocus('projects');
 }
@@ -2091,6 +2096,16 @@ function selectSession(id) {
   updateRetryEmptyState(id);
   renderSessionToolBar(id);
   renderSessionSparkline(id);
+
+  // Workflow swimlane view: render timeline in col-turns
+  if (typeof wfBuildState === 'function' && id) {
+    wfState = wfBuildState(id);
+    if (wfState) { wfRenderTimeline(); colTurns.classList.add('wf-active'); }
+    else { colTurns.classList.remove('wf-active'); }
+  } else {
+    colTurns.classList.remove('wf-active');
+  }
+
   renderBreadcrumb();
 }
 
@@ -2166,6 +2181,7 @@ function selectTurn(idx, opts) {
   }
   selectedTurnIdx = idx;
   clearSelectedStepSelection();
+  if (typeof wfHighlightTurn === 'function' && wfState) wfHighlightTurn(allEntries[idx]?.id);
   colTurns.querySelectorAll('.turn-item').forEach(el => {
     el.classList.toggle('selected', parseInt(el.dataset.entryIdx) === idx);
   });

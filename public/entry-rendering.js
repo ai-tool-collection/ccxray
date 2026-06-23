@@ -235,7 +235,7 @@ function addEntry(e) {
   const entryCwd = e.cwd || null;
   if (!sessionsMap.has(sid)) {
     const shortSid = sid.slice(0, 8);
-    sessionsMap.set(sid, { id: sid, firstTs: e.ts, firstId: entryId, lastId: entryId, count: 0, mainCount: 0, subCount: 0, retryCount: 0, model, totalCost: 0, cwd: entryCwd, title: null, titleReqTs: 0, lastAssistantText: null, agent: e.agent || 'claude', provider: e.provider || 'anthropic', latestCacheHitRatio: 0, latestCacheReadTokens: 0, resumeCommand: null });
+    sessionsMap.set(sid, { id: sid, firstTs: e.ts, firstId: entryId, lastId: entryId, count: 0, mainCount: 0, subCount: 0, retryCount: 0, model, totalCost: 0, cwd: entryCwd, title: null, titleReqTs: 0, lastAssistantText: null, agent: e.agent || 'claude', provider: e.provider || 'anthropic', latestCacheHitRatio: 0, latestCacheReadTokens: 0, resumeCommand: null, parentSessionId: e.parentSessionId || null });
     // Live-update visibleProviders when a new provider appears
     const settings = window.ccxraySettings;
     if (!Array.isArray(settings.visibleProviders)) settings.visibleProviders = [];
@@ -386,6 +386,18 @@ function addEntry(e) {
     agent: e.agent || null,
     cwd: e.cwd || null,
   });
+
+  // Workflow timeline: incremental update for live entries (direct or child session)
+  if (typeof wfState !== 'undefined' && wfState && !isRetry) {
+    var isDirectSession = sid === selectedSessionId;
+    var isChildSession = !isDirectSession && sessionsMap.get(sid)?.parentSessionId === selectedSessionId;
+    if (isDirectSession || isChildSession) {
+      var lastEntry = allEntries[allEntries.length - 1];
+      var wfResult = wfAddEntry(lastEntry);
+      if (wfResult.lanesChanged) wfRenderTimeline();
+      else wfDeferRender();
+    }
+  }
 
   if (isRetry) return;
 
