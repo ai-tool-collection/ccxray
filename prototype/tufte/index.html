@@ -75,7 +75,8 @@ body.dragging { user-select: none; -webkit-user-select: none; cursor: grabbing !
 #right-area { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 
 /* Timeline section — two-SVG split: sticky main lane + scrollable sub-lanes */
-#timeline-section { position: relative; flex-shrink: 0; background: #0d1117; max-height: 45vh; overflow-y: auto; overflow-x: hidden; }
+/* ponytail: P1 — max-height set dynamically by JS based on lane count */
+#timeline-section { position: relative; flex-shrink: 0; background: #0d1117; overflow-y: auto; overflow-x: hidden; transition: max-height 200ms ease; }
 #timeline-header { position: sticky; top: 0; z-index: 5; background: #0d1117; }
 #main-svg, #macro-svg { user-select: none; -webkit-user-select: none; cursor: grab; display: block; }
 .wf-toggle { cursor: pointer; fill: #8b949e; }
@@ -144,6 +145,7 @@ body.dragging { user-select: none; -webkit-user-select: none; cursor: grabbing !
   padding: 5px 0; border-bottom: 1px solid #1c2128; cursor: pointer; color: #8b949e;
 }
 .ac-nav-item:hover { color: #e6edf3; }
+.ac-nav-item.active { color: #e6edf3; background: #21262d; border-radius: 3px; margin: 0 -4px; padding: 5px 4px; }
 .ac-nav-dot { width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; display: inline-block; }
 .ac-nav-badge {
   background: #21262d; border: 1px solid #30363d; border-radius: 3px;
@@ -158,10 +160,25 @@ body.dragging { user-select: none; -webkit-user-select: none; cursor: grabbing !
 }
 .ac-back-btn:hover { color: #e6edf3; border-color: #8b949e; }
 
+/* P2: Chart header — sticky inside steps panel */
+#chart-header {
+  position: sticky; top: 0; z-index: 5; background: #0d1117;
+  padding: 4px 8px; border-bottom: 1px solid #30363d; flex-shrink: 0;
+}
+#chart-header .chart-label {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 8px; text-transform: uppercase; letter-spacing: 0.5px;
+  color: #484f58; margin-bottom: 1px;
+  font-family: 'SF Mono','Menlo','Monaco',monospace;
+}
+#chart-header .minimap-canvas { width: 100%; height: 56px; display: block; cursor: pointer; }
+#chart-header .sparkline-inline { width: 100%; height: 14px; display: block; cursor: pointer; margin-bottom: 2px; }
+
 /* Timeline Steps (right side of detail) */
 #timeline-steps {
   flex: 1; overflow-y: auto; overflow-x: auto; padding: 0;
   font-family: 'SF Mono','Menlo','Monaco',monospace; font-size: 12px;
+  display: flex; flex-direction: column;
 }
 #steps-header {
   padding: 6px 12px; border-bottom: 1px solid #30363d;
@@ -287,9 +304,12 @@ body.dragging { user-select: none; -webkit-user-select: none; cursor: grabbing !
         <div id="agent-card-body"></div>
       </div>
       <div id="timeline-steps">
-        <div id="steps-header"></div>
-        <div id="steps-list">
-          <div class="agent-empty">select a session to begin</div>
+        <div id="chart-header"></div>
+        <div id="steps-scroll" style="flex:1;overflow-y:auto;min-height:0;">
+          <div id="steps-header"></div>
+          <div id="steps-list">
+            <div class="agent-empty">select a session to begin</div>
+          </div>
         </div>
       </div>
     </div>

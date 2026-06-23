@@ -113,8 +113,11 @@ function buildLanes() {
   const pending = [...spawnReg];
   for (const t of turns) {
     let sub = false;
-    if (pending.length && orchCtx > 20 && t.contextPercent < orchCtx * 0.5 && t.contextPercent < 25) {
-      const sp = findBestSpawn(t, pending);
+    // ponytail: model mismatch is the strongest subagent signal; ctx% drop is secondary
+    const modelMismatch = mainLane.model && t.model !== mainLane.model;
+    const ctxDrop = orchCtx > 20 && t.contextPercent < orchCtx * 0.5 && t.contextPercent < 25;
+    if (pending.length && (modelMismatch || ctxDrop)) {
+      const sp = findBestSpawn(t, pending, mainLane.model);
       if (sp) {
         const key = sp.name || `sub-${sp.parentTurnIdx}`;
         if (!laneMap.has(key)) laneMap.set(key, { name: key, turns: [], model: null, ctxWindow: t.contextWindow, spawnParent: sp });
@@ -122,6 +125,14 @@ function buildLanes() {
         if (!laneMap.get(key).model) laneMap.get(key).model = t.model;
         sub = true;
       }
+    }
+    // ponytail: model mismatch = never goes to main, even without a spawn match
+    if (!sub && modelMismatch) {
+      const orphanKey = `subagent-${shortModel(t.model)}`;
+      if (!laneMap.has(orphanKey)) laneMap.set(orphanKey, { name: orphanKey, turns: [], model: null, ctxWindow: t.contextWindow, spawnParent: null });
+      laneMap.get(orphanKey).turns.push(t);
+      if (!laneMap.get(orphanKey).model) laneMap.get(orphanKey).model = t.model;
+      sub = true;
     }
     if (!sub) {
       mainLane.turns.push(t);
@@ -132,7 +143,24 @@ function buildLanes() {
   }
   lanes = [mainLane];
   for (const [k, l] of laneMap) if (k !== 'main' && l.turns.length) lanes.push(l);
-  lanes.sort((a, b) => a.name === 'main' ? -1 : b.name === 'main' ? 1 : a.turns[0].receivedAt - b.turns[0].receivedAt);
+  // ponytail: create placeholder lanes for spawns with no matched turns (subagent in separate session)
+  for (const sp of spawnReg) {
+    const key = sp.name || `sub-${sp.parentTurnIdx}`;
+    if (!laneMap.has(key) || !laneMap.get(key).turns.length) {
+      const parentTurn = turns.find(t => t.turnIndex === sp.parentTurnIdx);
+      if (parentTurn && !lanes.find(l => l.name === key)) {
+        lanes.push({ name: key, turns: [], model: parentTurn.model, ctxWindow: parentTurn.contextWindow,
+          spawnParent: sp, spawnTime: parentTurn.receivedAt });
+      }
+    }
+  }
+  lanes.sort((a, b) => {
+    if (a.name === 'main') return -1;
+    if (b.name === 'main') return 1;
+    const aT = a.turns.length ? a.turns[0].receivedAt : (a.spawnTime || 0);
+    const bT = b.turns.length ? b.turns[0].receivedAt : (b.spawnTime || 0);
+    return aT - bT;
+  });
   for (const l of lanes) {
     if (!l.turns.length) continue;
     const mc = {};
@@ -142,12 +170,14 @@ function buildLanes() {
   }
 }
 
-function findBestSpawn(turn, pending) {
+function findBestSpawn(turn, pending, mainModel) {
+  // ponytail: model mismatch = definitely a subagent, no time limit
+  const noTimeLimit = mainModel && turn.model !== mainModel;
   let best = null, bs = Infinity;
   for (const sp of pending) {
     if (turn.receivedAt < sp.parentTime) continue;
     const d = turn.receivedAt - sp.parentTime;
-    if (d > 120000) continue;
+    if (!noTimeLimit && d > 120000) continue;
     if (d < bs) { bs = d; best = sp; }
   }
   return best;
@@ -221,7 +251,7 @@ function renderLaneSvg(lane, li, W, chartW, x, tRange, visLanes) {
     if (workflowMeta && !collapsedWorkflows.has(workflowMeta.name) && lane.name !== 'main' && lanes.length > 2) {
       namePrefix = li === 1 ? '▾ ' + prefix : '  ' + prefix;
     }
-    svg += `<text x="8" y="${7}" class="lane-label">${esc(namePrefix + lane.name + starMark)}</text>`;
+    svg += `<text x="8" y="${7}" class="lane-label"><title>${esc(lane.name)} · ${esc(lane.model)} · ${Math.round((lane.ctxWindow || 0) / 1000)}K</title>${esc(namePrefix + lane.name + starMark)}</text>`;
     svg += `<text x="8" y="${spY + 10}" class="lane-label-dim">${esc(shortModel(lane.model))}  ${Math.round((lane.ctxWindow || 0) / 1000)}K</text>`;
   }
 
@@ -249,6 +279,12 @@ function renderLaneSvg(lane, li, W, chartW, x, tRange, visLanes) {
   } else if (vis.length === 1) {
     svg += `<circle cx="${x(vis[0].receivedAt)}" cy="${spY + SPARKLINE_H - (vis[0].contextPercent / 100) * SPARKLINE_H}" r="1.5" fill="${color}" opacity="0.6"/>`;
   }
+  // ponytail: empty lane with spawn point — show marker where agent was spawned
+  if (!lane.turns.length && lane.spawnTime) {
+    const sx = Math.max(LABEL_WIDTH, x(lane.spawnTime));
+    svg += `<text x="${sx}" y="${trY + 6}" fill="#8b949e" font-size="8" font-family="SF Mono,Menlo,monospace" opacity="0.6">◇ spawned</text>`;
+    svg += `<line x1="${sx}" y1="0" x2="${sx}" y2="${LANE_H}" stroke="#30363d" stroke-width="0.5" stroke-dasharray="2,2"/>`;
+  }
   return svg;
 }
 
@@ -262,6 +298,14 @@ function deferTimeline() {
 function renderTimeline() {
   if (!lanes.length) { $mainSvg.innerHTML = ''; $svg.innerHTML = ''; return; }
   const visLanes = getVisibleLanes();
+  // P1: content-driven timeline height
+  const section = document.getElementById('timeline-section');
+  const overviewBar = document.getElementById('overview-bar');
+  const laneCount = visLanes.length;
+  const contentH = PAD_TOP + AXIS_H + laneCount * LANE_H + PAD_BOT;
+  const maxH = window.innerHeight * 0.45;
+  section.style.maxHeight = Math.min(contentH, maxH) + 'px';
+  // ponytail: overview always visible — zoom is useful even for single-lane 319t sessions
   const W = $mainSvg.parentElement.parentElement.clientWidth;
   const chartW = W - LABEL_WIDTH - 12;
   const tRange = viewT1 - viewT0 || 1;
@@ -287,18 +331,18 @@ function renderTimeline() {
   // Sub SVG: remaining lanes (scrollable)
   const subLanes = visLanes.slice(1);
   if (subLanes.length) {
-    const subH = subLanes.length * LANE_H + PAD_BOT;
+    const subH = PAD_TOP + subLanes.length * LANE_H + PAD_BOT;
     $svg.setAttribute('width', W); $svg.setAttribute('height', subH);
     $svg.setAttribute('viewBox', `0 0 ${W} ${subH}`);
     let subSvg = '';
     const spawnLines = [];
     for (let si = 0; si < subLanes.length; si++) {
       const lane = subLanes[si];
-      const li = si + 1; // global lane index
-      subSvg += `<g transform="translate(0,${si * LANE_H})">${renderLaneSvg(lane, li, W, chartW, x, tRange, visLanes)}</g>`;
+      const li = si + 1;
+      subSvg += `<g transform="translate(0,${PAD_TOP + si * LANE_H})">${renderLaneSvg(lane, li, W, chartW, x, tRange, visLanes)}</g>`;
       if (lane.spawnParent && !lane.isCollapsedWorkflow) {
         const pt = visLanes[0].turns.find(t => t.turnIndex === lane.spawnParent.parentTurnIdx);
-        if (pt && lane.turns.length) spawnLines.push({ x1: x(pt.receivedAt), y1: 0, x2: x(lane.turns[0].receivedAt), y2: si * LANE_H });
+        if (pt && lane.turns.length) spawnLines.push({ x1: x(pt.receivedAt), y1: 0, x2: x(lane.turns[0].receivedAt), y2: PAD_TOP + si * LANE_H });
       }
     }
     for (const c of spawnLines) subSvg += `<line x1="${c.x1}" y1="${c.y1}" x2="${c.x2}" y2="${c.y2}" class="spawn-line"/>`;
@@ -311,6 +355,8 @@ function renderTimeline() {
 
   setupInteractions(W, chartW, tRange, visLanes);
   renderMinimap();
+  // P2: redraw charts on zoom/pan so they match timeline viewport
+  if (selectedLane) requestAnimationFrame(() => drawAllSummaryCharts(selectedLane));
 }
 
 // ── Overview bar (full-width, dynamic sizing) ─────────────────────────────
@@ -607,41 +653,41 @@ function renderAgentCard() {
   lane._perTurnCache = perTurnCache;
   lane._perTurnCost = perTurnCost;
 
+  // P2: render charts in steps panel header instead of agent card
+  renderChartHeader(lane, peakCtx, avgCache, totalCost);
+
   $agentCardBody.innerHTML = `
     <div class="ac-section">
       <div class="ac-label">context</div>
       <div class="ac-value">${lastCtx.toFixed(1)}% <span class="ac-dim">(${Math.round((turns[turns.length - 1]?.contextUsed || 0) / 1000)}K / ${Math.round((lane.ctxWindow || 0) / 1000)}K)</span></div>
       <div class="ac-dim">peak ${peakCtx.toFixed(1)}%${peakWarn}</div>
-      <canvas class="minimap-canvas" id="ctx-minimap"></canvas>
     </div>
     <div class="ac-section">
       <div class="ac-label">cache</div>
       <div class="ac-dim">${avgCache.toFixed(1)}% hit</div>
-      <canvas class="sparkline-inline" id="cache-spark"></canvas>
     </div>
     <div class="ac-section">
       <div class="ac-label">cost</div>
       <div class="ac-dim">$${totalCost.toFixed(3)} <span class="ac-dim">avg $${(turns.length ? totalCost / turns.length : 0).toFixed(4)}/turn</span></div>
-      <canvas class="sparkline-inline" id="cost-spark"></canvas>
     </div>
-    <div class="ac-section">
-      <div class="ac-nav-item" style="border-top:1px solid #1c2128"><span><span class="ac-nav-dot" style="background:#d29922"></span>Timeline</span> <span><span class="ac-nav-badge">${turns.length} steps</span> <span class="ac-nav-chevron">›</span></span></div>
+    <div class="ac-section" style="border-top:1px solid #1c2128">
+      <div class="ac-nav-item active" data-view="timeline" onclick="switchDetailView('timeline')"><span><span class="ac-nav-dot" style="background:#d29922"></span>Timeline</span> <span><span class="ac-nav-badge">${turns.length} steps</span> <span class="ac-nav-chevron">›</span></span></div>
     </div>
     <div class="ac-section">
       <div class="ac-label">context</div>
-      <div class="ac-nav-item"><span><span class="ac-nav-dot" style="background:#58a6ff"></span>System</span> <span><span class="ac-nav-badge">tok</span> <span class="ac-nav-chevron">›</span></span></div>
-      <div class="ac-nav-item"><span><span class="ac-nav-dot" style="background:#3fb950"></span>Core</span> <span><span class="ac-nav-badge">tools</span> <span class="ac-nav-chevron">›</span></span></div>
-      <div class="ac-nav-item"><span><span class="ac-nav-dot" style="background:#3fb950"></span>MCP</span> <span><span class="ac-nav-badge">tools</span> <span class="ac-nav-chevron">›</span></span></div>
-      <div class="ac-nav-item"><span><span class="ac-nav-dot" style="background:#d2a8ff"></span>Skills</span> <span class="ac-nav-chevron">›</span></div>
+      <div class="ac-nav-item" data-view="system" onclick="switchDetailView('system')"><span><span class="ac-nav-dot" style="background:#58a6ff"></span>System</span> <span><span class="ac-nav-badge">tok</span> <span class="ac-nav-chevron">›</span></span></div>
+      <div class="ac-nav-item" data-view="core" onclick="switchDetailView('core')"><span><span class="ac-nav-dot" style="background:#3fb950"></span>Core</span> <span><span class="ac-nav-badge">tools</span> <span class="ac-nav-chevron">›</span></span></div>
+      <div class="ac-nav-item" data-view="mcp" onclick="switchDetailView('mcp')"><span><span class="ac-nav-dot" style="background:#3fb950"></span>MCP</span> <span><span class="ac-nav-badge">tools</span> <span class="ac-nav-chevron">›</span></span></div>
+      <div class="ac-nav-item" data-view="skills" onclick="switchDetailView('skills')"><span><span class="ac-nav-dot" style="background:#d2a8ff"></span>Skills</span> <span class="ac-nav-chevron">›</span></div>
     </div>
     <div class="ac-section">
       <div class="ac-label">analysis</div>
-      <div class="ac-nav-item"><span>💰 Cost Efficiency</span> <span class="ac-nav-chevron">›</span></div>
+      <div class="ac-nav-item" data-view="cost" onclick="switchDetailView('cost')"><span>💰 Cost Efficiency</span> <span class="ac-nav-chevron">›</span></div>
     </div>
     <div class="ac-section">
       <div class="ac-label">raw</div>
-      <div class="ac-nav-item"><span>Request</span> <span class="ac-nav-chevron">›</span></div>
-      <div class="ac-nav-item"><span>Events</span> <span class="ac-nav-chevron">›</span></div>
+      <div class="ac-nav-item" data-view="request" onclick="switchDetailView('request')"><span>Request</span> <span class="ac-nav-chevron">›</span></div>
+      <div class="ac-nav-item" data-view="events" onclick="switchDetailView('events')"><span>Events</span> <span class="ac-nav-chevron">›</span></div>
     </div>
     <div class="ac-section">
       <div class="ac-label">tools</div>
@@ -655,7 +701,20 @@ function renderAgentCard() {
     </div>
     ${totalSpawns ? `<div class="ac-section"><div class="ac-label">spawns</div><div class="ac-value">${totalSpawns}</div></div>` : ''}
     ${lane.name !== 'main' ? '<button class="ac-back-btn" onclick="selectMain()">← main</button>' : ''}`;
+}
 
+// ── P2: Chart Header (in steps panel) ─────────────────────────────────────
+function renderChartHeader(lane, peakCtx, avgCache, totalCost) {
+  const $ch = document.getElementById('chart-header');
+  if (!$ch) return;
+  const peakWarn = peakCtx >= 83.5 ? ' ⚠' : '';
+  $ch.innerHTML = `
+    <div class="chart-label"><span>Context</span><span>peak ${peakCtx.toFixed(1)}%${peakWarn}</span></div>
+    <canvas class="minimap-canvas" id="ctx-minimap"></canvas>
+    <div class="chart-label"><span>Cache</span><span>${avgCache.toFixed(1)}% hit</span></div>
+    <canvas class="sparkline-inline" id="cache-spark"></canvas>
+    <div class="chart-label"><span>Cost</span><span>$${totalCost.toFixed(3)}</span></div>
+    <canvas class="sparkline-inline" id="cost-spark"></canvas>`;
   requestAnimationFrame(() => drawAllSummaryCharts(lane));
 }
 
@@ -750,7 +809,7 @@ function renderSteps(scrollTo) {
   syncStepsHighlight();
 
   // Steps scroll → update minimap indicator
-  const stepsContainer = document.getElementById('timeline-steps');
+  const stepsContainer = document.getElementById('steps-scroll');
   if (stepsContainer) {
     stepsContainer.onscroll = debounce(() => updateMinimapFromSteps(), 100);
   }
@@ -783,7 +842,7 @@ function syncStepsHighlight() {
 
 function updateMinimapFromSteps() {
   // Find which turns are currently visible in the steps scroll viewport
-  const container = document.getElementById('timeline-steps');
+  const container = document.getElementById('steps-scroll');
   if (!container || !selectedLane) return;
   const rect = container.getBoundingClientRect();
   const rows = container.querySelectorAll('.step-row');
@@ -854,11 +913,30 @@ function computeChartLayout(turns, canvasW) {
 }
 
 function drawAllSummaryCharts(lane) {
-  const turns = lane.turns;
+  const allTurns = lane.turns;
+  if (!allTurns.length) return;
+  const allCache = lane._perTurnCache || [], allCost = lane._perTurnCost || [];
+
+  // ponytail: P2 sync — filter to viewport range so charts match timeline zoom
+  const isZoomed = viewT0 > sessionTimeMin + 100 || viewT1 < sessionTimeMax - 100;
+  let turns, cacheData, costData;
+  if (isZoomed) {
+    const indices = [];
+    for (let i = 0; i < allTurns.length; i++) {
+      const t = allTurns[i];
+      if (t.receivedAt + (t.elapsed || 0) >= viewT0 && t.receivedAt <= viewT1) indices.push(i);
+    }
+    turns = indices.map(i => allTurns[i]);
+    cacheData = indices.map(i => allCache[i]);
+    costData = indices.map(i => allCost[i]);
+  } else {
+    turns = allTurns;
+    cacheData = allCache;
+    costData = allCost;
+  }
   if (!turns.length) return;
-  const cacheData = lane._perTurnCache || [], costData = lane._perTurnCost || [];
+
   const selIdx = selectedTurnId ? turns.findIndex(t => t.id === selectedTurnId) : -1;
-  // ponytail: compute layout once, reuse across all 3 charts
   const chartW = document.getElementById('ctx-minimap')?.clientWidth || 200;
   const sharedLayout = computeChartLayout(turns, chartW);
 
@@ -969,6 +1047,28 @@ function drawAllSummaryCharts(lane) {
 }
 
 window.selectMain = () => { selectedLane = lanes[0] || null; selectedTurnId = null; deferTimeline(); renderAgentCard(); renderSteps(); };
+
+// ── Detail view switcher (Agent Card nav items) ──────────────────────────
+let currentDetailView = 'timeline';
+window.switchDetailView = function(view) {
+  currentDetailView = view;
+  document.querySelectorAll('.ac-nav-item').forEach(el => el.classList.toggle('active', el.getAttribute('data-view') === view));
+  const $ch = document.getElementById('chart-header');
+  const $scroll = document.getElementById('steps-scroll');
+  if (view === 'timeline') {
+    if ($ch) $ch.style.display = '';
+    renderSteps();
+  } else {
+    if ($ch) $ch.style.display = 'none';
+    const labels = { system: 'System Prompt', core: 'Core Tools', mcp: 'MCP Tools', skills: 'Skills',
+      cost: 'Cost Efficiency', request: 'Request', events: 'Events' };
+    $stepsHeader.innerHTML = `<span>${labels[view] || view}</span>`;
+    $stepsList.innerHTML = `<div class="agent-empty" style="padding:20px 16px;color:#484f58;">
+      <div style="font-size:13px;color:#8b949e;margin-bottom:8px;">${labels[view] || view}</div>
+      <div style="font-size:11px;">This view will show ${labels[view]?.toLowerCase() || view} data when connected to a live ccxray instance.</div>
+    </div>`;
+  }
+};
 window.addEventListener('resize', () => renderTimeline());
 
 // ── Resize handle: drag to adjust timeline vs detail split ───────────────

@@ -310,27 +310,108 @@ The Workflow `tool_result` returns: Task ID, Summary, Run ID, Transcript dir. **
 3. Show collapsed by default when subagent count > 4
 4. Click ▸/▾ to toggle
 
-## Subagent Lane Inference (heuristic, no backend change)
+## Subagent Lane Inference (revised after prototype iteration)
 
-Turns assigned to lanes using:
-1. Spawn registry: turns with `agentSpawns[]` populate spawn slots
-2. After a spawn, turns with `contextPercent < orchCtxLevel * 0.5 AND < 25%` are subagent candidates
-3. Match by time proximity (within 120s of spawn)
-4. Main lane gets everything else
-5. Lane model = dominant model across turns
-6. Future: server-side `entry.spawnedBy` / `entry.parentEntryId` would make this deterministic
+### Cross-session join (critical for production)
+
+Subagent API calls run in their own `session_id`, separate from the parent orchestrator.
+Real data: 751 sessions, 612 are ≤10-turn subagent sessions. They MUST be joined back to the parent session for the workflow view to work.
+
+**Production requirement:** `scripts/extract-fixture.js` (and server-side store) must:
+1. Parse spawn records from parent session turns (`agentSpawns[]`)
+2. Match spawned agent name → subagent `session_id` (via temporal proximity + model matching)
+3. Merge subagent turns into parent session as separate lanes
+4. Subagent sessions viewed alone have no value — always show in parent context
+
+**Prototype status:** Uses placeholder lanes (`◇ spawned` marker) because fixture has no cross-session data.
+
+### Heuristic (within a single session's turns)
+
+Turns assigned to lanes using priority order:
+1. **Model mismatch** (strongest signal): if `turn.model !== mainLane.model`, the turn is a subagent — no time limit on spawn matching
+2. **Context % drop** (secondary): `contextPercent < orchCtx * 0.5 AND < 25%` with 120s time window
+3. **Orphan lane**: if model mismatches but no spawn matches at all, assign to `subagent-{model}` catch-all lane
+4. **Placeholder lanes**: spawns with no matched turns (subagent in separate session) get empty lanes with spawn marker
+5. Main lane gets everything else
+6. Lane model = dominant model across turns
+
+### Prototype changes from original spec
+- Model mismatch removes the `orchCtx > 20` gate that blocked all separation for low-context sessions
+- No time window for model-mismatched turns (haiku turn in opus session is always a subagent)
+- Orphan lane prevents model-mismatched turns from polluting main even without a spawn match
+- Placeholder lanes show spawn topology even when subagent turns are in separate sessions
+
+## Design Amendments (from prototype evaluation)
+
+### P1: Content-Driven Timeline Height (score 9.2)
+
+Timeline section height adapts to content instead of fixed `max-height: 45vh`:
+```
+timelineH = clamp(MIN_H, laneCount × LANE_H + AXIS_H + PAD, 45vh)
+```
+- Single-lane: ~54px, detail gets maximum space
+- Multi-lane: grows proportionally, capped at 45vh
+- Overview bar always visible (useful for zoom even on single-lane 319t sessions)
+- CSS `transition: max-height 200ms ease` for smooth spawn-time growth
+- Resize handle override preserved — user drag takes priority
+
+### P2: Charts Detach to Steps Panel Header (score 9.1)
+
+Three charts (context minimap, cache sparkline, cost sparkline) moved from 240px Agent Card to Steps Panel sticky header:
+- Charts get full remaining width (400-800px) instead of 220px
+- 319-turn session: 2.5px/bar at 800px (was 0.69px — unreadable)
+- `min-width: turnCount × 2px` with `overflow-x: auto` fallback for narrow screens
+- Agent Card becomes text-only summary (cleaner, less scroll)
+- Charts sync with timeline zoom — only show turns within `[viewT0, viewT1]`
+- Blue cursor line pierces all 3 charts vertically; click chart → select turn
+- Agent Card nav items (Timeline, System, Core, MCP, Skills, Cost, Request, Events) are clickable tabs that switch the detail panel content
+
+### P5: Chart↔Step Cursor Sync (spec clarification)
+
+Cursor follows selection, not scroll position:
+- Click chart → select turn + auto-scroll step list to that turn
+- Click step → select turn + move chart cursor
+- Scroll step list alone → no cursor movement
+
+### P6: Lane Label Tooltip
+
+SVG `<title>` element on lane label text shows full `name · model · ctxWindowK` on hover.
+
+### P7: Streaming State (score 9.2)
+
+Active/in-progress turns have distinct visual treatment:
+- **Turn bar**: ghost bar — model color at 30% opacity + dashed right border, width grows 1fps via rAF
+- **Sparkline**: gap (no point until response completes)
+- **Steps Panel**: pulsing green dot (●) replaces ☆, tools appear incrementally, elapsed timer ticks
+- **Thinking**: `>3s` no content_block_start → show `🧠 thinking...`
+- **Charts**: pulsing green vertical line at rightmost X position
+- **Lane spawn**: label at 50% opacity, pulsing ● in empty bars area
+- **Completion**: immediate on SSE `message_stop` (bypasses rAF throttle), 200ms CSS transition to solid
+
+### P9: iPad/Touch Experience (score 9.4)
+
+All changes behind `@media (pointer: coarse)` or `touchstart` detection — zero desktop impact:
+- **Resize handle**: 4px → 16px visual + grip icon (≡) + 44px touch hit zone via `::before`
+- **Timeline pan/zoom**: `touch-action: pan-y` on SVGs, 1-finger horizontal drag = pan, 2-finger pinch = zoom, double-tap = reset
+- **Direction lock**: 6px dead zone, `{ passive: false }` on touchmove
+- **Overview bar**: zone-based hit-test replaces cursor affordances; edges light up 3px on touch-down; visible 🔍 button replaces hidden long-press brush-to-zoom
+- **Tooltip**: tap = select + tooltip 40px above touch point; tap elsewhere = dismiss
+- **Small targets**: snap-to-nearest bar within 22px radius (O(log n) binary search)
+- **No `navigator.vibrate()`** (not supported in Safari)
 
 ## Compromises
 
 | What | Compromise | Upgrade path |
 |------|-----------|-------------|
-| Spawn matching | Time-window heuristic, can mispair | Server stamps explicit `spawnedBy` field |
+| Cross-session join | Placeholder lanes with `◇ spawned` marker | Fixture extractor does session_id → spawn name matching |
 | Task lifecycle (#6) | Not addressed in v1 | Gantt-style Task track as separate view |
 | Multi-layer spawn (#4) | Inference only handles 1 layer reliably | Explicit parent chain from server |
 | Fork subagents | Share parent's cache fingerprint, hard to distinguish | Need session ID from subagent headers |
 | Summary-only entries | `toolCalls` is `{name: count}`, no Agent descriptions | Load full `req.messages` for spawn labels |
 | Context % accuracy | `input_tokens + cache_read + cache_create` may exceed window for 1M models | Validate against actual model context limits |
 | Cost estimates | Rough pricing ($3/M in, $0.30/M cache, $15/M out) | Use ccxray's `server/pricing.js` for accurate rates |
+| Touch step rows | 24px height below 44pt HIG | Full-width tap area adequate for dev tool audience |
+| Chart on narrow screen | Scroll fallback at <2px/bar | Binning trades fidelity, not worth it |
 
 ## Test Data
 

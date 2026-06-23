@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>P1: Content-Driven Height — Single vs Multi Lane</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0d1117; color: #e6edf3;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 13px; line-height: 1.4;
+}
+h2 { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; padding: 12px 16px 4px; }
+.comparison { display: flex; gap: 24px; padding: 16px; }
+.panel {
+  flex: 1; border: 1px solid #30363d; border-radius: 6px; overflow: hidden;
+  display: flex; flex-direction: column; height: 700px;
+}
+.panel-title {
+  background: #161b22; padding: 8px 12px; font-size: 11px; color: #8b949e;
+  border-bottom: 1px solid #30363d; font-family: 'SF Mono','Menlo',monospace;
+  display: flex; justify-content: space-between;
+}
+.panel-title .tag { background: #21262d; padding: 1px 6px; border-radius: 3px; font-size: 10px; }
+
+/* ── Shared layout ─────────────────────────────────────────── */
+.layout { display: flex; flex: 1; min-height: 0; }
+.left-cols { width: 100px; flex-shrink: 0; border-right: 1px solid #30363d; }
+.col-header {
+  padding: 4px 8px; color: #484f58; font-size: 9px; text-transform: uppercase;
+  letter-spacing: 0.5px; border-bottom: 1px solid #1c2128;
+  font-family: 'SF Mono','Menlo',monospace;
+}
+.col-item {
+  padding: 6px 8px; border-bottom: 1px solid #1c2128; cursor: pointer;
+  font-family: 'SF Mono','Menlo',monospace; font-size: 10px;
+}
+.col-item.active { background: #161b22; border-left: 2px solid #58a6ff; }
+.col-item .name { color: #e6edf3; }
+.col-item .meta { color: #8b949e; font-size: 9px; }
+
+.right-area { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+/* ── Overview Bar ─────────────────────────────────────────── */
+.overview-bar {
+  height: 32px; flex-shrink: 0; border-bottom: 1px solid #30363d;
+  background: #161b22; display: flex; align-items: center;
+  font-family: 'SF Mono','Menlo',monospace; font-size: 9px;
+}
+.overview-label {
+  width: 140px; flex-shrink: 0; padding: 0 8px; color: #484f58;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  display: flex; align-items: center; gap: 4px;
+}
+.overview-label button {
+  background: transparent; border: 1px solid #30363d; color: #8b949e;
+  width: 16px; height: 16px; font-size: 10px; cursor: pointer; border-radius: 2px;
+  display: flex; align-items: center; justify-content: center; padding: 0;
+  font-family: 'SF Mono','Menlo',monospace;
+}
+.minimap-area {
+  flex: 1; height: 24px; margin: 0 8px; background: #0d1117; border-radius: 2px;
+  position: relative; overflow: hidden;
+}
+.minimap-lanes { position: absolute; inset: 0; }
+.minimap-lane {
+  height: 3px; margin: 1px 0; border-radius: 1px;
+}
+.minimap-viewport {
+  position: absolute; top: 0; bottom: 0; background: #58a6ff22;
+  border: 1px solid #58a6ff66; border-radius: 2px;
+}
+.minimap-viewport .duration-badge {
+  position: absolute; bottom: -1px; right: 2px; font-size: 8px; color: #58a6ff;
+}
+
+/* ── Timeline Section ─────────────────────────────────────── */
+.timeline-section {
+  flex-shrink: 0; background: #0d1117; overflow: hidden;
+  transition: max-height 200ms ease;
+}
+.time-axis {
+  height: 16px; display: flex; align-items: center; padding: 0 8px;
+  font-family: 'SF Mono','Menlo',monospace; font-size: 9px; color: #484f58;
+  margin-left: 140px;
+}
+.time-axis span { flex: 1; }
+.time-axis span:last-child { text-align: right; }
+.time-axis span:nth-child(2) { text-align: center; }
+
+.lane {
+  display: flex; height: 44px; align-items: center;
+}
+.lane-label {
+  width: 140px; flex-shrink: 0; padding: 0 8px;
+  font-family: 'SF Mono','Menlo',monospace; font-size: 10px;
+  display: flex; flex-direction: column; justify-content: center;
+}
+.lane-label .ln { color: #e6edf3; }
+.lane-label.selected .ln::before { content: '▶ '; color: #58a6ff; }
+.lane-label .lm { color: #8b949e; font-size: 9px; }
+.lane-label.selected {
+  border-left: 2px solid #58a6ff; background: #58a6ff0a;
+}
+.lane-bars {
+  flex: 1; height: 44px; position: relative; overflow: hidden;
+}
+.turn-bars { height: 22px; display: flex; align-items: center; gap: 1px; padding: 2px 0; }
+.turn-bar {
+  height: 16px; border-radius: 1px; min-width: 2px;
+  display: inline-block;
+}
+.sparkline {
+  height: 16px; position: relative;
+}
+.sparkline svg { width: 100%; height: 100%; }
+
+/* ── Resize Handle ────────────────────────────────────────── */
+.resize-handle {
+  height: 4px; cursor: row-resize; background: #0d1117; flex-shrink: 0;
+  border-top: 1px solid #30363d; border-bottom: 1px solid #30363d;
+}
+.resize-handle:hover { background: #58a6ff33; }
+
+/* ── Detail Area ──────────────────────────────────────────── */
+.detail-area { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+
+.agent-card {
+  width: 180px; flex-shrink: 0; overflow-y: auto; background: #161b22;
+  border-right: 1px solid #30363d;
+  font-family: 'SF Mono','Menlo',monospace; font-size: 10px;
+  padding: 0;
+}
+.ac-header {
+  padding: 8px; border-bottom: 1px solid #30363d; position: sticky; top: 0;
+  background: #161b22; border-left: 2px solid var(--model-color, #58a6ff);
+}
+.ac-name { color: #e6edf3; font-weight: 600; font-size: 12px; }
+.ac-model {
+  display: inline-block; padding: 1px 4px; border-radius: 3px;
+  font-size: 9px; margin-left: 2px;
+}
+.ac-meta { color: #8b949e; font-size: 9px; margin-top: 2px; }
+.ac-star { float: right; cursor: pointer; color: #484f58; font-size: 13px; }
+.ac-body { padding: 8px; }
+.ac-section { margin-bottom: 10px; }
+.ac-label {
+  color: #484f58; font-size: 8px; text-transform: uppercase;
+  letter-spacing: 0.5px; margin-bottom: 2px;
+}
+.ac-value { color: #e6edf3; }
+.ac-dim { color: #8b949e; }
+.chart-placeholder {
+  width: 100%; height: 48px; background: #21262d; border-radius: 2px;
+  margin-top: 2px; position: relative; overflow: hidden;
+}
+.chart-bar {
+  position: absolute; bottom: 0; border-radius: 1px 1px 0 0;
+}
+.spark-placeholder {
+  width: 100%; height: 14px; background: #21262d; border-radius: 2px; margin-top: 2px;
+  position: relative; overflow: hidden;
+}
+.ac-nav {
+  border-top: 1px solid #30363d; margin-top: 4px; padding-top: 4px;
+}
+.ac-nav-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 0; color: #8b949e; cursor: pointer; font-size: 10px;
+}
+.ac-nav-item:hover { color: #e6edf3; }
+.ac-nav-dot { width: 5px; height: 5px; border-radius: 50%; margin-right: 4px; display: inline-block; }
+
+.steps-panel {
+  flex: 1; overflow-y: auto; background: #0d1117;
+  font-family: 'SF Mono','Menlo',monospace; font-size: 10px;
+}
+.steps-header {
+  padding: 6px 8px; color: #484f58; font-size: 9px; text-transform: uppercase;
+  letter-spacing: 0.5px; border-bottom: 1px solid #1c2128;
+  position: sticky; top: 0; background: #0d1117; z-index: 2;
+}
+.step-row {
+  padding: 4px 8px; border-bottom: 1px solid #1c2128;
+  display: flex; align-items: flex-start; gap: 6px;
+}
+.step-row:hover { background: #161b22; }
+.step-row.selected { border-left: 2px solid #58a6ff; background: #161b22; }
+.step-star { color: #484f58; cursor: pointer; font-size: 11px; flex-shrink: 0; }
+.step-num { color: #8b949e; flex-shrink: 0; min-width: 24px; }
+.step-model {
+  display: inline-block; padding: 0 3px; border-radius: 2px;
+  font-size: 9px; flex-shrink: 0;
+}
+.step-tools { flex: 1; color: #3fb950; }
+.step-tool-bracket { color: #30363d; }
+.step-ctx { color: #8b949e; font-size: 9px; flex-shrink: 0; min-width: 32px; text-align: right; }
+.step-dur { color: #484f58; font-size: 9px; flex-shrink: 0; min-width: 28px; text-align: right; }
+.step-idle {
+  padding: 3px 8px; color: #d29922; font-size: 9px; border-bottom: 1px solid #1c2128;
+  font-family: 'SF Mono','Menlo',monospace;
+}
+.spawn-badge { color: #d2a8ff; font-size: 9px; }
+
+/* ── Dimension annotation ─────────────────────────────────── */
+.dim-annotation {
+  position: absolute; right: -2px; color: #f0883e; font-size: 9px;
+  font-family: 'SF Mono','Menlo',monospace; writing-mode: vertical-lr;
+  letter-spacing: 1px; opacity: 0.7;
+}
+
+/* ── Model colors ─────────────────────────────────────────── */
+.model-opus46 { background: #58a6ff33; color: #58a6ff; }
+.model-opus48 { background: #7ee78733; color: #7ee787; }
+.model-fable { background: #d2a8ff33; color: #d2a8ff; }
+.model-haiku { background: #f0883e33; color: #f0883e; }
+
+/* ── Comparison label ─────────────────────────────────────── */
+.vs-label {
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px 0 4px; color: #484f58; font-size: 10px;
+  font-family: 'SF Mono','Menlo',monospace; letter-spacing: 2px;
+}
+
+/* Bottom bar */
+.bottom-bar {
+  height: 20px; background: #161b22; border-top: 1px solid #30363d;
+  display: flex; align-items: center; padding: 0 12px;
+  font-family: 'SF Mono','Menlo',monospace; font-size: 9px; color: #484f58;
+  flex-shrink: 0; gap: 12px;
+}
+.bottom-bar kbd {
+  background: #21262d; border: 1px solid #30363d; padding: 0 3px;
+  border-radius: 2px; font-size: 8px;
+}
+</style>
+</head>
+<body>
+
+<h2>P1 Solution: Content-Driven Height — Single Lane (92px → 60px with merged overview)</h2>
+
+<div class="comparison">
+
+<!-- ═══ LEFT: Single-lane session ═══ -->
+<div class="panel">
+  <div class="panel-title">
+    <span>Single-Lane Session (14 turns, 1 agent)</span>
+    <span class="tag">timeline: 60px</span>
+  </div>
+  <div class="layout">
+    <div class="left-cols">
+      <div class="col-header">sessions</div>
+      <div class="col-item active">
+        <div class="name">0df173ba</div>
+        <div class="meta">opus-4-6 · 14t<br>$0.72 · 3m</div>
+      </div>
+      <div class="col-item">
+        <div class="name">84895640</div>
+        <div class="meta">opus-4-6 · 319t<br>$51.02 · 2.1h</div>
+      </div>
+      <div class="col-item">
+        <div class="name">e80743c5</div>
+        <div class="meta">opus+haiku · 88t<br>$8.43 · 45m</div>
+      </div>
+    </div>
+    <div class="right-area">
+      <!-- ponytail: no overview bar for single-lane — lane IS the overview -->
+      <div class="timeline-section" style="height: 60px;">
+        <div class="time-axis">
+          <span>0</span><span>1.5m</span><span>3.0m</span>
+        </div>
+        <div class="lane">
+          <div class="lane-label selected">
+            <span class="ln">main</span>
+            <span class="lm">opus-4-6 · 1000K</span>
+          </div>
+          <div class="lane-bars">
+            <div class="turn-bars">
+              <div class="turn-bar" style="width:8px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:12px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:6px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:18px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:10px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:14px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:8px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:22px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:6px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:16px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:10px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:8px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:12px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:6px; background:#58a6ff;"></div>
+            </div>
+            <div class="sparkline">
+              <svg viewBox="0 0 200 16" preserveAspectRatio="none">
+                <path d="M0,14 L14,13 L28,12 L42,10 L60,8 L74,7 L88,6 L102,4 L114,5 L130,3 L146,3 L160,2 L174,2 L200,1" fill="none" stroke="#58a6ff99" stroke-width="1"/>
+                <path d="M0,14 L14,13 L28,12 L42,10 L60,8 L74,7 L88,6 L102,4 L114,5 L130,3 L146,3 L160,2 L174,2 L200,1 L200,16 L0,16Z" fill="#58a6ff22"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="resize-handle"></div>
+      <!-- Detail fills remaining ~620px -->
+      <div class="detail-area">
+        <div class="agent-card" style="--model-color: #58a6ff;">
+          <div class="ac-header">
+            <span class="ac-star">☆</span>
+            <div class="ac-name">main</div>
+            <span class="ac-model model-opus46">opus-4-6</span>
+            <div class="ac-meta">14t · 3.0m · orchestrator</div>
+          </div>
+          <div class="ac-body">
+            <div class="ac-section">
+              <div class="ac-label">Context</div>
+              <div class="ac-value">12.2% <span class="ac-dim">(122K / 1000K)</span></div>
+              <div class="ac-dim">peak 12.2%</div>
+              <div class="chart-placeholder">
+                <div class="chart-bar" style="left:2%; width:6%; height:10%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:9%; width:6%; height:15%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:16%; width:6%; height:22%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:23%; width:6%; height:30%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:30%; width:6%; height:38%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:37%; width:6%; height:45%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:44%; width:6%; height:52%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:51%; width:6%; height:60%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:58%; width:6%; height:55%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:65%; width:6%; height:65%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:72%; width:6%; height:70%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:79%; width:6%; height:75%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:86%; width:6%; height:80%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:93%; width:6%; height:85%; background:#3fb950;"></div>
+              </div>
+            </div>
+            <div class="ac-section">
+              <div class="ac-label">Cache</div>
+              <div class="ac-value">94.0% hit</div>
+              <div class="spark-placeholder">
+                <div class="chart-bar" style="left:2%; width:6%; height:90%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:9%; width:6%; height:95%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:16%; width:6%; height:88%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:23%; width:6%; height:92%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:30%; width:6%; height:96%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:37%; width:6%; height:94%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:44%; width:6%; height:91%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:51%; width:6%; height:97%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:58%; width:6%; height:93%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:65%; width:6%; height:95%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:72%; width:6%; height:90%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:79%; width:6%; height:96%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:86%; width:6%; height:98%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:93%; width:6%; height:94%; background:#3fb950;"></div>
+              </div>
+            </div>
+            <div class="ac-section">
+              <div class="ac-label">Cost</div>
+              <div class="ac-value">$0.72 <span class="ac-dim">avg $0.051/turn</span></div>
+              <div class="spark-placeholder">
+                <div class="chart-bar" style="left:2%; width:6%; height:40%; background:#ffa657;"></div>
+                <div class="chart-bar" style="left:9%; width:6%; height:55%; background:#ffa657;"></div>
+                <div class="chart-bar" style="left:16%; width:6%; height:35%; background:#ffa657;"></div>
+                <div class="chart-bar" style="left:23%; width:6%; height:70%; background:#ffa657;"></div>
+                <div class="chart-bar" style="left:30%; width:6%; height:50%; background:#ffa657;"></div>
+                <div class="chart-bar" style="left:37%; width:6%; height:60%; background:#ffa657;"></div>
+                <div class="chart-bar" style="left:44%; width:6%; height:45%; background:#ffa657;"></div>
+                <div class="chart-bar" style="left:51%; width:6%; height:80%; background:#ffa657;"></div>
+                <div class="chart-bar" style="left:58%; width:6%; height:30%; background:#ffa657;"></div>
+                <div class="chart-bar" style="left:65%; width:6%; height:65%; background:#ffa657;"></div>
+                <div class="chart-bar" style="left:72%; width:6%; height:50%; background:#ffa657;"></div>
+                <div class="chart-bar" style="left:79%; width:6%; height:55%; background:#ffa657;"></div>
+                <div class="chart-bar" style="left:86%; width:6%; height:60%; background:#ffa657;"></div>
+                <div class="chart-bar" style="left:93%; width:6%; height:40%; background:#ffa657;"></div>
+              </div>
+            </div>
+            <div class="ac-nav">
+              <div class="ac-nav-item"><span><span class="ac-nav-dot" style="background:#58a6ff;"></span>Timeline</span><span>14 steps</span></div>
+              <div class="ac-nav-item"><span><span class="ac-nav-dot" style="background:#3fb950;"></span>Context</span><span>System · Core</span></div>
+              <div class="ac-nav-item"><span>💰 Cost Efficiency</span><span></span></div>
+              <div class="ac-nav-item"><span>RAW</span><span>Request · Events</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="steps-panel">
+          <div class="steps-header">Timeline · 14 steps</div>
+          <div class="step-row selected">
+            <span class="step-star">☆</span>
+            <span class="step-num">#1</span>
+            <span class="step-model model-opus46">opus-4-6</span>
+            <span class="step-tools">Read</span>
+            <span class="step-ctx">1.2%</span>
+            <span class="step-dur">8s</span>
+          </div>
+          <div class="step-row">
+            <span class="step-star">☆</span>
+            <span class="step-num">#2</span>
+            <span class="step-model model-opus46">opus-4-6</span>
+            <span class="step-tools"><span class="step-tool-bracket">┌</span> Bash<br><span class="step-tool-bracket">└</span> Read</span>
+            <span class="step-ctx">2.1%</span>
+            <span class="step-dur">12s</span>
+          </div>
+          <div class="step-row">
+            <span class="step-star">☆</span>
+            <span class="step-num">#3</span>
+            <span class="step-model model-opus46">opus-4-6</span>
+            <span class="step-tools">Edit</span>
+            <span class="step-ctx">3.0%</span>
+            <span class="step-dur">6s</span>
+          </div>
+          <div class="step-row">
+            <span class="step-star">☆</span>
+            <span class="step-num">#4</span>
+            <span class="step-model model-opus46">opus-4-6</span>
+            <span class="step-tools"><span class="step-tool-bracket">┌</span> Bash<br><span class="step-tool-bracket">│</span> Read<br><span class="step-tool-bracket">└</span> Edit</span>
+            <span class="step-ctx">4.5%</span>
+            <span class="step-dur">18s</span>
+          </div>
+          <div class="step-row">
+            <span class="step-star">☆</span>
+            <span class="step-num">#5</span>
+            <span class="step-model model-opus46">opus-4-6</span>
+            <span class="step-tools">Bash</span>
+            <span class="step-ctx">5.2%</span>
+            <span class="step-dur">10s</span>
+          </div>
+          <div class="step-row">
+            <span class="step-star">☆</span>
+            <span class="step-num">#6</span>
+            <span class="step-model model-opus46">opus-4-6</span>
+            <span class="step-tools"><span class="step-tool-bracket">┌</span> Read<br><span class="step-tool-bracket">└</span> Edit</span>
+            <span class="step-ctx">6.1%</span>
+            <span class="step-dur">14s</span>
+          </div>
+          <div class="step-row">
+            <span class="step-star">★</span>
+            <span class="step-num">#7</span>
+            <span class="step-model model-opus46">opus-4-6</span>
+            <span class="step-tools">Bash</span>
+            <span class="step-ctx">6.8%</span>
+            <span class="step-dur">8s</span>
+          </div>
+          <div class="step-idle">⏸ 12.0m</div>
+          <div class="step-row">
+            <span class="step-star">☆</span>
+            <span class="step-num">#8</span>
+            <span class="step-model model-opus46">opus-4-6</span>
+            <span class="step-tools"><span class="step-tool-bracket">┌</span> Read ×3<br><span class="step-tool-bracket">│</span> Edit<br><span class="step-tool-bracket">└</span> Bash</span>
+            <span class="step-ctx" style="color:#d29922;">7.5%</span>
+            <span class="step-dur">22s</span>
+          </div>
+          <div class="step-row">
+            <span class="step-star">☆</span>
+            <span class="step-num">#9</span>
+            <span class="step-model model-opus46">opus-4-6</span>
+            <span class="step-tools">Read</span>
+            <span class="step-ctx">8.0%</span>
+            <span class="step-dur">6s</span>
+          </div>
+          <div class="step-row">
+            <span class="step-star">☆</span>
+            <span class="step-num">#10</span>
+            <span class="step-model model-opus46">opus-4-6</span>
+            <span class="step-tools"><span class="step-tool-bracket">┌</span> Edit<br><span class="step-tool-bracket">└</span> Bash</span>
+            <span class="step-ctx">9.2%</span>
+            <span class="step-dur">16s</span>
+          </div>
+          <div class="step-row">
+            <span class="step-star">☆</span>
+            <span class="step-num">#11</span>
+            <span class="step-model model-opus46">opus-4-6</span>
+            <span class="step-tools">Read</span>
+            <span class="step-ctx">10.1%</span>
+            <span class="step-dur">10s</span>
+          </div>
+          <div class="step-row">
+            <span class="step-star">☆</span>
+            <span class="step-num">#12</span>
+            <span class="step-model model-opus46">opus-4-6</span>
+            <span class="step-tools">Edit</span>
+            <span class="step-ctx">10.8%</span>
+            <span class="step-dur">8s</span>
+          </div>
+          <div class="step-row">
+            <span class="step-star">☆</span>
+            <span class="step-num">#13</span>
+            <span class="step-model model-opus46">opus-4-6</span>
+            <span class="step-tools"><span class="step-tool-bracket">┌</span> Bash<br><span class="step-tool-bracket">└</span> Read</span>
+            <span class="step-ctx">11.5%</span>
+            <span class="step-dur">12s</span>
+          </div>
+          <div class="step-row">
+            <span class="step-star">☆</span>
+            <span class="step-num">#14</span>
+            <span class="step-model model-opus46">opus-4-6</span>
+            <span class="step-tools">Bash</span>
+            <span class="step-ctx">12.2%</span>
+            <span class="step-dur">6s</span>
+          </div>
+        </div>
+      </div>
+      <div class="bottom-bar">
+        <span><kbd>↑↓</kbd> steps</span>
+        <span><kbd>Esc</kbd> exit</span>
+        <span><kbd>⌘</kbd>scroll zoom</span>
+        <span><kbd>drag</kbd> pan</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ RIGHT: Multi-lane session ═══ -->
+<div class="panel">
+  <div class="panel-title">
+    <span>Multi-Lane Session (88 turns, 18 agents)</span>
+    <span class="tag">timeline: auto ~340px</span>
+  </div>
+  <div class="layout">
+    <div class="left-cols">
+      <div class="col-header">sessions</div>
+      <div class="col-item">
+        <div class="name">0df173ba</div>
+        <div class="meta">opus-4-6 · 14t<br>$0.72 · 3m</div>
+      </div>
+      <div class="col-item">
+        <div class="name">84895640</div>
+        <div class="meta">opus-4-6 · 319t<br>$51.02 · 2.1h</div>
+      </div>
+      <div class="col-item active">
+        <div class="name">e80743c5</div>
+        <div class="meta">opus+haiku · 88t<br>$8.43 · 45m</div>
+      </div>
+    </div>
+    <div class="right-area">
+      <!-- Overview bar appears for multi-lane -->
+      <div class="overview-bar">
+        <div class="overview-label">
+          <span>overview</span>
+          <button>+</button><button>−</button><button>⟲</button>
+        </div>
+        <div class="minimap-area">
+          <div class="minimap-lanes">
+            <div class="minimap-lane" style="background:#58a6ff; width:90%; margin-left:0;"></div>
+            <div class="minimap-lane" style="background:#f0883e; width:30%; margin-left:15%;"></div>
+            <div class="minimap-lane" style="background:#f0883e; width:25%; margin-left:20%;"></div>
+            <div class="minimap-lane" style="background:#f0883e; width:35%; margin-left:18%;"></div>
+            <div class="minimap-lane" style="background:#58a6ff; width:20%; margin-left:40%;"></div>
+            <div class="minimap-lane" style="background:#f0883e; width:15%; margin-left:55%;"></div>
+          </div>
+          <div class="minimap-viewport" style="left:10%; width:40%;">
+            <span class="duration-badge">15.3m</span>
+          </div>
+        </div>
+      </div>
+      <div class="timeline-section" style="height: 300px; overflow-y: auto;">
+        <div class="time-axis">
+          <span>0</span><span>22.5m</span><span>45.0m</span>
+        </div>
+        <!-- Main lane (sticky) -->
+        <div class="lane" style="position: sticky; top: 16px; z-index: 3; background: #0d1117;">
+          <div class="lane-label selected">
+            <span class="ln">main</span>
+            <span class="lm">opus-4-6 · 1000K</span>
+          </div>
+          <div class="lane-bars">
+            <div class="turn-bars">
+              <div class="turn-bar" style="width:4px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:6px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:3px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:8px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:5px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:12px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:3px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:6px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:4px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:15px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:3px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:8px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:5px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:4px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:10px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:6px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:3px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:8px; background:#58a6ff;"></div>
+            </div>
+            <div class="sparkline">
+              <svg viewBox="0 0 200 16" preserveAspectRatio="none">
+                <path d="M0,14 L20,12 L40,10 L60,8 L80,6 L100,5 L120,4 L140,3 L160,4 L180,3 L200,2" fill="none" stroke="#58a6ff99" stroke-width="1"/>
+                <path d="M0,14 L20,12 L40,10 L60,8 L80,6 L100,5 L120,4 L140,3 L160,4 L180,3 L200,2 L200,16 L0,16Z" fill="#58a6ff22"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+        <!-- Sub-lanes -->
+        <div class="lane">
+          <div class="lane-label"><span class="ln">p1-research</span><span class="lm">haiku-4-5 · 200K</span></div>
+          <div class="lane-bars">
+            <div class="turn-bars" style="padding-left: 30px;">
+              <div class="turn-bar" style="width:8px; background:#f0883e;"></div>
+              <div class="turn-bar" style="width:12px; background:#f0883e;"></div>
+              <div class="turn-bar" style="width:6px; background:#f0883e;"></div>
+              <div class="turn-bar" style="width:10px; background:#f0883e;"></div>
+              <div class="turn-bar" style="width:4px; background:#f0883e;"></div>
+            </div>
+            <div class="sparkline"><svg viewBox="0 0 200 16" preserveAspectRatio="none"><path d="M60,14 L80,10 L100,7 L120,5 L140,8" fill="none" stroke="#f0883e99" stroke-width="1"/></svg></div>
+          </div>
+        </div>
+        <div class="lane">
+          <div class="lane-label"><span class="ln">p1-evaluator</span><span class="lm">haiku-4-5 · 200K</span></div>
+          <div class="lane-bars">
+            <div class="turn-bars" style="padding-left: 50px;">
+              <div class="turn-bar" style="width:6px; background:#f0883e;"></div>
+              <div class="turn-bar" style="width:10px; background:#f0883e;"></div>
+              <div class="turn-bar" style="width:8px; background:#f0883e;"></div>
+            </div>
+            <div class="sparkline"><svg viewBox="0 0 200 16" preserveAspectRatio="none"><path d="M100,14 L120,8 L150,5" fill="none" stroke="#f0883e99" stroke-width="1"/></svg></div>
+          </div>
+        </div>
+        <div class="lane">
+          <div class="lane-label"><span class="ln">spec-routing</span><span class="lm">fable-5 · 1000K</span></div>
+          <div class="lane-bars">
+            <div class="turn-bars" style="padding-left: 40px;">
+              <div class="turn-bar" style="width:5px; background:#d2a8ff;"></div>
+              <div class="turn-bar" style="width:8px; background:#d2a8ff;"></div>
+              <div class="turn-bar" style="width:14px; background:#d2a8ff;"></div>
+              <div class="turn-bar" style="width:6px; background:#d2a8ff;"></div>
+              <div class="turn-bar" style="width:10px; background:#d2a8ff;"></div>
+              <div class="turn-bar" style="width:3px; background:#d2a8ff;"></div>
+              <div class="turn-bar" style="width:8px; background:#d2a8ff;"></div>
+            </div>
+            <div class="sparkline"><svg viewBox="0 0 200 16" preserveAspectRatio="none"><path d="M80,14 L100,10 L120,6 L140,4 L160,3 L180,5 L200,4" fill="none" stroke="#d2a8ff99" stroke-width="1"/></svg></div>
+          </div>
+        </div>
+        <div class="lane">
+          <div class="lane-label"><span class="ln">code-review</span><span class="lm">opus-4-6 · 1000K</span></div>
+          <div class="lane-bars">
+            <div class="turn-bars" style="padding-left: 80px;">
+              <div class="turn-bar" style="width:6px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:10px; background:#58a6ff;"></div>
+              <div class="turn-bar" style="width:4px; background:#58a6ff;"></div>
+            </div>
+            <div class="sparkline"><svg viewBox="0 0 200 16" preserveAspectRatio="none"><path d="M160,14 L180,8 L195,6" fill="none" stroke="#58a6ff99" stroke-width="1"/></svg></div>
+          </div>
+        </div>
+        <div class="lane">
+          <div class="lane-label"><span class="ln">fixture-gen</span><span class="lm">haiku-4-5 · 200K</span></div>
+          <div class="lane-bars">
+            <div class="turn-bars" style="padding-left: 60px;">
+              <div class="turn-bar" style="width:4px; background:#f0883e;"></div>
+              <div class="turn-bar" style="width:6px; background:#f0883e;"></div>
+            </div>
+            <div class="sparkline"><svg viewBox="0 0 200 16" preserveAspectRatio="none"><path d="M120,14 L140,8" fill="none" stroke="#f0883e99" stroke-width="1"/></svg></div>
+          </div>
+        </div>
+        <div class="lane">
+          <div class="lane-label"><span class="ln">test-runner</span><span class="lm">haiku-4-5 · 200K</span></div>
+          <div class="lane-bars">
+            <div class="turn-bars" style="padding-left: 90px;">
+              <div class="turn-bar" style="width:8px; background:#f0883e;"></div>
+              <div class="turn-bar" style="width:5px; background:#f0883e;"></div>
+              <div class="turn-bar" style="width:10px; background:#f0883e;"></div>
+            </div>
+            <div class="sparkline"><svg viewBox="0 0 200 16" preserveAspectRatio="none"><path d="M180,14 L190,8 L200,5" fill="none" stroke="#f0883e99" stroke-width="1"/></svg></div>
+          </div>
+        </div>
+      </div>
+      <div class="resize-handle"></div>
+      <div class="detail-area">
+        <div class="agent-card" style="--model-color: #58a6ff;">
+          <div class="ac-header">
+            <span class="ac-star">☆</span>
+            <div class="ac-name">main</div>
+            <span class="ac-model model-opus46">opus-4-6</span>
+            <div class="ac-meta">18t · 45.0m · orchestrator</div>
+          </div>
+          <div class="ac-body">
+            <div class="ac-section">
+              <div class="ac-label">Context</div>
+              <div class="ac-value">39.7% <span class="ac-dim">(397K / 1000K)</span></div>
+              <div class="ac-dim">peak 39.7%</div>
+              <div class="chart-placeholder">
+                <div class="chart-bar" style="left:2%; width:5%; height:12%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:8%; width:5%; height:18%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:14%; width:5%; height:24%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:20%; width:5%; height:30%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:26%; width:5%; height:36%; background:#3fb950;"></div>
+                <div class="chart-bar" style="left:32%; width:5%; height:42%; background:#d29922;"></div>
+                <div class="chart-bar" style="left:38%; width:5%; height:48%; background:#d29922;"></div>
+                <div class="chart-bar" style="left:44%; width:5%; height:52%; background:#d29922;"></div>
+                <div class="chart-bar" style="left:50%; width:5%; height:55%; background:#d29922;"></div>
+                <div class="chart-bar" style="left:56%; width:5%; height:60%; background:#d29922;"></div>
+                <div class="chart-bar" style="left:62%; width:5%; height:63%; background:#d29922;"></div>
+                <div class="chart-bar" style="left:68%; width:5%; height:58%; background:#d29922;"></div>
+                <div class="chart-bar" style="left:74%; width:5%; height:65%; background:#d29922;"></div>
+                <div class="chart-bar" style="left:80%; width:5%; height:70%; background:#d29922;"></div>
+                <div class="chart-bar" style="left:86%; width:5%; height:75%; background:#d29922;"></div>
+                <div class="chart-bar" style="left:92%; width:5%; height:68%; background:#d29922;"></div>
+              </div>
+            </div>
+            <div class="ac-section">
+              <div class="ac-label">Cache</div>
+              <div class="ac-value">87.3% hit</div>
+              <div class="spark-placeholder"></div>
+            </div>
+            <div class="ac-section">
+              <div class="ac-label">Cost</div>
+              <div class="ac-value">$8.43 <span class="ac-dim">avg $0.47/turn</span></div>
+              <div class="spark-placeholder"></div>
+            </div>
+            <div class="ac-nav">
+              <div class="ac-nav-item"><span><span class="ac-nav-dot" style="background:#58a6ff;"></span>Timeline</span><span>18 steps</span></div>
+              <div class="ac-nav-item"><span><span class="ac-nav-dot" style="background:#3fb950;"></span>Context</span><span>System · Core · MCP</span></div>
+              <div class="ac-nav-item"><span>💰 Cost Efficiency</span><span></span></div>
+            </div>
+          </div>
+        </div>
+        <div class="steps-panel">
+          <div class="steps-header">Timeline · main · 18 steps</div>
+          <div class="step-row">
+            <span class="step-star">☆</span>
+            <span class="step-num">#1</span>
+            <span class="step-model model-opus46">opus-4-6</span>
+            <span class="step-tools">Monitor</span>
+            <span class="step-ctx">2.1%</span>
+            <span class="step-dur">4s</span>
+          </div>
+          <div class="step-row">
+            <span class="step-star">☆</span>
+            <span class="step-num">#2</span>
+            <span class="step-model model-opus46">opus-4-6</span>
+            <span class="step-tools"><span class="step-tool-bracket">┌</span> Bash<br><span class="step-tool-bracket">│</span> Read ×3<br><span class="step-tool-bracket">│</span> <span class="spawn-badge">⑂ p1-research</span><br><span class="step-tool-bracket">└</span> <span class="spawn-badge">⑂ p1-evaluator</span></span>
+            <span class="step-ctx">5.8%</span>
+            <span class="step-dur">12s</span>
+          </div>
+          <div class="step-row selected">
+            <span class="step-star">☆</span>
+            <span class="step-num">#3</span>
+            <span class="step-model model-opus46">opus-4-6</span>
+            <span class="step-tools"><span class="step-tool-bracket">┌</span> Edit<br><span class="step-tool-bracket">│</span> Bash<br><span class="step-tool-bracket">└</span> <span class="spawn-badge">⑂ spec-routing</span></span>
+            <span class="step-ctx">8.2%</span>
+            <span class="step-dur">15s</span>
+          </div>
+          <div class="step-idle">⏸ 8.3m</div>
+          <div class="step-row">
+            <span class="step-star">☆</span>
+            <span class="step-num">#4</span>
+            <span class="step-model model-opus46">opus-4-6</span>
+            <span class="step-tools"><span class="step-tool-bracket">┌</span> Read ×2<br><span class="step-tool-bracket">└</span> Edit</span>
+            <span class="step-ctx" style="color:#d29922;">12.1%</span>
+            <span class="step-dur">8s</span>
+          </div>
+        </div>
+      </div>
+      <div class="bottom-bar">
+        <span><kbd>↑↓</kbd> steps</span>
+        <span><kbd>Esc</kbd> exit</span>
+        <span><kbd>⌘</kbd>scroll zoom</span>
+        <span><kbd>drag</kbd> pan</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<div class="vs-label">── P1 DESIGN RULE ──</div>
+<div style="padding: 0 16px 16px; font-family: 'SF Mono','Menlo',monospace; font-size: 11px; color: #8b949e; max-width: 800px; margin: 0 auto;">
+  <p style="margin-bottom: 8px;"><span style="color: #3fb950;">timelineH = clamp(MIN_H, laneCount × 44 + axisH + overviewH, 45vh)</span></p>
+  <p style="margin-bottom: 4px;">• <strong style="color:#e6edf3;">1 lane:</strong> no overview bar (lane IS the overview). Total ≈ 60px. Detail gets ~640px on 700px panel.</p>
+  <p style="margin-bottom: 4px;">• <strong style="color:#e6edf3;">2+ lanes:</strong> overview bar appears (32px). Height grows proportionally. Detail shrinks but stays useful.</p>
+  <p style="margin-bottom: 4px;">• <strong style="color:#e6edf3;">Spawn mid-session:</strong> CSS transition smoothly grows timeline. Overview bar fades in.</p>
+  <p style="margin-bottom: 4px;">• <strong style="color:#e6edf3;">Manual resize:</strong> user drag overrides auto-height. Preserved across lane count changes.</p>
+  <p>• <strong style="color:#e6edf3;">Same code path</strong> — no modes, no collapse buttons, no inline embed. Just proportional allocation.</p>
+</div>
+
+</body>
+</html>
