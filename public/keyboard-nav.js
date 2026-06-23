@@ -607,6 +607,10 @@ document.addEventListener('keydown', (e) => {
 
   // Enter on sections → enter focused mode
   if (key === 'Enter' && focusedCol === 'sections' && selectedSection) { enterFocusedMode(); e.preventDefault(); return; }
+  // Workflow shortcuts: j/k/Tab/Esc dispatched before arrow-only guard
+  if (focusedCol === 'turns' && typeof wfState !== 'undefined' && wfState && typeof wfKeyHandler === 'function') {
+    if (wfKeyHandler(key, e)) { e.preventDefault(); return; }
+  }
   // Escape in main mode → move left one column
   if (key === 'Escape') {
     const leftOf = { sessions: 'projects', turns: 'sessions', sections: 'turns' };

@@ -799,6 +799,133 @@ function wfRenderAgentCard(lane) {
   colSections.innerHTML = html;
 }
 
+// ── Chart Header (prepended to detail column in timeline view) ────────────
+function wfRenderChartHeader(lane) {
+  if (!lane || !lane.turns.length) return '';
+  var turns = lane.turns;
+  var c = _wfGetCssColors();
+
+  // Filter to viewport if zoomed
+  var vis = turns;
+  if (wfState.viewT0 > wfState.tMin + 100 || wfState.viewT1 < wfState.tMax - 100) {
+    vis = turns.filter(function(t) { return Number(t.receivedAt) >= wfState.viewT0 && Number(t.receivedAt) <= wfState.viewT1; });
+  }
+  if (!vis.length) vis = turns;
+
+  var ctxH = 48, sparkH = 14;
+  var barW = Math.max(2, Math.min(6, 296 / vis.length));
+  var W = Math.max(300, vis.length * barW + 4);
+  var gap = Math.min(1, barW * 0.15);
+
+  // Context minimap
+  var ctxSvg = '<svg viewBox="0 0 ' + W + ' ' + ctxH + '" style="width:100%;height:' + ctxH + 'px;display:block">';
+  var thY40 = (ctxH - 2 - 0.4 * (ctxH - 4)).toFixed(1);
+  var thY83 = (ctxH - 2 - 0.835 * (ctxH - 4)).toFixed(1);
+  ctxSvg += '<line x1="2" y1="' + thY40 + '" x2="' + (W - 2) + '" y2="' + thY40 + '" stroke="var(--green)" stroke-width="0.5" stroke-dasharray="2 2" opacity="0.4"/>';
+  ctxSvg += '<line x1="2" y1="' + thY83 + '" x2="' + (W - 2) + '" y2="' + thY83 + '" stroke="var(--red)" stroke-width="0.5" stroke-dasharray="2 2" opacity="0.4"/>';
+  for (var ci = 0; ci < vis.length; ci++) {
+    var pct = wfCtxPct(vis[ci]);
+    var barH = pct / 100 * (ctxH - 4);
+    var color = pct > 90 ? 'var(--red)' : pct > 80 ? 'var(--yellow)' : 'var(--accent)';
+    ctxSvg += '<rect x="' + (2 + ci * barW).toFixed(1) + '" y="' + (ctxH - 2 - barH).toFixed(1) + '" width="' + (barW - gap).toFixed(1) + '" height="' + barH.toFixed(1) + '" fill="' + color + '" opacity="0.8"/>';
+  }
+  // Cursor line (shared across all 3 charts)
+  var cursorSvg = '';
+  if (wfState.selectedTurnId) {
+    var selIdx = vis.findIndex(function(t) { return t.id === wfState.selectedTurnId; });
+    if (selIdx >= 0) {
+      var cx = 2 + selIdx * barW + barW / 2;
+      cursorSvg = '<line x1="' + cx.toFixed(1) + '" y1="0" x2="' + cx.toFixed(1) + '" y2="999" stroke="var(--accent)" stroke-width="1" opacity="0.7"/>';
+    }
+  }
+  ctxSvg += cursorSvg + '</svg>';
+
+  // Cache sparkline
+  var cacheSvg = '<svg viewBox="0 0 ' + W + ' ' + sparkH + '" style="width:100%;height:' + sparkH + 'px;display:block">';
+  for (var ki = 0; ki < vis.length; ki++) {
+    var u = vis[ki].usage || {};
+    var cr = u.cache_read_input_tokens || 0, cc = u.cache_creation_input_tokens || 0;
+    var hit = (cr + cc) > 0 ? cr / (cr + cc) : 0;
+    var bh = hit * (sparkH - 2);
+    cacheSvg += '<rect x="' + (2 + ki * barW).toFixed(1) + '" y="' + (sparkH - 1 - bh).toFixed(1) + '" width="' + (barW - gap).toFixed(1) + '" height="' + bh.toFixed(1) + '" fill="' + (hit > 0.8 ? 'var(--green)' : 'var(--yellow)') + '" opacity="0.7"/>';
+  }
+  cacheSvg += cursorSvg + '</svg>';
+
+  // Cost sparkline
+  var maxCost = 0;
+  for (var mi = 0; mi < vis.length; mi++) if ((vis[mi].cost || 0) > maxCost) maxCost = vis[mi].cost;
+  var costSvg = '<svg viewBox="0 0 ' + W + ' ' + sparkH + '" style="width:100%;height:' + sparkH + 'px;display:block">';
+  for (var oi = 0; oi < vis.length; oi++) {
+    var ch = maxCost > 0 ? (vis[oi].cost || 0) / maxCost * (sparkH - 2) : 0;
+    costSvg += '<rect x="' + (2 + oi * barW).toFixed(1) + '" y="' + (sparkH - 1 - ch).toFixed(1) + '" width="' + (barW - gap).toFixed(1) + '" height="' + ch.toFixed(1) + '" fill="var(--orange)" opacity="0.7"/>';
+  }
+  costSvg += cursorSvg + '</svg>';
+
+  return '<div class="wf-chart-header">' +
+    '<div class="wf-chart-label"><span>Context %</span><span>' + vis.length + ' turns</span></div>' + ctxSvg +
+    '<div class="wf-chart-label"><span>Cache hit</span></div>' + cacheSvg +
+    '<div class="wf-chart-label"><span>Cost</span></div>' + costSvg +
+    '</div>';
+}
+
+// ── Keyboard Handler (dispatched from keyboard-nav.js) ────────────────────
+function wfKeyHandler(key, e) {
+  if (!wfState || !wfState.selectedLane) return false;
+  var lane = wfState.selectedLane;
+
+  // j/k: next/prev turn within selected lane (arrows use normal turn-list nav)
+  if (key === 'j' || key === 'k') {
+    if (!lane.turns.length) return false;
+    var curIdx = -1;
+    if (wfState.selectedTurnId) {
+      for (var i = 0; i < lane.turns.length; i++) {
+        if (lane.turns[i].id === wfState.selectedTurnId) { curIdx = i; break; }
+      }
+    }
+    var next = key === 'j' ? curIdx + 1 : curIdx - 1;
+    next = Math.max(0, Math.min(lane.turns.length - 1, next));
+    var turn = lane.turns[next];
+    wfState.selectedTurnId = turn.id;
+    for (var k2 = 0; k2 < allEntries.length; k2++) {
+      if (allEntries[k2].id === turn.id) { selectTurn(k2); break; }
+    }
+    return true;
+  }
+
+  // Tab / Shift+Tab: cycle lanes
+  if (key === 'Tab') {
+    e.preventDefault();
+    var lanes = wfState.lanes;
+    var curLi = lanes.indexOf(lane);
+    var nextLi = e.shiftKey ? (curLi - 1 + lanes.length) % lanes.length : (curLi + 1) % lanes.length;
+    wfState.selectedLane = lanes[nextLi];
+    wfState.selectedTurnId = null;
+    wfDeferRender();
+    wfRenderAgentCard(lanes[nextLi]);
+    return true;
+  }
+
+  // Esc: zoom reset or back to main lane
+  if (key === 'Escape') {
+    var isZoomed = wfState.viewT0 > wfState.tMin + 100 || wfState.viewT1 < wfState.tMax - 100;
+    if (isZoomed) {
+      wfState.viewT0 = wfState.tMin; wfState.viewT1 = wfState.tMax;
+      wfDeferRender();
+      return true;
+    }
+    if (lane.name !== 'main') {
+      wfState.selectedLane = wfState.lanes[0];
+      wfState.selectedTurnId = null;
+      wfDeferRender();
+      wfRenderAgentCard(wfState.lanes[0]);
+      return true;
+    }
+    return false;
+  }
+
+  return false;
+}
+
 // ── Window Resize ─────────────────────────────────────────────────────────
 var _wfResizeTimer = 0;
 window.addEventListener('resize', function() {
