@@ -658,19 +658,30 @@
 .sysprompt-breadcrumb a:hover { text-decoration: underline; }
 
 /* ── Workflow Swimlane Timeline (#91) ── */
-#wf-timeline { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
-#wf-overview { height: 32px; flex-shrink: 0; border-bottom: 1px solid var(--border); position: relative; }
-#wf-overview canvas { width: 100%; height: 100%; display: block; }
-#wf-main-svg { display: block; flex-shrink: 0; border-bottom: 1px solid var(--border); }
-#wf-sub-scroll { overflow-y: auto; flex: 1; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+/* When workflow is active, col-turns becomes the full-width right area;
+   col-sections and col-detail are hidden (agent card + steps live inside col-turns) */
+#columns.wf-active #col-sections,
+#columns.wf-active #col-detail { display: none; }
+#columns.wf-active #col-turns { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+#columns.wf-active #col-turns .turn-item { display: none !important; }
+#columns.wf-active #col-turns .col-sticky-header { display: none; }
+#wf-timeline { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+#wf-overview { height: 32px; flex-shrink: 0; border-bottom: 1px solid var(--border); position: relative; display: flex; align-items: center; }
+#wf-overview-label { width: 240px; flex-shrink: 0; padding: 0 10px; font-size: 9px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 4px; }
+#wf-overview-label button { background: transparent; border: 1px solid var(--border); color: var(--dim); width: 18px; height: 18px; font-size: 12px; cursor: pointer; border-radius: 2px; display: flex; align-items: center; justify-content: center; padding: 0; }
+#wf-overview-label button:hover { color: var(--text); border-color: var(--dim); }
+#wf-minimap-canvas { flex: 1; min-width: 0; height: 28px; cursor: pointer; display: block; margin: 2px 8px 2px 0; }
+#wf-lanes-section { position: relative; flex-shrink: 0; overflow-y: auto; overflow-x: hidden; transition: max-height 200ms ease; }
+#wf-main-svg { display: block; position: sticky; top: 0; z-index: 5; background: var(--bg); }
+#wf-sub-scroll { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 #wf-sub-scroll::-webkit-scrollbar { width: 4px; }
 #wf-sub-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 #wf-sub-svg { display: block; }
-#wf-resize { height: 4px; cursor: row-resize; background: var(--border); flex-shrink: 0; transition: background 0.15s; }
-#wf-resize:hover { background: var(--accent); }
-#wf-zoom-label { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 9px; color: var(--dim); pointer-events: none; }
-.wf-active .turn-item { display: none !important; }
-.wf-active .col-sticky-header { display: none; }
+#wf-resize { height: 4px; cursor: row-resize; background: var(--bg); flex-shrink: 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); transition: background 0.15s; }
+#wf-resize:hover { background: rgba(88,166,255,0.2); }
+#wf-detail-area { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+#wf-agent-card-panel { width: 240px; flex-shrink: 0; overflow-y: auto; border-right: 1px solid var(--border); background: var(--surface); }
+#wf-steps-panel { flex: 1; overflow-y: auto; min-width: 0; }
 .wf-tooltip { position: fixed; display: none; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; font-size: 11px; color: var(--text); white-space: pre; z-index: 100; pointer-events: none; max-width: 300px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
 .wf-agent-card { padding: 8px 12px; }
 .wf-agent-card .wf-ac-name { font-size: 13px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; }

@@ -299,44 +299,60 @@ function wfRenderTimeline() {
   var container = document.createElement('div');
   container.id = 'wf-timeline';
 
-  // Overview bar
+  // Overview bar: label (240px) + minimap canvas (flex)
   var overviewDiv = document.createElement('div');
   overviewDiv.id = 'wf-overview';
+  var overviewLabel = document.createElement('div');
+  overviewLabel.id = 'wf-overview-label';
+  overviewLabel.innerHTML = '<span>Overview</span><button onclick="wfZoomBy(0.5)">+</button><button onclick="wfZoomBy(2)">−</button><button onclick="wfState.viewT0=wfState.tMin;wfState.viewT1=wfState.tMax;wfDeferRender()">⟲</button>';
+  overviewDiv.appendChild(overviewLabel);
   var canvas = document.createElement('canvas');
   canvas.id = 'wf-minimap-canvas';
   overviewDiv.appendChild(canvas);
   container.appendChild(overviewDiv);
 
-  // Main SVG (sticky: time axis + main lane)
+  // Lanes section (contains sticky main SVG + scrollable sub-lanes)
+  var lanesSection = document.createElement('div');
+  lanesSection.id = 'wf-lanes-section';
   var mainSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   mainSvg.id = 'wf-main-svg';
-  container.appendChild(mainSvg);
-
-  // Sub lanes scroll wrapper
+  lanesSection.appendChild(mainSvg);
   var subScroll = document.createElement('div');
   subScroll.id = 'wf-sub-scroll';
   var subSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   subSvg.id = 'wf-sub-svg';
   subScroll.appendChild(subSvg);
-  container.appendChild(subScroll);
+  lanesSection.appendChild(subScroll);
+  container.appendChild(lanesSection);
 
-  // Resize handle
+  // Resize handle (between timeline and detail)
   var resizeHandle = document.createElement('div');
   resizeHandle.id = 'wf-resize';
   container.appendChild(resizeHandle);
 
+  // Detail area: Agent Card (240px) | Steps Panel (flex)
+  var detailArea = document.createElement('div');
+  detailArea.id = 'wf-detail-area';
+  var agentPanel = document.createElement('div');
+  agentPanel.id = 'wf-agent-card-panel';
+  detailArea.appendChild(agentPanel);
+  var stepsPanel = document.createElement('div');
+  stepsPanel.id = 'wf-steps-panel';
+  detailArea.appendChild(stepsPanel);
+  container.appendChild(detailArea);
+
   colTurns.appendChild(container);
 
-  // P1: content-driven height for sub-scroll
+  // P1: content-driven height for lanes section
   var laneCount = wfState.lanes.length;
-  var subLaneCount = Math.max(0, laneCount - 1);
-  var maxSubH = window.innerHeight * 0.35;
-  var subContentH = WF_PAD + subLaneCount * WF_LANE_H + WF_PAD;
-  subScroll.style.maxHeight = Math.min(subContentH, maxSubH) + 'px';
+  var contentH = WF_PAD + WF_AXIS_H + laneCount * WF_LANE_H + WF_PAD;
+  var maxH = window.innerHeight * 0.45;
+  lanesSection.style.maxHeight = Math.min(contentH, maxH) + 'px';
 
   _wfRenderSvgContent(mainSvg, subSvg, canvas);
   wfSetupInteractions(mainSvg, subSvg);
-  wfInitResize(subScroll, resizeHandle);
+  wfInitResize(lanesSection, resizeHandle);
+  wfRenderAgentCard(wfState.selectedLane);
 }
 
 function _wfRenderSvgContent(mainSvg, subSvg, canvas) {
@@ -754,7 +770,8 @@ function wfHighlightTurn(turnId) {
 
 // ── Agent Card ────────────────────────────────────────────────────────────
 function wfRenderAgentCard(lane) {
-  if (!lane || typeof colSections === 'undefined') return;
+    var agentPanel = document.getElementById('wf-agent-card-panel');
+  if (!lane || !agentPanel) return;
   var summary = wfLaneSummary(lane);
   var color = wfModelColor(lane.model);
   var resolvedColor = WF_MODEL_COLORS[lane.model] || '#8b949e';
@@ -796,7 +813,7 @@ function wfRenderAgentCard(lane) {
   }
 
   html += '</div>';
-  colSections.innerHTML = html;
+  agentPanel.innerHTML = html;
 }
 
 // ── Chart Header (prepended to detail column in timeline view) ────────────

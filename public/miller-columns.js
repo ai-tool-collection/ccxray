@@ -1652,7 +1652,7 @@ function selectProject(name) {
   colDetail.innerHTML = '';
   // Clear workflow timeline
   if (typeof wfState !== 'undefined') wfState = null;
-  colTurns.classList.remove('wf-active');
+  document.getElementById('columns').classList.remove('wf-active');
   var wfEl = document.getElementById('wf-timeline');
   if (wfEl) wfEl.remove();
   renderBreadcrumb();
@@ -1983,6 +1983,13 @@ function selectSessionAndLatestTurn(sid) {
   colTurns.querySelectorAll('.turn-item').forEach(el => {
     el.style.display = (sid && el.dataset.sessionId === sid) ? '' : 'none';
   });
+  // Workflow view
+  var columnsEl = document.getElementById('columns');
+  if (typeof wfBuildState === 'function' && sid) {
+    wfState = wfBuildState(sid);
+    if (wfState) { wfRenderTimeline(); columnsEl.classList.add('wf-active'); }
+    else { columnsEl.classList.remove('wf-active'); }
+  }
   // Auto-select latest turn in this session
   const visible = getVisibleTurnIndices();
   if (visible.length) selectTurn(visible[visible.length - 1]);
@@ -2097,13 +2104,14 @@ function selectSession(id) {
   renderSessionToolBar(id);
   renderSessionSparkline(id);
 
-  // Workflow swimlane view: render timeline in col-turns
+  // Workflow swimlane view: col-turns becomes full-width right area
+  var columnsEl = document.getElementById('columns');
   if (typeof wfBuildState === 'function' && id) {
     wfState = wfBuildState(id);
-    if (wfState) { wfRenderTimeline(); colTurns.classList.add('wf-active'); }
-    else { colTurns.classList.remove('wf-active'); }
+    if (wfState) { wfRenderTimeline(); columnsEl.classList.add('wf-active'); }
+    else { columnsEl.classList.remove('wf-active'); }
   } else {
-    colTurns.classList.remove('wf-active');
+    columnsEl.classList.remove('wf-active');
   }
 
   renderBreadcrumb();
@@ -2536,7 +2544,9 @@ function renderDetailCol() {
     requestAnimationFrame(() => {
       setTimeout(() => {
         if (renderToken !== renderDetailRenderToken) return;
-        colDetail.innerHTML = html;
+        // Workflow mode: redirect detail content to #wf-steps-panel
+        var target = (typeof wfState !== 'undefined' && wfState) ? document.getElementById('wf-steps-panel') : null;
+        (target || colDetail).innerHTML = html;
         requestAnimationFrame(() => {
           if (renderToken !== renderDetailRenderToken) return;
           colDetail.style.opacity = '1';
