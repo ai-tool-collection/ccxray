@@ -911,6 +911,24 @@ function _wfUpdateChartHeader() {
     '<div class="wf-chart-label"><span>Context %</span><span>PEAK ' + peakCtx.toFixed(0) + '%</span></div>' + ctxSvg +
     '<div class="wf-chart-label"><span>Cache hit</span><span>' + cacheHitPct.toFixed(1) + '%</span></div>' + cacheSvg +
     '<div class="wf-chart-label"><span>Cost</span><span>$' + totalCost.toFixed(2) + '</span></div>' + costSvg;
+
+  // Click chart → select nearest turn → bridge to selectTurn
+  el.onclick = function(ev) {
+    if (!vis.length) return;
+    var svgEl = ev.target.closest('svg');
+    if (!svgEl) return;
+    var rect = svgEl.getBoundingClientRect();
+    var mx = (ev.clientX - rect.left) / rect.width * W;
+    var idx = Math.round((mx - 2) / barW);
+    idx = Math.max(0, Math.min(vis.length - 1, idx));
+    var turn = vis[idx];
+    if (!turn) return;
+    wfState.selectedTurnId = turn.id;
+    for (var fi = 0; fi < allEntries.length; fi++) {
+      if (allEntries[fi].id === turn.id) { selectTurn(fi); break; }
+    }
+  };
+  el.style.cursor = 'pointer';
 }
 
 // ── Keyboard Handler (dispatched from keyboard-nav.js) ────────────────────
