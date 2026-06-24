@@ -591,17 +591,22 @@ function wfSetupInteractions(mainSvg, subSvg) {
     svgEl.onmousedown = function(e) {
       var r = svgEl.getBoundingClientRect(), mx = e.clientX - r.left;
 
-      // Click in label area
+      // Click in label area — compute lane index from Y coordinate
       if (mx < WF_LABEL_W) {
-        var target = document.elementFromPoint(e.clientX, e.clientY);
-        if (target?.classList?.contains('wf-lane-bg')) {
-          var li = parseInt(target.getAttribute('data-lane'));
-          if (li >= 0 && li < wfState.lanes.length) {
-            wfState.selectedLane = wfState.lanes[li];
-            wfState.selectedTurnId = null;
-            wfDeferRender();
-            wfRenderAgentCard(wfState.lanes[li]);
-          }
+        var my = e.clientY - r.top;
+        var li = -1;
+        if (svgEl.id === 'wf-main-svg') {
+          // Main SVG: one lane at y = WF_PAD + WF_AXIS_H
+          if (my >= WF_PAD + WF_AXIS_H) li = 0;
+        } else {
+          // Sub SVG: lanes at y = WF_PAD + i * WF_LANE_H
+          li = Math.floor((my - WF_PAD) / WF_LANE_H) + 1;
+        }
+        if (li >= 0 && li < wfState.lanes.length) {
+          wfState.selectedLane = wfState.lanes[li];
+          wfState.selectedTurnId = null;
+          wfDeferRender();
+          wfRenderAgentCard(wfState.lanes[li]);
         }
         return;
       }
