@@ -931,80 +931,84 @@ function _wfSyncStepsHighlight(container) {
 }
 
 // ── Chart Header (renders into #wf-chart-header, synced with viewport) ────
+// Shows ALL turns in lane; viewport range highlighted, out-of-view dimmed.
 function _wfUpdateChartHeader() {
   var el = document.getElementById('wf-chart-header');
   if (!el || !wfState || !wfState.selectedLane) { if (el) el.innerHTML = ''; return; }
   var lane = wfState.selectedLane;
-  if (!lane.turns.length) { el.innerHTML = ''; return; }
-
-  // Filter to viewport
   var turns = lane.turns;
-  var isZoomed = wfState.viewT0 > wfState.tMin + 100 || wfState.viewT1 < wfState.tMax - 100;
-  var vis = isZoomed
-    ? turns.filter(function(t) { return Number(t.receivedAt) >= wfState.viewT0 && Number(t.receivedAt) <= wfState.viewT1; })
-    : turns;
-  if (!vis.length) vis = turns;
+  if (!turns.length) { el.innerHTML = ''; return; }
 
   var ctxH = 40, sparkH = 16;
   var W = el.clientWidth || 600;
-  var barW = Math.max(2, (W - 4) / vis.length);
+  var barW = Math.max(2, (W - 4) / turns.length);
   var gap = Math.min(1, barW * 0.1);
+  var isZoomed = wfState.viewT0 > wfState.tMin + 100 || wfState.viewT1 < wfState.tMax - 100;
 
-  // Cursor line (shared across all 3 charts)
-  var cursorX = -1;
-  if (wfState.selectedTurnId) {
-    for (var si = 0; si < vis.length; si++) {
-      if (vis[si].id === wfState.selectedTurnId) { cursorX = 2 + si * barW + barW / 2; break; }
+  // Viewport range in bar indices (for dimming out-of-view bars)
+  var vpStart = 0, vpEnd = turns.length - 1;
+  if (isZoomed) {
+    for (var vi = 0; vi < turns.length; vi++) {
+      if (Number(turns[vi].receivedAt) >= wfState.viewT0) { vpStart = vi; break; }
+    }
+    for (var ve = turns.length - 1; ve >= 0; ve--) {
+      if (Number(turns[ve].receivedAt) <= wfState.viewT1) { vpEnd = ve; break; }
     }
   }
-  var cursorSvg = cursorX >= 0 ? '<line x1="' + cursorX.toFixed(1) + '" y1="0" x2="' + cursorX.toFixed(1) + '" y2="999" stroke="var(--accent)" stroke-width="1.5" opacity="0.8"/>' : '';
 
-  // Summaries
-  var peakCtx = 0, totalCacheR = 0, totalCacheAll = 0, totalCost = 0;
-  for (var si2 = 0; si2 < vis.length; si2++) {
-    var pct = wfCtxPct(vis[si2]);
+  // Cursor + summaries (computed from ALL turns for stable labels)
+  var cursorX = -1, peakCtx = 0, totalCacheR = 0, totalCacheAll = 0, totalCost = 0;
+  for (var si = 0; si < turns.length; si++) {
+    if (wfState.selectedTurnId && turns[si].id === wfState.selectedTurnId) cursorX = 2 + si * barW + barW / 2;
+    var pct = wfCtxPct(turns[si]);
     if (pct > peakCtx) peakCtx = pct;
-    var u = vis[si2].usage || {};
-    var cr = u.cache_read_input_tokens || 0, cc = u.cache_creation_input_tokens || 0;
-    totalCacheR += cr; totalCacheAll += cr + cc;
-    totalCost += (vis[si2].cost || 0);
+    var u = turns[si].usage || {};
+    totalCacheR += (u.cache_read_input_tokens || 0);
+    totalCacheAll += (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+    totalCost += (turns[si].cost || 0);
   }
   var cacheHitPct = totalCacheAll > 0 ? (totalCacheR / totalCacheAll * 100) : 0;
+  var cursorSvg = cursorX >= 0 ? '<line x1="' + cursorX.toFixed(1) + '" y1="0" x2="' + cursorX.toFixed(1) + '" y2="999" stroke="var(--accent)" stroke-width="1.5" opacity="0.8"/>' : '';
+
+  // Helper: viewport highlight rect (semi-transparent overlay on out-of-view areas)
+  function vpOverlay(h) {
+    if (!isZoomed) return '';
+    var x0 = 2 + vpStart * barW, x1 = 2 + (vpEnd + 1) * barW;
+    return '<rect x="0" y="0" width="' + x0.toFixed(1) + '" height="' + h + '" fill="var(--bg)" opacity="0.6"/>' +
+           '<rect x="' + x1.toFixed(1) + '" y="0" width="' + (W - x1).toFixed(1) + '" height="' + h + '" fill="var(--bg)" opacity="0.6"/>';
+  }
 
   // Context chart
   var ctxSvg = '<svg viewBox="0 0 ' + W + ' ' + ctxH + '" preserveAspectRatio="none" style="width:100%;height:' + ctxH + 'px;display:block">';
-  var thY40 = (ctxH - 2 - 0.4 * (ctxH - 4)).toFixed(1);
-  var thY83 = (ctxH - 2 - 0.835 * (ctxH - 4)).toFixed(1);
-  ctxSvg += '<line x1="0" y1="' + thY40 + '" x2="' + W + '" y2="' + thY40 + '" stroke="var(--green)" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.3"/>';
-  ctxSvg += '<line x1="0" y1="' + thY83 + '" x2="' + W + '" y2="' + thY83 + '" stroke="var(--red)" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.3"/>';
-  for (var ci = 0; ci < vis.length; ci++) {
-    var p = wfCtxPct(vis[ci]);
+  ctxSvg += '<line x1="0" y1="' + (ctxH - 2 - 0.4 * (ctxH - 4)).toFixed(1) + '" x2="' + W + '" y2="' + (ctxH - 2 - 0.4 * (ctxH - 4)).toFixed(1) + '" stroke="var(--green)" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.3"/>';
+  ctxSvg += '<line x1="0" y1="' + (ctxH - 2 - 0.835 * (ctxH - 4)).toFixed(1) + '" x2="' + W + '" y2="' + (ctxH - 2 - 0.835 * (ctxH - 4)).toFixed(1) + '" stroke="var(--red)" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.3"/>';
+  for (var ci = 0; ci < turns.length; ci++) {
+    var p = wfCtxPct(turns[ci]);
     var bH = p / 100 * (ctxH - 4);
     var col = p > 90 ? 'var(--red)' : p > 80 ? 'var(--yellow)' : 'var(--green)';
     ctxSvg += '<rect x="' + (2 + ci * barW).toFixed(1) + '" y="' + (ctxH - 2 - bH).toFixed(1) + '" width="' + Math.max(1, barW - gap).toFixed(1) + '" height="' + bH.toFixed(1) + '" fill="' + col + '" opacity="0.85"/>';
   }
-  ctxSvg += cursorSvg + '</svg>';
+  ctxSvg += vpOverlay(ctxH) + cursorSvg + '</svg>';
 
   // Cache chart
   var cacheSvg = '<svg viewBox="0 0 ' + W + ' ' + sparkH + '" preserveAspectRatio="none" style="width:100%;height:' + sparkH + 'px;display:block">';
-  for (var ki = 0; ki < vis.length; ki++) {
-    var ku = vis[ki].usage || {};
+  for (var ki = 0; ki < turns.length; ki++) {
+    var ku = turns[ki].usage || {};
     var kcr = ku.cache_read_input_tokens || 0, kcc = ku.cache_creation_input_tokens || 0;
     var khit = (kcr + kcc) > 0 ? kcr / (kcr + kcc) : 0;
-    var kbh = khit * (sparkH - 2);
-    cacheSvg += '<rect x="' + (2 + ki * barW).toFixed(1) + '" y="' + (sparkH - 1 - kbh).toFixed(1) + '" width="' + Math.max(1, barW - gap).toFixed(1) + '" height="' + kbh.toFixed(1) + '" fill="' + (khit > 0.5 ? 'var(--green)' : 'var(--yellow)') + '" opacity="0.8"/>';
+    cacheSvg += '<rect x="' + (2 + ki * barW).toFixed(1) + '" y="' + (sparkH - 1 - khit * (sparkH - 2)).toFixed(1) + '" width="' + Math.max(1, barW - gap).toFixed(1) + '" height="' + (khit * (sparkH - 2)).toFixed(1) + '" fill="' + (khit > 0.5 ? 'var(--green)' : 'var(--yellow)') + '" opacity="0.8"/>';
   }
-  cacheSvg += cursorSvg + '</svg>';
+  cacheSvg += vpOverlay(sparkH) + cursorSvg + '</svg>';
 
   // Cost chart
   var maxCost = 0;
-  for (var mi = 0; mi < vis.length; mi++) if ((vis[mi].cost || 0) > maxCost) maxCost = vis[mi].cost;
+  for (var mi = 0; mi < turns.length; mi++) if ((turns[mi].cost || 0) > maxCost) maxCost = turns[mi].cost;
   var costSvg = '<svg viewBox="0 0 ' + W + ' ' + sparkH + '" preserveAspectRatio="none" style="width:100%;height:' + sparkH + 'px;display:block">';
-  for (var oi = 0; oi < vis.length; oi++) {
-    var ch = maxCost > 0 ? (vis[oi].cost || 0) / maxCost * (sparkH - 2) : 0;
+  for (var oi = 0; oi < turns.length; oi++) {
+    var ch = maxCost > 0 ? (turns[oi].cost || 0) / maxCost * (sparkH - 2) : 0;
     costSvg += '<rect x="' + (2 + oi * barW).toFixed(1) + '" y="' + (sparkH - 1 - ch).toFixed(1) + '" width="' + Math.max(1, barW - gap).toFixed(1) + '" height="' + ch.toFixed(1) + '" fill="var(--orange)" opacity="0.8"/>';
   }
-  costSvg += cursorSvg + '</svg>';
+  costSvg += vpOverlay(sparkH) + cursorSvg + '</svg>';
 
   el.innerHTML =
     '<div class="wf-chart-label"><span>Context %</span><span>PEAK ' + peakCtx.toFixed(0) + '%</span></div>' + ctxSvg +
@@ -1014,15 +1018,14 @@ function _wfUpdateChartHeader() {
   // Drag = pan viewport, click = select turn
   el.style.cursor = 'grab';
   el.onmousedown = function(ev) {
-    if (!vis.length) return;
     var startX = ev.clientX, startT0 = wfState.viewT0, startT1 = wfState.viewT1;
     var span = startT1 - startT0;
-    var chartW = el.clientWidth || 600;
+    var chartPxW = el.clientWidth || 600;
     var moved = false;
     var onMove = function(mv) {
       var dx = mv.clientX - startX;
       if (Math.abs(dx) > 3) moved = true;
-      var dt = -(dx / chartW) * span;
+      var dt = -(dx / chartPxW) * span;
       var t0 = startT0 + dt, t1 = startT1 + dt;
       if (t0 < wfState.tMin) { t0 = wfState.tMin; t1 = wfState.tMin + span; }
       if (t1 > wfState.tMax) { t1 = wfState.tMax; t0 = wfState.tMax - span; }
@@ -1033,14 +1036,13 @@ function _wfUpdateChartHeader() {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       if (moved) return;
-      // Click: select nearest turn
       var svgEl = up.target.closest('svg');
       if (!svgEl) return;
       var rect = svgEl.getBoundingClientRect();
       var mx = (up.clientX - rect.left) / rect.width * W;
       var idx = Math.round((mx - 2) / barW);
-      idx = Math.max(0, Math.min(vis.length - 1, idx));
-      var turn = vis[idx];
+      idx = Math.max(0, Math.min(turns.length - 1, idx));
+      var turn = turns[idx];
       if (!turn) return;
       wfState.selectedTurnId = turn.id;
       for (var fi = 0; fi < allEntries.length; fi++) {
