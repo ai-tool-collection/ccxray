@@ -282,11 +282,22 @@ function wfRenderLaneSvg(lane, laneIdx, W, xFn, tRange) {
     if (sts >= wfState.viewT0 - margin && sts <= wfState.viewT1 + margin) vis.push(st);
   }
 
-  // Context sparkline (always shown, WF_CTX_H tall)
+  // Context bar chart (always shown, WF_CTX_H tall, colored by zone)
   var spY = WF_TURN_ROW_H;
-  svg += _wfSparklineArea(vis, spY, WF_CTX_H, color, W, xFn, function(t) { return wfCtxPct(t) / 100; });
-  // Label
-  svg += '<text x="' + (WF_LABEL_W + 4) + '" y="' + (spY + 9) + '" fill="var(--dim)" style="font-size:7px;font-family:' + WF_MONO + '" opacity="0.6">ctx%</text>';
+  // Threshold lines
+  var th40Y = (spY + WF_CTX_H - 0.4 * WF_CTX_H).toFixed(1);
+  var th83Y = (spY + WF_CTX_H - 0.835 * WF_CTX_H).toFixed(1);
+  svg += '<line x1="' + WF_LABEL_W + '" y1="' + th40Y + '" x2="' + W + '" y2="' + th40Y + '" stroke="var(--green)" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.2"/>';
+  svg += '<line x1="' + WF_LABEL_W + '" y1="' + th83Y + '" x2="' + W + '" y2="' + th83Y + '" stroke="var(--red)" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.2"/>';
+  for (var ci3 = 0; ci3 < vis.length; ci3++) {
+    var cp = wfCtxPct(vis[ci3]);
+    var cbH = cp / 100 * WF_CTX_H;
+    var ccol = cp > 90 ? 'var(--red)' : cp > 80 ? 'var(--yellow)' : 'var(--green)';
+    var cx3 = Math.max(WF_LABEL_W, xFn(Number(vis[ci3].receivedAt)));
+    var cw3 = Math.max(WF_MIN_TURN_PX, ci3 < vis.length - 1 ? xFn(Number(vis[ci3 + 1].receivedAt)) - cx3 : 4);
+    svg += '<rect x="' + cx3.toFixed(1) + '" y="' + (spY + WF_CTX_H - cbH).toFixed(1) + '" width="' + Math.min(cw3, 8).toFixed(1) + '" height="' + cbH.toFixed(1) + '" fill="' + ccol + '" opacity="0.8"/>';
+  }
+  svg += '<text x="' + (WF_LABEL_W + 4) + '" y="' + (spY + 9) + '" fill="var(--dim)" style="font-size:7px;font-family:' + WF_MONO + '" opacity="0.5">ctx%</text>';
 
   // Selected lane: add cache hit + cost bar charts
   if (isSel && vis.length) {
