@@ -9,9 +9,9 @@ const WF_MODEL_COLORS = {
   'claude-sonnet-4-6':'#ffa657','claude-haiku-4-5':'#f0883e','claude-haiku-4-5-20251001':'#f0883e',
 };
 const WF_LABEL_W = 240, WF_SPARKLINE_H = 16, WF_TURN_ROW_H = 8, WF_LANE_GAP = 4;
-const WF_CTX_CHART_H = 40, WF_MINI_CHART_H = 16;
+const WF_CTX_CHART_H = 48, WF_MINI_CHART_H = 20, WF_CHART_GAP = 4;
 const WF_LANE_H = WF_TURN_ROW_H + WF_SPARKLINE_H + WF_LANE_GAP;
-const WF_LANE_H_EXPANDED = WF_TURN_ROW_H + WF_CTX_CHART_H + WF_MINI_CHART_H * 2 + WF_LANE_GAP;
+const WF_LANE_H_EXPANDED = WF_TURN_ROW_H + 2 + WF_CTX_CHART_H + WF_CHART_GAP + WF_MINI_CHART_H + 2 + WF_MINI_CHART_H + WF_LANE_GAP;
 const WF_AXIS_H = 18, WF_PAD = 4, WF_MIN_TURN_PX = 1.5;
 const WF_MONO = "'SF Mono','Cascadia Code','Fira Code',monospace";
 
@@ -292,70 +292,74 @@ function wfRenderLaneSvg(lane, laneIdx, W, xFn, tRange) {
   }
   } // end else (unselected sparkline)
 
-  // Selected lane: bar charts (context, cache hit, cost) replacing the sparkline
+  // Selected lane: bar charts (context, cache hit, cost) — Tufte layered separation
   if (isSel && lane.turns.length > 0) {
     var allT = lane.turns;
     var chartW = W - WF_LABEL_W - 12;
     var barW2 = Math.max(2, chartW / allT.length);
     var gap2 = Math.min(1, barW2 * 0.1);
 
-    // Cursor line X
-    var curX = -1;
-    var peakCtx2 = 0, totalCR = 0, totalCA = 0, totalCost2 = 0;
+    // Pre-compute summaries
+    var curX = -1, peakCtx2 = 0, totalCR = 0, totalCA = 0, totalCost2 = 0, maxCost3 = 0;
     for (var ai = 0; ai < allT.length; ai++) {
       if (wfState.selectedTurnId && allT[ai].id === wfState.selectedTurnId) curX = WF_LABEL_W + ai * barW2 + barW2 / 2;
       var ap = wfCtxPct(allT[ai]);
       if (ap > peakCtx2) peakCtx2 = ap;
       var au = allT[ai].usage || {};
       totalCR += (au.cache_read_input_tokens || 0);
-      totalCA += totalCR + (au.cache_creation_input_tokens || 0);
+      totalCA += (au.cache_read_input_tokens || 0) + (au.cache_creation_input_tokens || 0);
       totalCost2 += (allT[ai].cost || 0);
-    }
-    totalCA = 0; totalCR = 0;
-    for (var ai2 = 0; ai2 < allT.length; ai2++) {
-      var au2 = allT[ai2].usage || {};
-      totalCR += (au2.cache_read_input_tokens || 0);
-      totalCA += (au2.cache_read_input_tokens || 0) + (au2.cache_creation_input_tokens || 0);
+      if ((allT[ai].cost || 0) > maxCost3) maxCost3 = allT[ai].cost;
     }
     var cacheHitPct2 = totalCA > 0 ? (totalCR / totalCA * 100) : 0;
     var cursorLine = curX >= 0 ? '<line x1="' + curX.toFixed(1) + '" y1="0" x2="' + curX.toFixed(1) + '" y2="999" stroke="var(--accent)" stroke-width="1.5" opacity="0.8"/>' : '';
 
-    // Context bar chart
-    var ctxY = spY;
+    // ── Context % bar chart (48px) ──
+    var ctxY = spY + 2;
     var ctxH = WF_CTX_CHART_H;
-    svg += '<text x="' + WF_LABEL_W + '" y="' + (ctxY + 8) + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '">Context %</text>';
-    svg += '<text x="' + (W - 4) + '" y="' + (ctxY + 8) + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '" text-anchor="end">PEAK ' + peakCtx2.toFixed(0) + '%</text>';
-    var thY40 = ctxY + ctxH - 0.4 * (ctxH - 10);
-    var thY83 = ctxY + ctxH - 0.835 * (ctxH - 10);
-    svg += '<line x1="' + WF_LABEL_W + '" y1="' + thY83.toFixed(1) + '" x2="' + (W - 4) + '" y2="' + thY83.toFixed(1) + '" stroke="var(--red)" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.3"/>';
-    svg += '<line x1="' + WF_LABEL_W + '" y1="' + thY40.toFixed(1) + '" x2="' + (W - 4) + '" y2="' + thY40.toFixed(1) + '" stroke="var(--green)" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.3"/>';
+    // Labels in left label area
+    svg += '<text x="8" y="' + (ctxY + 10) + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '">Context %</text>';
+    svg += '<text x="8" y="' + (ctxY + 20) + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '">peak ' + peakCtx2.toFixed(0) + '%</text>';
+    // Threshold lines: 40% and 80%
+    var thY40 = ctxY + ctxH - 0.4 * ctxH;
+    var thY80 = ctxY + ctxH - 0.8 * ctxH;
+    svg += '<line x1="' + WF_LABEL_W + '" y1="' + thY80.toFixed(1) + '" x2="' + W + '" y2="' + thY80.toFixed(1) + '" stroke="var(--red)" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.25"/>';
+    svg += '<line x1="' + WF_LABEL_W + '" y1="' + thY40.toFixed(1) + '" x2="' + W + '" y2="' + thY40.toFixed(1) + '" stroke="var(--yellow)" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.25"/>';
+    // Context bars: <40% green (smart), 40-80% gradient to yellow (getting dumb), >80% red (danger)
     for (var bi = 0; bi < allT.length; bi++) {
       var bp = wfCtxPct(allT[bi]);
-      var bh = bp / 100 * (ctxH - 10);
-      var bc = bp > 90 ? 'var(--red)' : bp > 80 ? 'var(--yellow)' : 'var(--green)';
+      var bh = bp / 100 * ctxH;
+      var bc;
+      if (bp > 80) bc = 'var(--red)';
+      else if (bp > 40) bc = 'var(--yellow)';
+      else bc = 'var(--green)';
       svg += '<rect x="' + (WF_LABEL_W + bi * barW2).toFixed(1) + '" y="' + (ctxY + ctxH - bh).toFixed(1) + '" width="' + Math.max(1, barW2 - gap2).toFixed(1) + '" height="' + bh.toFixed(1) + '" fill="' + bc + '" opacity="0.85"/>';
     }
     svg += cursorLine;
+    // Separator
+    svg += '<line x1="' + WF_LABEL_W + '" y1="' + (ctxY + ctxH + 2) + '" x2="' + W + '" y2="' + (ctxY + ctxH + 2) + '" stroke="var(--border)" stroke-width="0.5" opacity="0.3"/>';
 
-    // Cache hit bar chart
-    var cchY = ctxY + ctxH;
-    svg += '<text x="' + WF_LABEL_W + '" y="' + (cchY + 8) + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '">Cache hit</text>';
-    svg += '<text x="' + (W - 4) + '" y="' + (cchY + 8) + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '" text-anchor="end">' + cacheHitPct2.toFixed(1) + '%</text>';
+    // ── Cache hit % bar chart (20px) ──
+    var cchY = ctxY + ctxH + WF_CHART_GAP;
+    svg += '<text x="8" y="' + (cchY + 10) + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '">Cache hit</text>';
+    svg += '<text x="8" y="' + (cchY + 18) + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '">' + cacheHitPct2.toFixed(1) + '%</text>';
     for (var ci2 = 0; ci2 < allT.length; ci2++) {
       var cu2 = allT[ci2].usage || {};
       var cr2 = cu2.cache_read_input_tokens || 0, cc2 = cu2.cache_creation_input_tokens || 0;
-      var ch2 = (cr2 + cc2) > 0 ? cr2 / (cr2 + cc2) : 0;
-      var cbh = ch2 * (WF_MINI_CHART_H - 2);
-      svg += '<rect x="' + (WF_LABEL_W + ci2 * barW2).toFixed(1) + '" y="' + (cchY + WF_MINI_CHART_H - 1 - cbh).toFixed(1) + '" width="' + Math.max(1, barW2 - gap2).toFixed(1) + '" height="' + cbh.toFixed(1) + '" fill="' + (ch2 > 0.5 ? 'var(--green)' : 'var(--yellow)') + '" opacity="0.8"/>';
+      var hitPct = (cr2 + cc2) > 0 ? cr2 / (cr2 + cc2) * 100 : 0;
+      var cbh = hitPct / 100 * (WF_MINI_CHART_H - 2);
+      // <80% red (cache miss danger), >=80% green (healthy)
+      var ccol = hitPct >= 80 ? 'var(--green)' : 'var(--red)';
+      svg += '<rect x="' + (WF_LABEL_W + ci2 * barW2).toFixed(1) + '" y="' + (cchY + WF_MINI_CHART_H - 1 - cbh).toFixed(1) + '" width="' + Math.max(1, barW2 - gap2).toFixed(1) + '" height="' + cbh.toFixed(1) + '" fill="' + ccol + '" opacity="0.8"/>';
     }
     svg += cursorLine;
+    // Separator
+    svg += '<line x1="' + WF_LABEL_W + '" y1="' + (cchY + WF_MINI_CHART_H + 1) + '" x2="' + W + '" y2="' + (cchY + WF_MINI_CHART_H + 1) + '" stroke="var(--border)" stroke-width="0.5" opacity="0.3"/>';
 
-    // Cost bar chart
-    var cosY = cchY + WF_MINI_CHART_H;
-    var maxCost3 = 0;
-    for (var mi3 = 0; mi3 < allT.length; mi3++) if ((allT[mi3].cost || 0) > maxCost3) maxCost3 = allT[mi3].cost;
-    svg += '<text x="' + WF_LABEL_W + '" y="' + (cosY + 8) + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '">Cost</text>';
-    svg += '<text x="' + (W - 4) + '" y="' + (cosY + 8) + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '" text-anchor="end">$' + totalCost2.toFixed(2) + '</text>';
+    // ── Cost bar chart (20px) ──
+    var cosY = cchY + WF_MINI_CHART_H + 2;
+    svg += '<text x="8" y="' + (cosY + 10) + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '">Cost</text>';
+    svg += '<text x="8" y="' + (cosY + 18) + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '">$' + totalCost2.toFixed(2) + '</text>';
     for (var oi2 = 0; oi2 < allT.length; oi2++) {
       var coh = maxCost3 > 0 ? (allT[oi2].cost || 0) / maxCost3 * (WF_MINI_CHART_H - 2) : 0;
       svg += '<rect x="' + (WF_LABEL_W + oi2 * barW2).toFixed(1) + '" y="' + (cosY + WF_MINI_CHART_H - 1 - coh).toFixed(1) + '" width="' + Math.max(1, barW2 - gap2).toFixed(1) + '" height="' + coh.toFixed(1) + '" fill="var(--orange)" opacity="0.8"/>';
