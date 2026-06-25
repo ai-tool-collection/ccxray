@@ -9,9 +9,9 @@ const WF_MODEL_COLORS = {
   'claude-sonnet-4-6':'#ffa657','claude-haiku-4-5':'#f0883e','claude-haiku-4-5-20251001':'#f0883e',
 };
 const WF_LABEL_W = 240, WF_SPARKLINE_H = 16, WF_TURN_ROW_H = 8, WF_LANE_GAP = 4;
-const WF_EXTRA_SPARK_H = 10;
+const WF_CTX_CHART_H = 40, WF_MINI_CHART_H = 16;
 const WF_LANE_H = WF_TURN_ROW_H + WF_SPARKLINE_H + WF_LANE_GAP;
-const WF_LANE_H_EXPANDED = WF_TURN_ROW_H + WF_SPARKLINE_H + WF_EXTRA_SPARK_H * 2 + WF_LANE_GAP;
+const WF_LANE_H_EXPANDED = WF_TURN_ROW_H + WF_CTX_CHART_H + WF_MINI_CHART_H * 2 + WF_LANE_GAP;
 const WF_AXIS_H = 18, WF_PAD = 4, WF_MIN_TURN_PX = 1.5;
 const WF_MONO = "'SF Mono','Cascadia Code','Fira Code',monospace";
 
@@ -262,7 +262,9 @@ function wfRenderLaneSvg(lane, laneIdx, W, xFn, tRange) {
     svg += '<rect x="' + tx.toFixed(1) + '" y="0" width="' + tw.toFixed(1) + '" height="' + WF_TURN_ROW_H + '" fill="' + tc + '" opacity="' + (isTSel ? 1 : 0.85) + '"' + (isTSel ? ' stroke="var(--text)" stroke-width="1"' : '') + ' data-turn-id="' + t.id + '" data-lane="' + laneIdx + '" class="wf-turn-bar" style="cursor:pointer"/>';
   }
 
-  // Sparkline (context % area chart)
+  // Sparkline (context % area chart) — skip for selected lane (bar chart replaces it)
+  if (isSel) { /* bar charts rendered below */ }
+  else {
   var vis = [];
   var margin = tRange * 0.05;
   for (var si = 0; si < lane.turns.length; si++) {
@@ -288,45 +290,77 @@ function wfRenderLaneSvg(lane, laneIdx, W, xFn, tRange) {
   } else if (vis.length === 1) {
     svg += '<circle cx="' + xFn(Number(vis[0].receivedAt)) + '" cy="' + (spY + WF_SPARKLINE_H - (wfCtxPct(vis[0]) / 100) * WF_SPARKLINE_H) + '" r="1.5" fill="' + color + '" opacity="0.6"/>';
   }
+  } // end else (unselected sparkline)
 
-  // Selected lane: extra cache hit + cost sparklines
-  if (isSel && vis.length > 0) {
-    var esY = spY + WF_SPARKLINE_H;
-    // Cache hit sparkline
-    if (vis.length > 1) {
-      var cPts = [];
-      for (var cpi = 0; cpi < vis.length; cpi++) {
-        var cu = vis[cpi].usage || {};
-        var ccr = cu.cache_read_input_tokens || 0, ccc = cu.cache_creation_input_tokens || 0;
-        var chit = (ccr + ccc) > 0 ? ccr / (ccr + ccc) : 0;
-        cPts.push({ x: Math.max(WF_LABEL_W, Math.min(W - 12, xFn(Number(vis[cpi].receivedAt)))), y: esY + WF_EXTRA_SPARK_H - chit * WF_EXTRA_SPARK_H });
-      }
-      var cd = 'M' + cPts[0].x + ',' + (esY + WF_EXTRA_SPARK_H);
-      for (var cdi = 0; cdi < cPts.length; cdi++) cd += ' L' + cPts[cdi].x + ',' + cPts[cdi].y;
-      cd += ' L' + cPts[cPts.length - 1].x + ',' + (esY + WF_EXTRA_SPARK_H) + ' Z';
-      svg += '<path d="' + cd + '" fill="var(--green)" opacity="0.12"/>';
-      var cld = 'M' + cPts[0].x + ',' + cPts[0].y;
-      for (var cli = 1; cli < cPts.length; cli++) cld += ' L' + cPts[cli].x + ',' + cPts[cli].y;
-      svg += '<path d="' + cld + '" fill="none" stroke="var(--green)" stroke-width="0.8" opacity="0.5"/>';
+  // Selected lane: bar charts (context, cache hit, cost) replacing the sparkline
+  if (isSel && lane.turns.length > 0) {
+    var allT = lane.turns;
+    var chartW = W - WF_LABEL_W - 12;
+    var barW2 = Math.max(2, chartW / allT.length);
+    var gap2 = Math.min(1, barW2 * 0.1);
+
+    // Cursor line X
+    var curX = -1;
+    var peakCtx2 = 0, totalCR = 0, totalCA = 0, totalCost2 = 0;
+    for (var ai = 0; ai < allT.length; ai++) {
+      if (wfState.selectedTurnId && allT[ai].id === wfState.selectedTurnId) curX = WF_LABEL_W + ai * barW2 + barW2 / 2;
+      var ap = wfCtxPct(allT[ai]);
+      if (ap > peakCtx2) peakCtx2 = ap;
+      var au = allT[ai].usage || {};
+      totalCR += (au.cache_read_input_tokens || 0);
+      totalCA += totalCR + (au.cache_creation_input_tokens || 0);
+      totalCost2 += (allT[ai].cost || 0);
     }
-    // Cost sparkline
-    var costY = esY + WF_EXTRA_SPARK_H;
-    var maxC = 0;
-    for (var mci = 0; mci < vis.length; mci++) if ((vis[mci].cost || 0) > maxC) maxC = vis[mci].cost;
-    if (vis.length > 1 && maxC > 0) {
-      var oPts = [];
-      for (var opi = 0; opi < vis.length; opi++) {
-        var oh = (vis[opi].cost || 0) / maxC;
-        oPts.push({ x: Math.max(WF_LABEL_W, Math.min(W - 12, xFn(Number(vis[opi].receivedAt)))), y: costY + WF_EXTRA_SPARK_H - oh * WF_EXTRA_SPARK_H });
-      }
-      var od = 'M' + oPts[0].x + ',' + (costY + WF_EXTRA_SPARK_H);
-      for (var odi = 0; odi < oPts.length; odi++) od += ' L' + oPts[odi].x + ',' + oPts[odi].y;
-      od += ' L' + oPts[oPts.length - 1].x + ',' + (costY + WF_EXTRA_SPARK_H) + ' Z';
-      svg += '<path d="' + od + '" fill="var(--orange)" opacity="0.12"/>';
-      var old2 = 'M' + oPts[0].x + ',' + oPts[0].y;
-      for (var oli = 1; oli < oPts.length; oli++) old2 += ' L' + oPts[oli].x + ',' + oPts[oli].y;
-      svg += '<path d="' + old2 + '" fill="none" stroke="var(--orange)" stroke-width="0.8" opacity="0.5"/>';
+    totalCA = 0; totalCR = 0;
+    for (var ai2 = 0; ai2 < allT.length; ai2++) {
+      var au2 = allT[ai2].usage || {};
+      totalCR += (au2.cache_read_input_tokens || 0);
+      totalCA += (au2.cache_read_input_tokens || 0) + (au2.cache_creation_input_tokens || 0);
     }
+    var cacheHitPct2 = totalCA > 0 ? (totalCR / totalCA * 100) : 0;
+    var cursorLine = curX >= 0 ? '<line x1="' + curX.toFixed(1) + '" y1="0" x2="' + curX.toFixed(1) + '" y2="999" stroke="var(--accent)" stroke-width="1.5" opacity="0.8"/>' : '';
+
+    // Context bar chart
+    var ctxY = spY;
+    var ctxH = WF_CTX_CHART_H;
+    svg += '<text x="' + WF_LABEL_W + '" y="' + (ctxY + 8) + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '">Context %</text>';
+    svg += '<text x="' + (W - 4) + '" y="' + (ctxY + 8) + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '" text-anchor="end">PEAK ' + peakCtx2.toFixed(0) + '%</text>';
+    var thY40 = ctxY + ctxH - 0.4 * (ctxH - 10);
+    var thY83 = ctxY + ctxH - 0.835 * (ctxH - 10);
+    svg += '<line x1="' + WF_LABEL_W + '" y1="' + thY83.toFixed(1) + '" x2="' + (W - 4) + '" y2="' + thY83.toFixed(1) + '" stroke="var(--red)" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.3"/>';
+    svg += '<line x1="' + WF_LABEL_W + '" y1="' + thY40.toFixed(1) + '" x2="' + (W - 4) + '" y2="' + thY40.toFixed(1) + '" stroke="var(--green)" stroke-width="0.5" stroke-dasharray="3 2" opacity="0.3"/>';
+    for (var bi = 0; bi < allT.length; bi++) {
+      var bp = wfCtxPct(allT[bi]);
+      var bh = bp / 100 * (ctxH - 10);
+      var bc = bp > 90 ? 'var(--red)' : bp > 80 ? 'var(--yellow)' : 'var(--green)';
+      svg += '<rect x="' + (WF_LABEL_W + bi * barW2).toFixed(1) + '" y="' + (ctxY + ctxH - bh).toFixed(1) + '" width="' + Math.max(1, barW2 - gap2).toFixed(1) + '" height="' + bh.toFixed(1) + '" fill="' + bc + '" opacity="0.85"/>';
+    }
+    svg += cursorLine;
+
+    // Cache hit bar chart
+    var cchY = ctxY + ctxH;
+    svg += '<text x="' + WF_LABEL_W + '" y="' + (cchY + 8) + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '">Cache hit</text>';
+    svg += '<text x="' + (W - 4) + '" y="' + (cchY + 8) + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '" text-anchor="end">' + cacheHitPct2.toFixed(1) + '%</text>';
+    for (var ci2 = 0; ci2 < allT.length; ci2++) {
+      var cu2 = allT[ci2].usage || {};
+      var cr2 = cu2.cache_read_input_tokens || 0, cc2 = cu2.cache_creation_input_tokens || 0;
+      var ch2 = (cr2 + cc2) > 0 ? cr2 / (cr2 + cc2) : 0;
+      var cbh = ch2 * (WF_MINI_CHART_H - 2);
+      svg += '<rect x="' + (WF_LABEL_W + ci2 * barW2).toFixed(1) + '" y="' + (cchY + WF_MINI_CHART_H - 1 - cbh).toFixed(1) + '" width="' + Math.max(1, barW2 - gap2).toFixed(1) + '" height="' + cbh.toFixed(1) + '" fill="' + (ch2 > 0.5 ? 'var(--green)' : 'var(--yellow)') + '" opacity="0.8"/>';
+    }
+    svg += cursorLine;
+
+    // Cost bar chart
+    var cosY = cchY + WF_MINI_CHART_H;
+    var maxCost3 = 0;
+    for (var mi3 = 0; mi3 < allT.length; mi3++) if ((allT[mi3].cost || 0) > maxCost3) maxCost3 = allT[mi3].cost;
+    svg += '<text x="' + WF_LABEL_W + '" y="' + (cosY + 8) + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '">Cost</text>';
+    svg += '<text x="' + (W - 4) + '" y="' + (cosY + 8) + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '" text-anchor="end">$' + totalCost2.toFixed(2) + '</text>';
+    for (var oi2 = 0; oi2 < allT.length; oi2++) {
+      var coh = maxCost3 > 0 ? (allT[oi2].cost || 0) / maxCost3 * (WF_MINI_CHART_H - 2) : 0;
+      svg += '<rect x="' + (WF_LABEL_W + oi2 * barW2).toFixed(1) + '" y="' + (cosY + WF_MINI_CHART_H - 1 - coh).toFixed(1) + '" width="' + Math.max(1, barW2 - gap2).toFixed(1) + '" height="' + coh.toFixed(1) + '" fill="var(--orange)" opacity="0.8"/>';
+    }
+    svg += cursorLine;
   }
 
   return svg;
@@ -473,7 +507,7 @@ function wfDeferRender() {
   });
 }
 
-// ── Overview Bar (Canvas) — selected lane's context bar chart ─────────────
+// ── Overview Bar (Canvas) ─────────────────────────────────────────────────
 function wfRenderOverview(canvas) {
   if (!wfState || !canvas) return;
   var MW = canvas.clientWidth, MH = canvas.clientHeight;
@@ -481,75 +515,75 @@ function wfRenderOverview(canvas) {
   canvas.width = MW * 2; canvas.height = MH * 2;
   var ctx = canvas.getContext('2d');
   ctx.scale(2, 2);
+  var totalRange = wfState.tMax - wfState.tMin || 1;
+  var x = function(t) { return ((t - wfState.tMin) / totalRange) * MW; };
 
+  // ponytail: canvas can't resolve CSS vars; cache computed values (invalidated on theme change)
   var c = _wfGetCssColors();
-  ctx.fillStyle = c.surface;
+  var surfaceColor = c.surface, dimColor = c.dim, accentColor = c.accent, bgColor = c.bg;
+
+  ctx.fillStyle = surfaceColor;
   ctx.fillRect(0, 0, MW, MH);
 
-  var lane = wfState.selectedLane;
-  var turns = lane ? lane.turns : [];
-  if (!turns.length) return;
+  var lanes = wfState.lanes;
+  var barH = Math.max(2, Math.min(6, (MH - 4) / lanes.length - 1));
+  var laneStep = barH + 1;
+  var startY = Math.max(1, (MH - lanes.length * laneStep) / 2);
 
-  var barW = Math.max(1, MW / turns.length);
-  var gap = Math.min(0.5, barW * 0.1);
-
-  // Context % bars (green/yellow/red zones)
-  for (var i = 0; i < turns.length; i++) {
-    var pct = wfCtxPct(turns[i]);
-    var bH = pct / 100 * (MH - 2);
-    var col = pct > 90 ? '#f85149' : pct > 80 ? '#d29922' : '#3fb950';
-    ctx.fillStyle = col;
-    ctx.globalAlpha = 0.85;
-    ctx.fillRect(i * barW, MH - 1 - bH, Math.max(0.5, barW - gap), bH);
+  for (var li = 0; li < lanes.length; li++) {
+    var ly = startY + li * laneStep;
+    var color = wfModelColor(lanes[li].model);
+    // ponytail: canvas can't use CSS vars for fill, resolve model colors directly
+    var fillColor = WF_MODEL_COLORS[lanes[li].model] || dimColor;
+    var isSel = wfState.selectedLane?.name === lanes[li].name;
+    for (var ti = 0; ti < lanes[li].turns.length; ti++) {
+      var t = lanes[li].turns[ti];
+      var ts = Number(t.receivedAt) || 0;
+      var dur = (parseFloat(t.elapsed) || 0) * 1000;
+      ctx.fillStyle = fillColor;
+      ctx.globalAlpha = isSel ? 0.9 : 0.5;
+      ctx.fillRect(x(ts), ly, Math.max(0.5, (dur / totalRange) * MW), barH);
+    }
   }
   ctx.globalAlpha = 1;
 
-  // Cursor for selected turn
-  if (wfState.selectedTurnId) {
-    for (var ci = 0; ci < turns.length; ci++) {
-      if (turns[ci].id === wfState.selectedTurnId) {
-        var cx = ci * barW + barW / 2;
-        ctx.strokeStyle = c.accent;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, MH); ctx.stroke();
-        break;
-      }
-    }
-  }
+  // Scale labels
+  ctx.font = '8px SF Mono,Menlo,monospace';
+  ctx.fillStyle = dimColor;
+  ctx.globalAlpha = 0.7;
+  ctx.fillText('0', 2, MH - 2);
+  var endLabel = wfFmtDur(totalRange);
+  ctx.fillText(endLabel, MW - ctx.measureText(endLabel).width - 2, MH - 2);
+  ctx.globalAlpha = 1;
 
-  // Viewport overlay when zoomed
+  // Viewport rect when zoomed
   var isZoomed = wfState.viewT0 > wfState.tMin + 100 || wfState.viewT1 < wfState.tMax - 100;
   if (isZoomed) {
-    // Find bar index range for viewport
-    var totalRange = wfState.tMax - wfState.tMin || 1;
-    var vpX0 = ((wfState.viewT0 - wfState.tMin) / totalRange) * MW;
-    var vpX1 = ((wfState.viewT1 - wfState.tMin) / totalRange) * MW;
-    var vw = Math.max(2, vpX1 - vpX0);
+    var vx = x(wfState.viewT0), vw = Math.max(2, x(wfState.viewT1) - vx);
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(0, 0, vpX0, MH);
-    ctx.fillRect(vpX0 + vw, 0, MW - vpX0 - vw, MH);
-    ctx.strokeStyle = c.accent;
+    ctx.fillRect(0, 0, vx, MH);
+    ctx.fillRect(vx + vw, 0, MW - vx - vw, MH);
+    ctx.strokeStyle = accentColor;
     ctx.lineWidth = 1.5;
-    ctx.strokeRect(vpX0 + 0.5, 0.5, vw, MH - 1);
+    ctx.strokeRect(vx + 0.5, 0.5, vw, MH - 1);
     // Duration badge
     var vpLabel = wfFmtDur(wfState.viewT1 - wfState.viewT0);
     ctx.font = '8px SF Mono,Menlo,monospace';
     var lw = ctx.measureText(vpLabel).width;
-    var lx = vpX0 + vw - lw - 1, lly = MH - 10;
-    ctx.fillStyle = c.accent; ctx.globalAlpha = 0.85;
+    var lx = vx + vw - lw - 1, lly = MH - 10;
+    ctx.fillStyle = accentColor; ctx.globalAlpha = 0.85;
     ctx.beginPath(); ctx.roundRect(lx - 3, lly - 1, lw + 6, 11, 2); ctx.fill();
-    ctx.fillStyle = c.bg; ctx.globalAlpha = 1;
+    ctx.fillStyle = bgColor; ctx.globalAlpha = 1;
     ctx.fillText(vpLabel, lx, lly + 8);
     ctx.globalAlpha = 1;
   }
 
-  _wfSetupMinimapInteractions(canvas, MW, MH, turns, isZoomed);
+  // Minimap interactions
+  _wfSetupMinimapInteractions(canvas, MW, MH, totalRange, x, isZoomed);
 }
 
-function _wfSetupMinimapInteractions(canvas, MW, MH, turns, isZoomed) {
+function _wfSetupMinimapInteractions(canvas, MW, MH, totalRange, x, isZoomed) {
   var EDGE_PX = 6;
-  var totalRange = wfState.tMax - wfState.tMin || 1;
-  var x = function(t) { return ((t - wfState.tMin) / totalRange) * MW; };
   canvas.style.cursor = isZoomed ? 'grab' : 'crosshair';
 
   canvas.onmousemove = isZoomed ? function(e) {
@@ -608,24 +642,11 @@ function _wfSetupMinimapInteractions(canvas, MW, MH, turns, isZoomed) {
     var onMoveB = function(ev) {
       brushEnd = Math.max(wfState.tMin, Math.min(wfState.tMax, pxToTime(ev.clientX)));
     };
-    var onUpB = function(upEv) {
+    var onUpB = function() {
       window.removeEventListener('mousemove', onMoveB);
       window.removeEventListener('mouseup', onUpB);
       var t0 = Math.min(brushStart, brushEnd), t1 = Math.max(brushStart, brushEnd);
-      if (t1 - t0 > 1000) {
-        wfState.viewT0 = t0; wfState.viewT1 = t1;
-      } else if (turns.length) {
-        // Click (no drag): select nearest turn
-        var rect = canvas.getBoundingClientRect();
-        var mx = (upEv.clientX - rect.left) / rect.width * MW;
-        var barW = MW / turns.length;
-        var idx = Math.round(mx / barW - 0.5);
-        idx = Math.max(0, Math.min(turns.length - 1, idx));
-        wfState.selectedTurnId = turns[idx].id;
-        for (var fi = 0; fi < allEntries.length; fi++) {
-          if (allEntries[fi].id === turns[idx].id) { selectTurn(fi); break; }
-        }
-      }
+      if (t1 - t0 > 1000) { wfState.viewT0 = t0; wfState.viewT1 = t1; }
       wfDeferRender();
     };
     window.addEventListener('mousemove', onMoveB);
