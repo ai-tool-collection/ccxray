@@ -411,7 +411,7 @@ function wfRenderTimeline() {
   wfInitResize(lanesSection, resizeHandle);
   wfRenderAgentCard(wfState.selectedLane);
   // ponytail: charts now inline in selected lane SVG, no separate header
-  wfRenderSteps();
+  wfRenderCurrentSection();
 }
 
 function _wfRenderSvgContent(mainSvg, subSvg, canvas) {
@@ -669,7 +669,7 @@ function wfSetupInteractions(mainSvg, subSvg) {
           wfState.selectedTurnId = null;
           wfDeferRender();
           wfRenderAgentCard(wfState.lanes[li]);
-          wfRenderSteps();
+          wfRenderCurrentSection();
         }
         return;
       }
@@ -719,7 +719,7 @@ function wfSetupInteractions(mainSvg, subSvg) {
             wfState.selectedTurnId = null;
             wfDeferRender();
             wfRenderAgentCard(wfState.lanes[li]);
-            wfRenderSteps();
+            wfRenderCurrentSection();
           }
         }
       };
@@ -844,7 +844,9 @@ function wfHighlightTurn(turnId) {
     }
   }
   wfDeferRender();
-  wfRenderSteps(turnId);
+  // ponytail: don't call wfRenderCurrentSection here — selectTurn already triggers renderDetailCol
+  // which writes to #wf-steps-content via commitDetailHtml redirect. Calling it here causes
+  // selectTurn → wfHighlightTurn → wfRenderCurrentSection → selectTurn → infinite recursion.
 }
 
 // ── Agent Card ────────────────────────────────────────────────────────────
@@ -921,11 +923,7 @@ function wfSelectSection(name) {
       el.classList.toggle('wf-ac-nav-active', el.getAttribute('data-section') === name);
     });
   }
-  if (name === 'timeline') {
-    wfRenderSteps();
-    return;
-  }
-  // Non-timeline: set global selectedSection first, then selectTurn triggers renderDetailCol
+  // All sections (including timeline) route through selectTurn → renderDetailCol → #wf-steps-content
   var lane = wfState.selectedLane;
   if (!lane || !lane.turns.length) return;
   var tid = wfState.selectedTurnId || lane.turns[lane.turns.length - 1].id;
@@ -935,7 +933,19 @@ function wfSelectSection(name) {
   }
 }
 
-// ── Steps Panel (flat turn list for selected lane, prototype-style) ───────
+// Render current section into #wf-steps-content (selectTurn → renderDetailCol redirect)
+function wfRenderCurrentSection() {
+  if (!wfState) return;
+  var lane = wfState.selectedLane;
+  if (!lane || !lane.turns.length) return;
+  var tid = wfState.selectedTurnId || lane.turns[lane.turns.length - 1].id;
+  selectedSection = wfState.selectedSection || 'timeline';
+  for (var i = 0; i < allEntries.length; i++) {
+    if (allEntries[i].id === tid) { selectTurn(i); break; }
+  }
+}
+
+// ── Steps Panel (flat turn list — kept for reference but no longer the default) ──
 var WF_IDLE_THRESHOLD = 300000;
 function wfRenderSteps(scrollToId) {
   var el = document.getElementById('wf-steps-content');
@@ -1063,7 +1073,7 @@ function wfKeyHandler(key, e) {
     wfState.selectedTurnId = null;
     wfDeferRender();
     wfRenderAgentCard(lanes[nextLi]);
-    wfRenderSteps();
+    wfRenderCurrentSection();
     return true;
   }
 

@@ -2548,8 +2548,8 @@ function renderDetailCol() {
     requestAnimationFrame(() => {
       setTimeout(() => {
         if (renderToken !== renderDetailRenderToken) return;
-        // Workflow mode: redirect non-timeline sections to #wf-steps-content
-        var target = (typeof wfState !== 'undefined' && wfState && wfState.selectedSection && wfState.selectedSection !== 'timeline')
+        // Workflow mode: redirect all sections (including timeline) to #wf-steps-content
+        var target = (typeof wfState !== 'undefined' && wfState && wfState.selectedSection)
           ? document.getElementById('wf-steps-content') : null;
         (target || colDetail).innerHTML = html;
         requestAnimationFrame(() => {
