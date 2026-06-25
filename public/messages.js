@@ -702,8 +702,11 @@ function selectStep(stepIdx, sub) {
   else selectedMessageIdx = stepIdx * 1000;
 
   // Split pane: update list highlights + detail pane
-  const listEl = colDetail.querySelector('.tl-scroll-area');
-  const detailEl = colDetail.querySelector('.tl-split-detail');
+  // In workflow mode, focused timeline renders into #wf-steps-content, not colDetail
+  var _stepRoot = (typeof wfState !== 'undefined' && wfState && wfState.selectedSection)
+    ? (document.getElementById('wf-steps-content') || colDetail) : colDetail;
+  const listEl = _stepRoot.querySelector('.tl-scroll-area');
+  const detailEl = _stepRoot.querySelector('.tl-split-detail');
   if (listEl) {
     listEl.querySelectorAll('.tl-step-summary').forEach(el => {
       el.classList.remove('active');
@@ -723,7 +726,7 @@ function selectStep(stepIdx, sub) {
   }
 
   // Minimap active state — shared by both modes (step-level, not sub-item)
-  const mm = colDetail.querySelector('.minimap');
+  const mm = _stepRoot.querySelector('.minimap');
   if (mm) {
     mm.querySelectorAll('.minimap-block').forEach(b =>
       b.classList.toggle('mm-active', b.dataset.step === String(stepIdx)));

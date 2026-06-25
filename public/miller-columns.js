@@ -2187,7 +2187,8 @@ function selectTurn(idx, opts) {
   if (idx < 0 || idx >= allEntries.length) return;
   if (typeof hideNewTurnPill === 'function') hideNewTurnPill();
   // Exit focused mode when switching turns — user is browsing, not drilling into timeline
-  if (isFocusedMode) {
+  // In workflow mode, keep focused mode (timeline stays in split-pane view)
+  if (isFocusedMode && !(typeof wfState !== 'undefined' && wfState)) {
     isFocusedMode = false;
     document.getElementById('columns').classList.remove('focused');
   }
@@ -2662,8 +2663,11 @@ function renderDetailCol() {
         + '</div>';
       commitDetailHtml(focusedHtml, function() {
         requestAnimationFrame(() => {
-          const mm = colDetail.querySelector('.minimap');
-          const sa = colDetail.querySelector('.tl-scroll-area');
+          // In workflow mode, focused timeline renders into #wf-steps-content
+          var _root = (typeof wfState !== 'undefined' && wfState && wfState.selectedSection)
+            ? (document.getElementById('wf-steps-content') || colDetail) : colDetail;
+          const mm = _root.querySelector('.minimap');
+          const sa = _root.querySelector('.tl-scroll-area');
           if (mm && sa) { layoutMinimapBlocks(mm); initMinimapInteractions(mm, sa); }
           if (typeof renderCmdBar === 'function') renderCmdBar();
         });
@@ -2742,8 +2746,10 @@ function renderDetailCol() {
   commitDetailHtml(headerHtml + '<div class="detail-scroll"' + scrollStyle + '>' + inner + '</div>', function() {
     if (selectedSection === 'timeline') {
       requestAnimationFrame(() => {
-        const mm = colDetail.querySelector('.minimap');
-        const sa = colDetail.querySelector('.tl-scroll-area');
+        var _root2 = (typeof wfState !== 'undefined' && wfState && wfState.selectedSection)
+          ? (document.getElementById('wf-steps-content') || colDetail) : colDetail;
+        const mm = _root2.querySelector('.minimap');
+        const sa = _root2.querySelector('.tl-scroll-area');
         if (mm && sa) { layoutMinimapBlocks(mm); initMinimapInteractions(mm, sa); }
       });
     }

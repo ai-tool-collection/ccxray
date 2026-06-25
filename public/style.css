@@ -86,9 +86,11 @@
   /* Focused mode: collapse all columns except detail */
   #columns.focused #col-projects,
   #columns.focused #col-sessions,
-  #columns.focused #col-turns,
   #columns.focused #col-sections { display: none; }
+  #columns.focused #col-turns { display: none; }
   #columns.focused #col-detail { flex: 1; }
+  /* Workflow focused: col-turns hosts the swimlane, keep it visible */
+  #columns.focused.wf-active #col-turns { display: flex; flex: 1; }
 
   /* Expand button in detail header */
   .expand-btn { cursor: pointer; color: var(--dim); font-size: 14px; padding: 2px 4px; border-radius: 3px; transition: color 0.1s, background 0.1s; }
@@ -698,7 +700,11 @@
 .wf-agent-card .wf-ac-nav-item:hover { background: var(--surface-hover); color: var(--text); }
 .wf-agent-card .wf-ac-nav-active { background: var(--surface-active); color: var(--text); }
 .wf-agent-card .wf-ac-nav-badge { font-size: 10px; color: var(--dim); }
-#wf-steps-content { flex: 1; overflow-y: auto; }
+#wf-steps-content { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+/* Focused timeline inside workflow: header stays fixed, split pane fills remaining space */
+#wf-steps-content > .fp-header,
+#wf-steps-content > .col-header { flex-shrink: 0; }
+#wf-steps-content > .tl-split { flex: 1; min-height: 0; }
 @media (pointer: coarse) {
   #wf-resize { height: 16px; }
   #wf-resize::after { content: ''; display: block; width: 24px; height: 3px; background: var(--dim); border-radius: 2px; margin: 6px auto; }
