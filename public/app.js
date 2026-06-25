@@ -18,6 +18,10 @@ function switchTab(tab, forceDiff) {
 
   // Show/hide content areas
   document.getElementById('columns').style.display = tab === 'dashboard' ? '' : 'none';
+  // Clear focused mode when returning to dashboard — prevents empty screen
+  if (tab === 'dashboard' && typeof exitFocusedMode === 'function' && typeof isFocusedMode !== 'undefined' && isFocusedMode) {
+    exitFocusedMode();
+  }
   const costPage = document.getElementById('cost-page');
   const diffOverlay = document.getElementById('diff-overlay');
   if (tab === 'usage') {
