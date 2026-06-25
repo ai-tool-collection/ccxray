@@ -539,6 +539,21 @@ function wfRenderOverview(canvas) {
   ctx.fillText(endLabel, MW - ctx.measureText(endLabel).width - 2, MH - 2);
   ctx.globalAlpha = 1;
 
+  // Selected turn marker
+  if (wfState.selectedTurnId) {
+    for (var sti = 0; sti < wfState.lanes.length; sti++) {
+      for (var stj = 0; stj < wfState.lanes[sti].turns.length; stj++) {
+        if (wfState.lanes[sti].turns[stj].id === wfState.selectedTurnId) {
+          var stx = x(Number(wfState.lanes[sti].turns[stj].receivedAt));
+          ctx.fillStyle = accentColor; ctx.globalAlpha = 0.9;
+          ctx.fillRect(stx - 0.5, 0, 2, MH);
+          ctx.globalAlpha = 1;
+          break;
+        }
+      }
+    }
+  }
+
   // Viewport rect when zoomed
   var isZoomed = wfState.viewT0 > wfState.tMin + 100 || wfState.viewT1 < wfState.tMax - 100;
   if (isZoomed) {
@@ -722,14 +737,27 @@ function wfSetupInteractions(mainSvg, subSvg) {
               if (allEntries[k].id === tid) { selectTurn(k); break; }
             }
           }
-        } else if (target?.classList?.contains('wf-lane-bg')) {
-          var li = parseInt(target.getAttribute('data-lane'));
-          if (li >= 0 && li < wfState.lanes.length) {
-            wfState.selectedLane = wfState.lanes[li];
-            wfState.selectedTurnId = null;
-            wfDeferRender();
-            wfRenderAgentCard(wfState.lanes[li]);
-            wfRenderSteps();
+        } else {
+          // Fallback: click on chart bars or empty space → find nearest turn by time
+          var clickR = svgEl.getBoundingClientRect();
+          var clickMx = ev.clientX - clickR.left;
+          if (clickMx >= WF_LABEL_W && wfState.selectedLane) {
+            var clickTime = wfState.viewT0 + ((clickMx - WF_LABEL_W) / chartW) * (wfState.viewT1 - wfState.viewT0);
+            var bestTurn = null, bestDist = Infinity;
+            for (var bi = 0; bi < wfState.selectedLane.turns.length; bi++) {
+              var bt = wfState.selectedLane.turns[bi];
+              var bd = Math.abs(Number(bt.receivedAt) - clickTime);
+              if (bd < bestDist) { bestDist = bd; bestTurn = bt; }
+            }
+            if (bestTurn) {
+              wfState.selectedTurnId = bestTurn.id;
+              wfDeferRender();
+              wfRenderAgentCard(wfState.selectedLane);
+              for (var bk = 0; bk < allEntries.length; bk++) {
+                if (allEntries[bk].id === bestTurn.id) { selectTurn(bk); break; }
+              }
+              wfRenderSteps(bestTurn.id);
+            }
           }
         }
       };
