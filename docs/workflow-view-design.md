@@ -12,17 +12,21 @@ All code, comments, and discussions use these names consistently.
 │          │              │ Overview Bar          Duration Badge  + − ⟲   │
 │          │              │ ░░░░░░[Viewport Rect]░░░░░  Scale Labels      │
 │ Projects │ Sessions     ├── Timeline Header (STICKY) ────────────────────┤
-│ Column   │ Column       │  Lane Label │ Turn Bars ▕▕▕  Sparkline ▁▂▃▅  │
+│ Column   │ Column       │  Lane Label │ Turn Bars ▕▕▕  Ctx Sparkline   │
 │          │              ├── Sub-lanes (SCROLLABLE) ──────────────────────┤
-│          │              │  Lane Label │ Turn Bars ▕▕  Spawn Connector ╲ │
-│          │              │  Lane Label │ Turn Bars ▕▕▕  Sparkline ▁▂    │
+│          │              │  Lane Label │ Turn Bars ▕▕▕  Ctx Sparkline   │
+│          │              │  Lane Label │ Turn Bars ▕▕  ← SELECTED:      │
+│          │              │             │  Ctx Sparkline ▁▂▃▅ (28px)      │
+│          │              │             │  Cache Hit ▃▅▅▅ (20px)          │
+│          │              │             │  Cost ▁▂▃▁ (20px)               │
+│          │              │  Lane Label │ Turn Bars ▕▕▕  Ctx Sparkline   │
 │          │              ├══ Resize Handle ═══════════════════════════════┤
 │          │              │ ┌ Agent Card ────┐ ┌ Steps Panel ─────────────┤
 │          │              │ │ Color Bar ▎    │ │ Step Row                 │
-│          │              │ │ Context Chart  │ │  ┌ Tool Group (brackets) │
-│          │              │ │  Idle Gap ⏸    │ │  └ Spawn Badge           │
-│          │              │ │ Cache Chart    │ │ Idle Separator ⏸ 10m     │
-│          │              │ │ Cost Chart     │ │ Step Row (ctx% colored)  │
+│          │              │ │ Context stats  │ │  ┌ Tool Group (brackets) │
+│          │              │ │ Cache stats    │ │  └ Spawn Badge           │
+│          │              │ │ Cost stats     │ │ Idle Separator ⏸ 10m     │
+│          │              │ │ Tool summary   │ │ Step Row (ctx% colored)  │
 │          │              │ └────────────────┘ └──────────────────────────┤
 ├── Bottom Bar ────────────────────────────────────────────────────────────┤
 └──────────────────────────────────────────────────────────────────────────┘
@@ -41,19 +45,17 @@ All code, comments, and discussions use these names consistently.
 | **Scale Labels** | — (canvas drawing) | Time markers at 0 / midpoint / end in Overview Bar. |
 | **Timeline Header** | `#timeline-header` | Sticky container for time axis + Main Lane. Never scrolls away. |
 | **Sub-lanes** | `#macro-svg` | Scrollable SVG containing all agent lanes except main. |
-| **Lane** | — (SVG group) | One horizontal row representing a single agent. Contains Turn Bars + Sparkline. |
+| **Lane** | — (SVG group) | One horizontal row representing a single agent. Unselected: 40px (turn bars + context sparkline). Selected: 80px (adds cache hit + cost charts). |
 | **Lane Label** | `.lane-label` | Agent name + model + context window shown left of each Lane (240px). |
-| **Turn Bar** | `.turn-bar` | Colored rectangle in a Lane. Width ∝ elapsed duration, color = model. |
-| **Sparkline** | — (SVG path) | 16px area chart below Turn Bars showing context % over time. |
+| **Turn Bar** | `.wf-turn-bar` | Colored rectangle in a Lane. Width ∝ elapsed duration, color = model. |
+| **Context Sparkline** | — (SVG path) | 28px area chart below Turn Bars showing context % over time. Always visible on all lanes. |
+| **Cache Hit Chart** | — (SVG rects) | 20px bar chart showing per-turn cache hit ratio. Only visible on the **selected** lane. Green (≥50%), yellow (<50%). |
+| **Cost Chart** | — (SVG rects) | 20px bar chart showing per-turn cost. Only visible on the **selected** lane. Orange bars, height ∝ turn cost. |
 | **Spawn Connector** | `.spawn-line` | 0.5px gray line from parent Turn Bar to child Lane's first turn. |
-| **Resize Handle** | `#resize-handle` | 4px draggable divider between timeline and Detail Area. |
-| **Agent Card** | `#agent-card` | Left panel (240px) in Detail Area. Shows selected agent's summary + charts. |
+| **Resize Handle** | `#wf-resize` | 4px draggable divider between timeline and Detail Area. |
+| **Agent Card** | `#wf-agent-card-panel` | Left panel (240px) in Detail Area. Text-only summary: context stats, cache hit rate, cost, tool frequency. |
 | **Color Bar** | — (inline style) | 2px left border on Agent Card in the agent's model color. |
-| **Context Chart** | `#ctx-minimap` | Bar chart in Agent Card. Three zone colors: green (<40%), yellow (40-83.5%), red (>83.5%). |
-| **Cache Chart** | `#cache-spark` | Bar chart in Agent Card. Green (≥50% hit), yellow (<50% hit). |
-| **Cost Chart** | `#cost-spark` | Bar chart in Agent Card. Orange bars, height ∝ turn cost. |
-| **Idle Gap Marker** | — (canvas drawing) | Amber dashed vertical line in charts where idle > 5 min (cache TTL). |
-| **Steps Panel** | `#timeline-steps` | Right panel in Detail Area. Scrollable list of turns for selected agent. |
+| **Steps Panel** | `#wf-steps-content` | Right panel in Detail Area. Scrollable flat list of all turns for selected agent. |
 | **Step Row** | `.step-row` | One turn's display in Steps Panel. Star + #num + model + Tool Group + ctx% + duration. |
 | **Tool Group** | `.step-tools` | Vertical list of tool calls with ┌│└ brackets when multiple. |
 | **Spawn Badge** | `.spawn-badge` | `⑂ agent-name` marker in a Tool Group indicating an Agent spawn. |
@@ -355,23 +357,24 @@ timelineH = clamp(MIN_H, laneCount × LANE_H + AXIS_H + PAD, 45vh)
 - CSS `transition: max-height 200ms ease` for smooth spawn-time growth
 - Resize handle override preserved — user drag takes priority
 
-### P2: Charts Detach to Steps Panel Header (score 9.1)
+### P2: Charts Inline in Selected Lane (score 9.1, revised)
 
-Three charts (context minimap, cache sparkline, cost sparkline) moved from 240px Agent Card to Steps Panel sticky header:
-- Charts get full remaining width (400-800px) instead of 220px
-- 319-turn session: 2.5px/bar at 800px (was 0.69px — unreadable)
-- `min-width: turnCount × 2px` with `overflow-x: auto` fallback for narrow screens
-- Agent Card becomes text-only summary (cleaner, less scroll)
-- Charts sync with timeline zoom — only show turns within `[viewT0, viewT1]`
-- Blue cursor line pierces all 3 charts vertically; click chart → select turn
-- Agent Card nav items (Timeline, System, Core, MCP, Skills, Cost, Request, Events) are clickable tabs that switch the detail panel content
+Cache hit and cost charts render **inside the selected lane's SVG**, not in a separate header:
+- **Unselected lanes**: 40px — turn bars (8px) + context sparkline (28px) + gap (4px)
+- **Selected lane**: 80px — turn bars (8px) + context sparkline (28px) + cache hit bars (20px) + cost bars (20px) + gap (4px)
+- Charts share the same time axis as the lane's turn bars — no separate X axis or viewport mapping
+- Selecting a different lane collapses the previous and expands the new (SVG height recalculated per render)
+- Agent Card is text-only summary (context stats, cache %, cost total, tool frequency)
+- Context sparkline is always visible on **all** lanes (area chart, model-colored)
 
-### P5: Chart↔Step Cursor Sync (spec clarification)
+### P5: Bidirectional Selection Sync (spec clarification)
 
-Cursor follows selection, not scroll position:
-- Click chart → select turn + auto-scroll step list to that turn
-- Click step → select turn + move chart cursor
-- Scroll step list alone → no cursor movement
+All views sync on turn selection — click any one, all others update:
+- Click **turn bar** in lane SVG → selectTurn → steps panel highlights + scrolls, agent card updates
+- Click **step row** in steps panel → selectTurn → lane SVG highlights turn bar, overview updates
+- Click **lane label** → select lane, steps panel shows that lane's turns, agent card updates
+- Keyboard **j/k** → navigate turns within selected lane with full sync
+- **Zoom/pan** → steps outside viewport dimmed (opacity 0.4)
 
 ### P6: Lane Label Tooltip
 
