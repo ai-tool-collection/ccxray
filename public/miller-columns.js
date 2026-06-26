@@ -1321,6 +1321,8 @@ function enterFocusedMode() {
   isFocusedMode = true;
   document.getElementById('columns').classList.add('focused');
   renderDetailCol();
+  // Workflow: re-render SVG/canvas at new width after columns collapse
+  if (typeof wfDeferRender === 'function' && typeof wfState !== 'undefined' && wfState) wfDeferRender();
   if (typeof renderCmdBar === 'function') renderCmdBar();
 }
 
@@ -1330,6 +1332,7 @@ function exitFocusedMode() {
   document.getElementById('columns').classList.remove('focused');
   setFocus('sections');
   renderDetailCol();
+  if (typeof wfDeferRender === 'function' && typeof wfState !== 'undefined' && wfState) wfDeferRender();
   if (typeof renderCmdBar === 'function') renderCmdBar();
 }
 const colProjects = document.getElementById('col-projects');
