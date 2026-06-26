@@ -554,9 +554,6 @@ function wfRenderOverview(canvas) {
     ctx.globalAlpha = 1;
   }
 
-  // Selected turn cursor on overview
-  _wfDrawOverviewCursor(canvas);
-
   // Minimap interactions
   _wfSetupMinimapInteractions(canvas, MW, MH, totalRange, x, isZoomed);
 }
@@ -853,51 +850,52 @@ function wfHighlightTurn(turnId) {
   _wfUpdateCursor(turnId);
 }
 
-// ── Cursor line — syncs overview + swimlane + step list position ─────────
-function _wfUpdateCursor(turnId) {
-  var cursor = document.getElementById('wf-cursor');
-  if (!cursor) {
-    cursor = document.createElement('div');
-    cursor.id = 'wf-cursor';
-    var lanes = document.getElementById('wf-lanes-section');
-    if (lanes) lanes.appendChild(cursor);
-    else return;
-  }
-  if (!turnId || !wfState) { cursor.style.display = 'none'; return; }
-  // Find turn timestamp
-  var ts = 0;
-  for (var i = 0; i < wfState.lanes.length; i++) {
-    for (var j = 0; j < wfState.lanes[i].turns.length; j++) {
-      if (wfState.lanes[i].turns[j].id === turnId) { ts = Number(wfState.lanes[i].turns[j].receivedAt); break; }
-    }
-    if (ts) break;
-  }
-  if (!ts || ts < wfState.viewT0) { cursor.style.display = 'none'; return; }
-  var W = (document.getElementById('wf-main-svg') || {}).clientWidth || 600;
-  var tRange = wfState.viewT1 - wfState.viewT0 || 1;
-  // ponytail: clamp to right edge when turn is beyond viewport (streaming turn)
-  var px = WF_LABEL_W + Math.min(1, (ts - wfState.viewT0) / tRange) * (W - WF_LABEL_W);
-  cursor.style.display = '';
-  cursor.style.left = px.toFixed(1) + 'px';
+// ── Cursor line — syncs overview + swimlane position ────────────────────
+function _wfFindTurnTs(turnId) {
+  if (!turnId || !wfState) return 0;
+  for (var i = 0; i < wfState.lanes.length; i++)
+    for (var j = 0; j < wfState.lanes[i].turns.length; j++)
+      if (wfState.lanes[i].turns[j].id === turnId) return Number(wfState.lanes[i].turns[j].receivedAt);
+  return 0;
 }
 
-// Also update overview canvas with cursor
-function _wfDrawOverviewCursor(canvas) {
-  if (!canvas || !wfState || !wfState.selectedTurnId) return;
-  var ts = 0;
-  for (var i = 0; i < wfState.lanes.length && !ts; i++)
-    for (var j = 0; j < wfState.lanes[i].turns.length; j++)
-      if (wfState.lanes[i].turns[j].id === wfState.selectedTurnId) { ts = Number(wfState.lanes[i].turns[j].receivedAt); break; }
-  if (!ts) return;
-  var MW = canvas.clientWidth, totalRange = wfState.tMax - wfState.tMin || 1;
-  var px = Math.min(MW, ((ts - wfState.tMin) / totalRange) * MW);
-  var ctx2 = canvas.getContext('2d');
-  var c = _wfGetCssColors();
-  ctx2.strokeStyle = c.accent;
-  ctx2.lineWidth = 1.5;
-  ctx2.globalAlpha = 0.8;
-  ctx2.beginPath(); ctx2.moveTo(px, 0); ctx2.lineTo(px, canvas.clientHeight); ctx2.stroke();
-  ctx2.globalAlpha = 1;
+function _wfEnsureCursorEl(id, parentId) {
+  var el = document.getElementById(id);
+  if (!el) {
+    el = document.createElement('div');
+    el.id = id;
+    var parent = document.getElementById(parentId);
+    if (parent) parent.appendChild(el); else return null;
+  }
+  return el;
+}
+
+function _wfUpdateCursor(turnId) {
+  var ts = _wfFindTurnTs(turnId);
+  // Swimlane cursor (viewport coords)
+  var laneCursor = _wfEnsureCursorEl('wf-cursor', 'wf-lanes-section');
+  if (laneCursor) {
+    if (!ts || ts < wfState.viewT0 || ts > wfState.viewT1) { laneCursor.style.display = 'none'; }
+    else {
+      var W = (document.getElementById('wf-main-svg') || {}).clientWidth || 600;
+      var tRange = wfState.viewT1 - wfState.viewT0 || 1;
+      laneCursor.style.display = '';
+      laneCursor.style.left = (WF_LABEL_W + ((ts - wfState.viewT0) / tRange) * (W - WF_LABEL_W)).toFixed(1) + 'px';
+    }
+  }
+  // Overview cursor (global time coords, positioned relative to canvas)
+  var ovCursor = _wfEnsureCursorEl('wf-overview-cursor', 'wf-overview');
+  if (ovCursor) {
+    var canvas = document.getElementById('wf-minimap-canvas');
+    if (!ts || !canvas || !canvas.clientWidth) { ovCursor.style.display = 'none'; }
+    else {
+      var totalRange = wfState.tMax - wfState.tMin || 1;
+      var canvasLeft = canvas.offsetLeft;
+      var canvasW = canvas.clientWidth;
+      ovCursor.style.display = '';
+      ovCursor.style.left = (canvasLeft + ((ts - wfState.tMin) / totalRange) * canvasW).toFixed(1) + 'px';
+    }
+  }
 }
 
 // ── Agent Card ────────────────────────────────────────────────────────────
