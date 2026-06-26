@@ -731,6 +731,10 @@ function selectStep(stepIdx, sub) {
     mm.querySelectorAll('.minimap-block').forEach(b =>
       b.classList.toggle('mm-active', b.dataset.step === String(stepIdx)));
   }
+  // Workflow: sync overview + swimlane cursor to current turn
+  if (typeof _wfUpdateCursor === 'function' && typeof wfState !== 'undefined' && wfState) {
+    _wfUpdateCursor(wfState.selectedTurnId);
+  }
   renderBreadcrumb();
 }
 
