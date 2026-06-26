@@ -984,6 +984,39 @@ function wfRenderAgentCard(lane) {
   agentPanel.innerHTML = html;
 }
 
+// ── Lane-level summary (no turn selected) ────────────────────────────────
+function _wfRenderLaneSummary(lane, section) {
+  var el = document.getElementById('wf-steps-content');
+  if (!el) return;
+  var s = wfLaneSummary(lane);
+  var html = '<div style="padding:16px">';
+  html += '<div style="font-size:13px;color:var(--dim);margin-bottom:12px">' + wfEsc(lane.name) + ' · ' + s.turnCount + ' turns · ' + wfFmtDur(s.duration) + '</div>';
+
+  if (section === 'cost-efficiency') {
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px">';
+    html += '<tr style="color:var(--dim)"><th style="text-align:left;padding:4px 8px">#</th><th style="text-align:left;padding:4px 8px">Model</th><th style="text-align:right;padding:4px 8px">Cost</th><th style="text-align:right;padding:4px 8px">Tokens</th><th style="text-align:right;padding:4px 8px">Cache</th></tr>';
+    for (var i = 0; i < lane.turns.length; i++) {
+      var t = lane.turns[i], u = t.usage || {}, inTok = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+      var allTok = inTok + (u.output_tokens || 0), cache = u.cache_read_input_tokens || 0;
+      var pct = inTok > 0 ? (cache / inTok * 100).toFixed(0) + '%' : '-';
+      html += '<tr style="cursor:pointer;border-top:1px solid var(--border)" onclick="wfState.selectedTurnId=\'' + t.id + '\';wfSelectSection(\'cost-efficiency\')">';
+      html += '<td style="padding:4px 8px;color:var(--dim)">' + (i + 1) + '</td>';
+      html += '<td style="padding:4px 8px">' + wfEsc(wfShortModel(t.model)) + '</td>';
+      html += '<td style="padding:4px 8px;text-align:right">$' + (t.cost || 0).toFixed(4) + '</td>';
+      html += '<td style="padding:4px 8px;text-align:right">' + (allTok / 1000).toFixed(1) + 'K</td>';
+      html += '<td style="padding:4px 8px;text-align:right">' + pct + '</td></tr>';
+    }
+    html += '<tr style="border-top:2px solid var(--border);font-weight:bold"><td colspan="2" style="padding:4px 8px">Total</td>';
+    html += '<td style="padding:4px 8px;text-align:right">$' + s.totalCost.toFixed(4) + '</td>';
+    html += '<td style="padding:4px 8px;text-align:right">' + ((s.totalIn + s.totalOut) / 1000).toFixed(1) + 'K</td>';
+    html += '<td style="padding:4px 8px;text-align:right">' + s.avgCache.toFixed(0) + '%</td></tr></table>';
+  } else {
+    html += '<div style="color:var(--dim);font-size:12px">Click a turn bar to see ' + wfEsc(section) + ' detail</div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+
 // ── Section Navigation ───────────────────────────────────────────────────
 function wfSelectSection(name) {
   if (!wfState) return;
@@ -995,13 +1028,13 @@ function wfSelectSection(name) {
       el.classList.toggle('wf-ac-nav-active', el.getAttribute('data-section') === name);
     });
   }
-  // All sections (including timeline) route through selectTurn → renderDetailCol → #wf-steps-content
   var lane = wfState.selectedLane;
   if (!lane || !lane.turns.length) return;
-  var tid = wfState.selectedTurnId || lane.turns[lane.turns.length - 1].id;
+  // ponytail: no turn selected → lane-level summary instead of fallback to last turn
+  if (!wfState.selectedTurnId) { _wfRenderLaneSummary(lane, name); return; }
   selectedSection = name;
   for (var i = 0; i < allEntries.length; i++) {
-    if (allEntries[i].id === tid) { selectTurn(i); break; }
+    if (allEntries[i].id === wfState.selectedTurnId) { selectTurn(i); break; }
   }
 }
 
@@ -1010,10 +1043,11 @@ function wfRenderCurrentSection() {
   if (!wfState) return;
   var lane = wfState.selectedLane;
   if (!lane || !lane.turns.length) return;
-  var tid = wfState.selectedTurnId || lane.turns[lane.turns.length - 1].id;
-  selectedSection = wfState.selectedSection || 'timeline';
+  var sec = wfState.selectedSection || 'timeline';
+  if (!wfState.selectedTurnId) { _wfRenderLaneSummary(lane, sec); return; }
+  selectedSection = sec;
   for (var i = 0; i < allEntries.length; i++) {
-    if (allEntries[i].id === tid) { selectTurn(i); break; }
+    if (allEntries[i].id === wfState.selectedTurnId) { selectTurn(i); break; }
   }
 }
 
