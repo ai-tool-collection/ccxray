@@ -361,7 +361,7 @@ On the Agent Card minimap:
 
 Three charts stacked vertically in the Agent Card, all sharing turn-index X axis:
 
-1. **Context minimap** (48px height) — area chart with threshold lines
+1. **Context minimap** — **Moved to Focused Mode minimap (see P10)**. Agent Card shows text-only context stats (peak %, current %, window size).
 2. **Cache hit sparkline** (14px height) — bar chart, green (#3fb950), dim when < 50%
 3. **Cost sparkline** (14px height) — bar chart, orange (#ffa657)
 
@@ -493,6 +493,199 @@ All changes behind `@media (pointer: coarse)` or `touchstart` detection — zero
 - **Tooltip**: tap = select + tooltip 40px above touch point; tap elsewhere = dismiss
 - **Small targets**: snap-to-nearest bar within 22px radius (O(log n) binary search)
 - **No `navigator.vibrate()`** (not supported in Safari)
+
+### P10: Context Minimap — B++ Design (score 9.7)
+
+Replaces the 48px Agent Card minimap (line 364) with a full-height Zed-inspired minimap in Focused Mode. Addresses problems #11 and #12 simultaneously.
+
+#### Core metaphor
+
+Minimap total height = model's context window. Filled portion = consumed tokens. Each step's height ∝ its token count. Empty space = remaining capacity.
+
+```
+┌────────────────┐
+│ ▓▓ step1  800t │  ← thin: small system-reminder
+│ ▓▓ step2  200t │
+│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓│  ← thick: large tool result
+│ ▓▓ step3 5000t │
+│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓│
+│ ▓▓ step4 3000t │
+│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓│
+│                │  ← empty = remaining capacity (positive signal)
+│ - - - - - - - -│  dumb zone threshold (40%)
+│                │
+│ - - - - - - - -│  danger zone threshold (80%)
+│                │
+│          200K  │  ← context window size label
+└────────────────┘
+```
+
+#### Design decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Primary role** | Health indicator (context fill) | ccxray's core value is context visibility; navigation is secondary since users already have step list, keyboard nav, and section nav |
+| **Height basis** | Percentage (all minimaps same pixel height) | Absolute scaling (1M = 5× 200K height) breaks layout; zone coloring already encodes risk relative to window size |
+| **Step height** | Token-proportional, min 3px | Step thickness directly shows "which step ate the most context" — no numbers needed |
+| **Empty space** | Zone threshold dashed lines + labels | Prevents "broken UI" perception; empty space becomes information ("this much room left") |
+| **Low-fill coalescence** | Adjacent same-type steps merge when individual height < 3px, show ×N badge | Preserves height=tokens metaphor while keeping steps visible; only triggers on dense tool-call bursts at low fill |
+
+#### Zone threshold lines
+
+Drawn in empty space as dashed lines with small labels:
+
+| Threshold | Position | Style |
+|-----------|----------|-------|
+| Smart ceiling | 40% of minimap height | Green dashed, label "smart" |
+| Danger | 80% of minimap height | Red dashed, label "danger" |
+
+These match the existing turn bar zone colors (green <40%, yellow 40-80%, red ≥80%).
+
+#### Interaction
+
+| Action | Result |
+|--------|--------|
+| Hover step | Highlight + tooltip: `"#4 Read server/index.js (3200t)"` |
+| Click step | Detail panel scrolls to that step |
+| Scroll detail | Viewport indicator (semi-transparent overlay) tracks visible region |
+| First hover on minimap | One-time tooltip: `"高度 = context window (200K)"` — dismissed permanently |
+| Cursor | `pointer` on steps, `default` on empty space |
+
+#### Placement
+
+In **Focused Mode** only (split-pane: step list left, step detail right). Minimap renders as a narrow column (40-48px) on the right edge of the step list pane — same position as Zed's minimap relative to its editor.
+
+**Not shown** in Agent Card summary view (the Agent Card retains its existing text-only context stats: peak %, cache rate, cost).
+
+#### Step coalescence
+
+When a burst of small tool calls would render as <3px each:
+
+```
+Before coalescence:          After:
+│ ▓ Read 120t   │  (1px)     │ ▓▓▓▓▓▓▓▓▓▓▓▓ │
+│ ▓ Read 80t    │  (1px)     │  Read ×5      │  ← merged, total height = sum tokens
+│ ▓ Read 150t   │  (1px)     │ ▓▓▓▓▓▓▓▓▓▓▓▓ │
+│ ▓ Read 90t    │  (1px)     hover → expand to show 5 individual steps
+│ ▓ Read 110t   │  (1px)
+```
+
+Rules:
+- Only merge adjacent steps of same tool type
+- Merged block height = sum of individual token heights (metaphor preserved)
+- Badge shows `×N`
+- Hover expands to show individual step labels
+
+#### Ceiling and tradeoffs
+
+**Score: 9.7/10** — the 0.3 gap is structural: coalescence loses per-step granularity at the merge boundary. This is inherent to dual-purpose elements (navigation + health) and cannot be eliminated without splitting into two separate visuals (which would sacrifice information density).
+
+The upgrade path if this becomes a real pain: add a keyboard shortcut (e.g. `m`) to toggle between "proportional mode" (height=tokens, current) and "equal mode" (all steps same height, pure navigation). But YAGNI until user feedback says otherwise.
+
+### P12: Zone Color Consistency — Semantic Unity + Form Distinction (score 10.0)
+
+All three zone-colored elements use the **same hex values and thresholds**. Identity is conveyed by form, not color variation.
+
+#### Single color constant
+
+```js
+const ZONE = {
+  smart:  { color: '#3fb950', threshold: 0.40 },
+  dumb:   { color: '#d29922', threshold: 0.80 },
+  danger: { color: '#f85149', threshold: 1.00 },
+};
+```
+
+Overview, swimlane turn bars, and minimap fill all reference this one object.
+
+#### Form distinction (why they won't be confused)
+
+| Element | Direction | Selection marker | Additional signals |
+|---------|-----------|------------------|--------------------|
+| Overview | Horizontal, 2-6px micro blocks | 1px bright vertical indicator line on selected turn | Viewport rect |
+| Swimlane turn bar | Horizontal, 8px × width∝duration | Semi-transparent accent position cursor rect | Spawn connectors, gap spacing |
+| Minimap fill | **Vertical**, height∝tokens | Hover highlight | Zone threshold dashed lines, bottom size label |
+
+The vertical vs horizontal orientation is the strongest differentiator — minimap is the only vertical element. Overview and swimlane are both horizontal but differ in scale (micro vs readable), selection marker (indicator line vs cursor rect), and reading distance (global positioning vs time navigation).
+
+#### Design principle
+
+Color speaks semantics (green = safe, yellow = degrading, red = danger). Form speaks identity (where am I looking). Never use color to distinguish elements from each other — that overloads the color channel and breaks the semantic mapping.
+
+### P15: Minimap ↔ Overview Selection Sync (score 9.5)
+
+Minimap participates in the existing bidirectional selection sync (P5). No new sync mechanism needed.
+
+| Action in minimap | Result |
+|-------------------|--------|
+| **Hover** step | Tooltip only (step label + token count). No global sync — hover is preview, not commit. |
+| **Click** step | Calls `selectTurn` → overview indicator line moves, swimlane position cursor moves, detail panel scrolls. Standard P5 flow. |
+
+This matches swimlane behavior: hover shows tooltip, click triggers sync. Consistent across all three elements.
+
+#### Overview indicator line (from P12)
+
+The overview bar draws a 1px bright vertical line at the selected turn's time position. This line updates on any `selectTurn` call regardless of source (swimlane click, step list click, minimap click, keyboard nav). Implementation: extend `wfDrawOverview` to draw the indicator using `wfState.selectedTurnId` position.
+
+### P14: Minimap Follows Selected Turn (score 9.2)
+
+Minimap displays cumulative context state up to the **selected turn**, not the latest turn. Selecting turn #20 shows steps from turn 1-20; selecting turn #54 shows steps from turn 1-54.
+
+#### Why follow selection
+
+The user's core question is "what was the context state at this turn?" Fixed-latest minimap (always showing the final turn) can't answer this — it breaks the mapping between selection and display, scoring 4.9/10.
+
+#### Behavior
+
+- Select turn → minimap redraws with steps from turn 1 to selected turn
+- Fill height = cumulative token usage up to that turn
+- Zone coloring reflects the context % at that turn (green/yellow/red)
+- Zone threshold lines stay fixed (they're percentages of the window, not of the content)
+- Switching turns causes a visual "grow/shrink" of the fill — this IS the information (context growing over time)
+
+#### Implementation note
+
+Each turn selection triggers a minimap redraw. Step list is derived from `allEntries.filter(e => e.receivedAt <= selectedTurn.receivedAt && e.sessionId matches)`. Token breakdown per step is already available from `input_tokens` / `cache_read_input_tokens` / `cache_creation_input_tokens` fields in turn data.
+
+### P13: No Lane-Level Context Gauge in Swimlane (score 9.2)
+
+Swimlane lanes do NOT get a context fill bar or gauge. Context health is the minimap's job (P10). The swimlane focuses exclusively on time navigation.
+
+#### Why not
+
+Turn bar zone colors already encode per-turn context state. Adding a lane-level aggregate gauge creates functional overlap with the minimap and introduces a vertical axis that conflicts with the horizontal time axis.
+
+#### Impact on existing code
+
+**Zero changes.** `wfRenderLaneSvg` in `workflow-timeline.js` already renders only turn bars + cache row + cost row for selected lanes. No context gauge exists to add or remove.
+
+#### Implicit bridge
+
+Turn bar zone colors serve as the bridge between swimlane and minimap: user sees a yellow turn bar in swimlane → looks at minimap → sees the fill level and zone threshold proximity. No explicit bridge element needed.
+
+### P11: Minimap Height Basis — Equal Height + Window Size Label (score 9.3)
+
+All minimaps render at the **same pixel height** regardless of model context window size (1M, 200K, etc.). Fill ratio is percentage-based. Absolute window size shown as a numeric label at bottom.
+
+#### Why not proportional height
+
+Proportional (1M = 5× the height of 200K) was evaluated and scored 6.7/10. Fatal flaw: switching between agents causes minimap to jump from ~80px to ~400px, breaking layout stability. Also, small-window agents (200K) get minimaps too short to read.
+
+#### Three-layer risk communication
+
+No single layer carries the full picture — they stack:
+
+| Layer | Type | What it tells | Speed |
+|-------|------|---------------|-------|
+| Fill ratio | Preattentive (area) | How full is this agent's context | Instant |
+| Zone coloring | Preattentive (color) | Is this dangerous *for this window size* | Instant |
+| Bottom label | Attentive (text) | Absolute window size (`200K`, `1M`) | On demand |
+
+Zone thresholds are the same percentage for all window sizes (40% smart, 80% danger), so color already encodes "risk relative to this agent's capacity." Users don't need to mentally convert between window sizes — a yellow minimap means degradation regardless of whether it's 200K or 1M.
+
+#### Switching behavior
+
+Agent switch changes: fill ratio, zone color, bottom label, step content. Does NOT change: minimap pixel height, threshold line positions, overall layout. Zero layout reflow.
 
 ## Compromises
 
