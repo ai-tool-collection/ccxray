@@ -113,11 +113,11 @@
   /* Timeline split pane in focused mode */
   .tl-split { display: flex; flex: 1; overflow: hidden; }
   .tl-split-list { width: 280px; min-width: 200px; max-width: 400px; flex-shrink: 0; overflow-y: auto; border-right: 1px solid var(--border); scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-  .tl-split-detail { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .tl-split-detail { flex: 1; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 
   /* Token minimap — vertical color strip beside timeline */
   .tl-with-minimap { display: flex; flex: 1; overflow: hidden; }
-  .tl-scroll-area { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; scroll-padding-block: 40px; }
+  .tl-scroll-area { flex: 1; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: var(--border) transparent; scroll-padding-block: 40px; }
   .minimap { width: 36px; flex-shrink: 0; position: relative; border-right: 1px solid var(--border); background: var(--bg); overflow: hidden; cursor: pointer; }
   /* Auto-compact landmark: horizontal tick at 83.5% down from top (the minimap
      fills top-down — blocks at top, empty below). Shared via --compact-threshold
@@ -441,7 +441,7 @@
   }
   .ctx-sticky { position: sticky; top: 0; background: var(--surface); border-bottom: 2px solid var(--border); padding: 10px 12px; z-index: 2; flex-shrink: 0; }
   .ctx-sticky-title { font-size: 11px; color: var(--dim); margin-bottom: 6px; }
-  .detail-scroll { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .detail-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
   .detail-scroll::-webkit-scrollbar { width: 4px; }
   .detail-scroll::-webkit-scrollbar-track { background: transparent; }
   .detail-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
@@ -701,7 +701,7 @@
 .wf-agent-card .wf-ac-nav-item:hover { background: var(--surface-hover); color: var(--text); }
 .wf-agent-card .wf-ac-nav-active { background: var(--surface-active); color: var(--text); }
 .wf-agent-card .wf-ac-nav-badge { font-size: 10px; color: var(--dim); }
-#wf-steps-content { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+#wf-steps-content { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; }
 /* Focused timeline inside workflow: header stays fixed, split pane fills remaining space */
 #wf-steps-content > .fp-header,
 #wf-steps-content > .col-header { flex-shrink: 0; }
