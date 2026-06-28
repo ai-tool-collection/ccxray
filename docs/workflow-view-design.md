@@ -66,7 +66,7 @@ All code, comments, and discussions use these names consistently.
 | **Section Nav** | — (inside Agent Card) | Reuses the existing `renderSectionsCol` section items from v1.9.2. Each item shows: colored dot + label + badge (token/tool/event count) + chevron. Clicking sets `selectedSection` and renders the corresponding detail in the Steps Panel via `renderDetailCol`. |
 | **Steps Panel** | `#wf-steps-content` | Right panel in Detail Area. Uses flex column layout so headers stay fixed and split panes scroll independently. Content depends on Section Nav selection — all sections (including Timeline) render via `renderDetailCol` → `commitDetailHtml` redirect. |
 | **Timeline (v1.9.2)** | — (inside Steps Panel) | Reuses the full v1.9.2 timeline renderer (`renderStepListHtml`): human messages, thinking blocks with duration, tool calls with name/preview/status, star buttons, minimap, and focused split-pane mode. Replaces the earlier flat turn list. |
-| **Focused Mode** | `.focused.wf-active` | Enter key or step click enters split-pane view (left: step list + minimap, right: step detail). `#col-turns` stays visible (CSS override). SVG/canvas re-renders at new width via `wfDeferRender`. `selectTurn` skips focused-mode exit when `wfState` is active. Keyboard nav (↑↓ steps, e/E/s/S/a/A/m/M jump) queries `#wf-steps-content` instead of `colDetail`. |
+| **Focused Mode** | **Removed (P16).** Steps and Step Detail are always side-by-side with a draggable resize handle between them. No mode to enter/exit. Replaces the former `.focused.wf-active` split-pane toggle. |
 | **Position Cursor** | `#wf-cursor` | Semi-transparent accent-colored rect in swimlane (`position:absolute`, `z-index:10`) spanning the selected turn's time range (`receivedAt` to `receivedAt + elapsed`). Overview canvas draws a matching `fillRect`. Both use `_wfFindTurn` to resolve the turn object. Min width 3px; overview clamps to canvas bounds. Updated by `wfHighlightTurn`, `wfDeferRender` (pan/zoom), and `selectStep` (step navigation). All three areas (overview, swimlane, step list) stay in sync. |
 | **Step Row** | `.tl-step-summary` | One step's display in the focused timeline. Row number + tool name/preview + status (✓/✗) + star + optional source badge. |
 | **Tool Group** | `.step-tools` | Vertical list of tool calls with ┌│└ brackets when multiple. |
@@ -361,7 +361,7 @@ On the Agent Card minimap:
 
 Three charts stacked vertically in the Agent Card, all sharing turn-index X axis:
 
-1. **Context minimap** — **Moved to Focused Mode minimap (see P10)**. Agent Card shows text-only context stats (peak %, current %, window size).
+1. **Context minimap** — **Moved to always-visible minimap column (see P10/P16)**. Agent Card shows text-only context stats (peak %, current %, window size).
 2. **Cache hit sparkline** (14px height) — bar chart, green (#3fb950), dim when < 50%
 3. **Cost sparkline** (14px height) — bar chart, orange (#ffa657)
 
@@ -496,27 +496,29 @@ All changes behind `@media (pointer: coarse)` or `touchstart` detection — zero
 
 ### P10: Context Minimap — B++ Design (score 9.7)
 
-Replaces the 48px Agent Card minimap (line 364) with a full-height Zed-inspired minimap in Focused Mode. Addresses problems #11 and #12 simultaneously.
+Full-height Zed-inspired minimap with inline step labels, always visible alongside the step list. Addresses problems #11 and #12 simultaneously.
 
 #### Core metaphor
 
 Minimap total height = model's context window. Filled portion = consumed tokens. Each step's height ∝ its token count. Empty space = remaining capacity.
 
 ```
-┌────────────────┐
-│ ▓▓ step1  800t │  ← thin: small system-reminder
-│ ▓▓ step2  200t │
-│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓│  ← thick: large tool result
-│ ▓▓ step3 5000t │
-│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓│
-│ ▓▓ step4 3000t │
-│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓│
-│                │  ← empty = remaining capacity (positive signal)
+┌─── 60-70px ────┐
+│▓ sys prompt   ▓│  ← thick: system prompt is biggest overhead
+│▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│
+│▓ #1 user      ▓│  ← inline label: step identity visible without hover
+│▓ #2 Monitor   ▓│
+│▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│  ← thick: large tool result
+│▓ #3 asst      ▓│
+│▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│
+│▓ #4 Read      ▓│
+│▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│
+│                │  ← empty = remaining capacity
 │ - - - - - - - -│  dumb zone threshold (40%)
 │                │
 │ - - - - - - - -│  danger zone threshold (80%)
 │                │
-│          200K  │  ← context window size label
+│           200K │  ← context window size label
 └────────────────┘
 ```
 
@@ -527,8 +529,10 @@ Minimap total height = model's context window. Filled portion = consumed tokens.
 | **Primary role** | Health indicator (context fill) | ccxray's core value is context visibility; navigation is secondary since users already have step list, keyboard nav, and section nav |
 | **Height basis** | Percentage (all minimaps same pixel height) | Absolute scaling (1M = 5× 200K height) breaks layout; zone coloring already encodes risk relative to window size |
 | **Step height** | Token-proportional, min 3px | Step thickness directly shows "which step ate the most context" — no numbers needed |
+| **Step labels** | Inline small text (8-9px) on each step block: `sys prompt`, `#24 Read`, `×5 Bash` | Eliminates hover-to-discover; step identity is preattentive, not attentive |
+| **Width** | 60-70px (was 36-48px) | Wider to accommodate inline text; acceptable trade — on 1440px screen, Steps+Detail still gets ~950px |
 | **Empty space** | Zone threshold dashed lines + labels | Prevents "broken UI" perception; empty space becomes information ("this much room left") |
-| **Low-fill coalescence** | Adjacent same-type steps merge when individual height < 3px, show ×N badge | Preserves height=tokens metaphor while keeping steps visible; only triggers on dense tool-call bursts at low fill |
+| **Low-fill coalescence** | Adjacent same-type steps merge when individual height < 3px, show `×N` label inline | Preserves height=tokens metaphor; inline label (e.g. `×5 Read`) compensates for per-step granularity loss |
 
 #### Zone threshold lines
 
@@ -545,7 +549,7 @@ These match the existing turn bar zone colors (green <40%, yellow 40-80%, red �
 
 | Action | Result |
 |--------|--------|
-| Hover step | Highlight + tooltip: `"#4 Read server/index.js (3200t)"` |
+| Hover step | Highlight + tooltip with token count: `"3200t"` (step identity already visible via inline label) |
 | Click step | Detail panel scrolls to that step |
 | Scroll detail | Viewport indicator (semi-transparent overlay) tracks visible region |
 | First hover on minimap | One-time tooltip: `"高度 = context window (200K)"` — dismissed permanently |
@@ -553,9 +557,9 @@ These match the existing turn bar zone colors (green <40%, yellow 40-80%, red �
 
 #### Placement
 
-In **Focused Mode** only (split-pane: step list left, step detail right). Minimap renders as a narrow column (40-48px) on the **left edge** of the step list pane — adjacent to the Agent Card's context stats, forming a visual unit with all context information on the left side. (Zed puts its minimap on the right because it's navigation-first; ours is health-first, so it belongs next to the context numbers.)
+**Always visible** in the workflow detail area (no focused mode toggle needed — see P16). Minimap renders as a 60-70px column on the **left edge** of the step list pane — adjacent to the Agent Card's context stats, forming a visual unit with all context information on the left side. (Zed puts its minimap on the right because it's navigation-first; ours is health-first, so it belongs next to the context numbers.)
 
-**Not shown** in Agent Card summary view (the Agent Card retains its existing text-only context stats: peak %, cache rate, cost).
+Agent Card retains its existing text-only context stats (peak %, cache rate, cost) as the numeric complement to the minimap's visual.
 
 #### Step coalescence
 
@@ -564,9 +568,9 @@ When a burst of small tool calls would render as <3px each:
 ```
 Before coalescence:          After:
 │ ▓ Read 120t   │  (1px)     │ ▓▓▓▓▓▓▓▓▓▓▓▓ │
-│ ▓ Read 80t    │  (1px)     │  Read ×5      │  ← merged, total height = sum tokens
+│ ▓ Read 80t    │  (1px)     │ ×5 Read       │  ← inline label on merged block
 │ ▓ Read 150t   │  (1px)     │ ▓▓▓▓▓▓▓▓▓▓▓▓ │
-│ ▓ Read 90t    │  (1px)     hover → expand to show 5 individual steps
+│ ▓ Read 90t    │  (1px)     hover → tooltip shows 5 individual steps
 │ ▓ Read 110t   │  (1px)
 ```
 
@@ -578,7 +582,7 @@ Rules:
 
 #### Ceiling and tradeoffs
 
-**Score: 9.7/10** — the 0.3 gap is structural: coalescence loses per-step granularity at the merge boundary. This is inherent to dual-purpose elements (navigation + health) and cannot be eliminated without splitting into two separate visuals (which would sacrifice information density).
+**Score: 9.3/10** (revised from 9.7 after P16 changes). Inline text labels recover most of the coalescence granularity loss — merged blocks show `×5 Read` instead of requiring hover. The remaining 0.7 gap is: at 50+ steps with small fonts, labels may crowd — but this is the exact scenario where coalescence triggers, reducing label count.
 
 The upgrade path if this becomes a real pain: add a keyboard shortcut (e.g. `m`) to toggle between "proportional mode" (height=tokens, current) and "equal mode" (all steps same height, pure navigation). But YAGNI until user feedback says otherwise.
 
@@ -614,13 +618,56 @@ Overview, swimlane turn bars, and minimap fill all reference this one object.
 |---------|-----------|------------------|--------------------|
 | Overview | Horizontal, 2-6px micro blocks | 1px bright vertical indicator line on selected turn | Viewport rect |
 | Swimlane turn bar | Horizontal, 8px × width∝duration | Semi-transparent accent position cursor rect | Spawn connectors, gap spacing |
-| Minimap fill | **Vertical**, height∝tokens | Hover highlight | Zone threshold dashed lines, bottom size label |
+| Minimap fill | **Vertical**, height∝tokens, 60-70px wide | Hover highlight | Zone threshold dashed lines, bottom size label, **inline step labels** |
 
 The vertical vs horizontal orientation is the strongest differentiator — minimap is the only vertical element. Overview and swimlane are both horizontal but differ in scale (micro vs readable), selection marker (indicator line vs cursor rect), and reading distance (global positioning vs time navigation).
 
 #### Design principle
 
 Color speaks semantics (green = safe, yellow = degrading, red = danger). Form speaks identity (where am I looking). Never use color to distinguish elements from each other — that overloads the color channel and breaks the semantic mapping.
+
+### P16: Remove Focused Mode — Always Side-by-Side with Draggable Resize (score 9.5)
+
+Steps list and Step Detail are always visible side-by-side. No focused mode to enter/exit. A draggable resize handle between Steps and Detail lets users adjust the ratio.
+
+#### Why remove focused mode
+
+The workflow layout (Agent Card + minimap + Steps + Detail) already shows all information simultaneously. Focused mode added a binary toggle (normal ↔ expanded detail) that:
+- Required learning a concept ("what is focused mode?")
+- Required mode switching (Enter to enter, Escape to exit)
+- Created code complexity (`isFocusedMode` guards, CSS overrides, `wfDeferRender` re-renders)
+- Was only useful for expanding Detail width — solved more simply by a draggable handle
+
+#### Draggable resize handle
+
+| Behavior | Detail |
+|----------|--------|
+| Default ratio | Steps 40% / Detail 60% (or persisted from last drag) |
+| Drag | Adjusts flex ratio, live resize, no layout reflow outside the two panels |
+| Min widths | Steps ≥ 180px, Detail ≥ 200px (prevents collapse to zero) |
+| Persist | Save ratio to `localStorage` key `wf-detail-ratio` |
+| Keyboard | No keyboard equivalent needed — j/k navigate steps, content appears in Detail |
+
+#### Impact on existing code
+
+Removes: `isFocusedMode`, `enterFocusedMode()`, `exitFocusedMode()`, `.focused` CSS class, `wfDeferRender` width-change re-renders triggered by focus toggle. The existing `#wf-resize` handle (between timeline and detail area) stays; this adds a second handle within the detail area.
+
+#### Layout (always-on)
+
+```
+┌──────────┬──────────┬──────────┬──┬────────────────┬─────────────────────┐
+│ Projects │ Sessions │ Agent    │mm│ Steps          │ Step Detail          │
+│          │          │ Card     │ii│                │                      │
+│          │          │          │nn│ #1 user    ✓   │ [content of          │
+│          │          │ Context  │ii│ #2 Monitor ✓ 🏷│  selected step]      │
+│          │          │ Peak 18% │mm│ #3 asst    ✓   │                      │
+│          │          │ Win 1M   │aa│ #4 Read    ✓ 🏷│                      │
+│          │          │ ...      │pp│ ...             │                      │
+│          │          │          │  │         ↕ drag  │                      │
+└──────────┴──────────┴──────────┴──┴────────────────┴─────────────────────┘
+                                                ↑
+                                          resize handle
+```
 
 ### P15: Minimap ↔ Overview Selection Sync (score 9.5)
 
