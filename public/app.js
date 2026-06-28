@@ -107,7 +107,7 @@ updateThemeIcon();
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
   // Don't intercept when in split view (focused mode or workflow timeline)
-  if (typeof inSplitView === 'function' ? inSplitView() : (typeof isFocusedMode !== 'undefined' && isFocusedMode)) return;
+  if (inSplitView()) return;
 
   // Escape → switch to dashboard
   if (e.key === 'Escape' && activeTab !== 'dashboard') {

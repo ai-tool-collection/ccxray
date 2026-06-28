@@ -577,8 +577,7 @@ function _navigateTargetInner(target, opts) {
       if (!loadResult.ok) return loadResult;
       selectedSection = 'timeline';
       setSelectedStepSelection(target.stepIdx, target.sub);
-      var _wf = typeof wfState !== 'undefined' && wfState;
-      if (!isFocusedMode && !_wf && opts.focus !== false && typeof enterFocusedMode === 'function') {
+      if (!isFocusedMode && opts.focus !== false && typeof enterFocusedMode === 'function') {
         enterFocusedMode();
       } else {
         renderDetailCol();
@@ -749,8 +748,7 @@ function _selectTimelineStepWhenReady(turnIdx, stepIdx, sub) {
     const current = allEntries[turnIdx];
     if (!current || !current.reqLoaded || typeof prepareTimelineSteps !== 'function' || typeof selectStep !== 'function') return;
     selectedSection = 'timeline';
-    var _wf2 = typeof wfState !== 'undefined' && wfState;
-    if (!isFocusedMode && !_wf2 && typeof enterFocusedMode === 'function') {
+    if (!isFocusedMode && typeof enterFocusedMode === 'function') {
       setSelectedStepSelection(stepIdx, sub);
       enterFocusedMode();
     } else {
@@ -1322,6 +1320,7 @@ function inSplitView() { return isFocusedMode || (typeof wfState !== 'undefined'
 
 function enterFocusedMode() {
   if (isFocusedMode) return;
+  if (typeof wfState !== 'undefined' && wfState) return;
   isFocusedMode = true;
   document.getElementById('columns').classList.add('focused');
   renderDetailCol();

@@ -690,9 +690,7 @@ function renderStepDetailHtml(req, tok) {
 function selectStep(stepIdx, sub) {
   if (!currentSteps[stepIdx]) return; // guard: invalid step index
   // If not in focused mode, enter it first (click on step = drill into timeline)
-  // P16: workflow is always split pane — no focused mode needed
-  var _isWf = typeof wfState !== 'undefined' && wfState;
-  if (!isFocusedMode && !_isWf && typeof enterFocusedMode === 'function') {
+  if (!isFocusedMode && typeof enterFocusedMode === 'function') {
     if (typeof setSelectedStepSelection === 'function') setSelectedStepSelection(stepIdx, sub);
     else selectedMessageIdx = stepIdx * 1000 + (sub === 'thinking' ? 999 : (typeof sub === 'number' ? sub : 0));
     enterFocusedMode();
@@ -1031,8 +1029,7 @@ function initMinimapInteractions(minimapEl, scrollAreaEl) {
     if (block) {
       const targetStep = parseInt(block.dataset.step);
       if (targetStep >= 0 && typeof selectStep === 'function') {
-        // ponytail: sync overview + swimlane cursor (P15)
-        if (typeof wfHighlightTurn === 'function' && typeof wfState !== 'undefined' && wfState && selectedTurnIdx >= 0) {
+        if (typeof wfHighlightTurn === 'function' && typeof wfState !== 'undefined' && wfState && selectedTurnIdx >= 0 && wfState.selectedTurnId !== allEntries[selectedTurnIdx]?.id) {
           wfHighlightTurn(allEntries[selectedTurnIdx]?.id);
         }
         selectStep(targetStep);

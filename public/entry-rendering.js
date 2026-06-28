@@ -562,8 +562,7 @@ function addEntry(e) {
   if (!_loading && selectedSessionId === sid) {
     // Only auto-follow if toggle is on AND user is currently on the live edge
     // Never interrupt split view — user is drilling into a turn's detail
-    var _inSplitLive = typeof inSplitView === 'function' ? inSplitView() : isFocusedMode;
-    const wasOnLiveEdge = followLiveTurn && !_inSplitLive &&
+    const wasOnLiveEdge = followLiveTurn && !inSplitView() &&
       (selectedTurnIdx === -1 || selectedTurnIdx === idx - 1);
     if (wasOnLiveEdge) {
       selectTurn(idx);

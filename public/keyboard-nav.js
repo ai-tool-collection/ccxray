@@ -32,7 +32,7 @@ function getStarTargetFromSelection() {
   if (!window.xrayStars) return null;
 
   // In split view (focused or workflow timeline): use targetFromCurrentSelection()
-  if (typeof inSplitView === 'function' ? inSplitView() : isFocusedMode) {
+  if (inSplitView()) {
     const t = typeof targetFromCurrentSelection === 'function' ? targetFromCurrentSelection() : null;
     if (!t) return null;
     if (t.kind === 'step') {
@@ -288,8 +288,7 @@ function _timelineCallMatchesType(call, type) {
 }
 
 function _hasTimelineStepType(type) {
-  var _split = typeof inSplitView === 'function' ? inSplitView() : isFocusedMode;
-  if (!_split || selectedSection !== 'timeline' || !Array.isArray(currentSteps)) return false;
+  if (!inSplitView() || selectedSection !== 'timeline' || !Array.isArray(currentSteps)) return false;
   return currentSteps.some(step => step && step.type === 'tool-group' && step.calls.some(call => _timelineCallMatchesType(call, type)));
 }
 
@@ -326,11 +325,9 @@ function getCmdBarState() {
   if (_loading) return null;
   if (typeof activeTab !== 'undefined' && activeTab !== 'dashboard') return null;
 
-  var _inSplit = typeof inSplitView === 'function' ? inSplitView() : isFocusedMode;
-  var _isWfHere = typeof wfState !== 'undefined' && wfState;
-  if (_inSplit) {
+  if (inSplitView()) {
     if (selectedSection === 'timeline') {
-      var _exitCmd = _isWfHere ? [] : [{ key: 'Esc/←', label: 'exit', clickKey: 'Escape' }];
+      var _exitCmd = (typeof wfState !== 'undefined' && wfState) ? [] : [{ key: 'Esc/←', label: 'exit', clickKey: 'Escape' }];
       return {
         row1: [
           { key: '↑↓', label: 'steps' },
@@ -522,8 +519,7 @@ document.addEventListener('keydown', (e) => {
 
   if (key === 'n' || key === 'N') {
     const dir = key === 'N' ? 'prev' : 'next';
-    var _splitN = typeof inSplitView === 'function' ? inSplitView() : isFocusedMode;
-    const jumped = _splitN && selectedSection === 'timeline'
+    const jumped = inSplitView() && selectedSection === 'timeline'
       ? jumpToTimelineStar(dir)
       : jumpToStar(dir);
     if (jumped) e.preventDefault();
@@ -566,10 +562,8 @@ document.addEventListener('keydown', (e) => {
   }
 
   // Split view intercept — focused mode OR workflow timeline (P16)
-  var _isWfKbd = typeof wfState !== 'undefined' && wfState;
-  var _inSplitKbd = isFocusedMode || (_isWfKbd && selectedSection === 'timeline');
-  if (_inSplitKbd) {
-    if ((key === 'Escape' || key === 'ArrowLeft') && !_isWfKbd) {
+  if (inSplitView()) {
+    if ((key === 'Escape' || key === 'ArrowLeft') && isFocusedMode) {
       exitFocusedMode(); e.preventDefault(); return;
     }
     // T12: step-type jump shortcuts
