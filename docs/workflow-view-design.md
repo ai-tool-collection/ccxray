@@ -553,7 +553,7 @@ These match the existing turn bar zone colors (green <40%, yellow 40-80%, red �
 
 #### Placement
 
-In **Focused Mode** only (split-pane: step list left, step detail right). Minimap renders as a narrow column (40-48px) on the right edge of the step list pane — same position as Zed's minimap relative to its editor.
+In **Focused Mode** only (split-pane: step list left, step detail right). Minimap renders as a narrow column (40-48px) on the **left edge** of the step list pane — adjacent to the Agent Card's context stats, forming a visual unit with all context information on the left side. (Zed puts its minimap on the right because it's navigation-first; ours is health-first, so it belongs next to the context numbers.)
 
 **Not shown** in Agent Card summary view (the Agent Card retains its existing text-only context stats: peak %, cache rate, cost).
 
