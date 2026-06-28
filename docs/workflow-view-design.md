@@ -65,10 +65,10 @@ All code, comments, and discussions use these names consistently.
 | **Color Bar** | — (inline style) | 2px left border on Agent Card. Decorative accent only — not tied to turn bar encoding. |
 | **Section Nav** | — (inside Agent Card) | Reuses the existing `renderSectionsCol` section items from v1.9.2. Each item shows: colored dot + label + badge (token/tool/event count) + chevron. Clicking sets `selectedSection` and renders the corresponding detail in the Steps Panel via `renderDetailCol`. |
 | **Steps Panel** | `#wf-steps-content` | Right panel in Detail Area. Uses flex column layout so headers stay fixed and split panes scroll independently. Content depends on Section Nav selection — all sections (including Timeline) render via `renderDetailCol` → `commitDetailHtml` redirect. |
-| **Timeline (v1.9.2)** | — (inside Steps Panel) | Reuses the full v1.9.2 timeline renderer (`renderStepListHtml`): human messages, thinking blocks with duration, tool calls with name/preview/status, star buttons, minimap, and focused split-pane mode. Replaces the earlier flat turn list. |
+| **Timeline (v1.9.2)** | — (inside Steps Panel) | Reuses the full v1.9.2 timeline renderer (`renderStepListHtml`): human messages, thinking blocks with duration, tool calls with name/preview/status, star buttons, and minimap. Replaces the earlier flat turn list. |
 | **Focused Mode** | **Removed (P16).** Steps and Step Detail are always side-by-side with a draggable resize handle between them. No mode to enter/exit. Replaces the former `.focused.wf-active` split-pane toggle. |
 | **Position Cursor** | `#wf-cursor` | Semi-transparent accent-colored rect in swimlane (`position:absolute`, `z-index:10`) spanning the selected turn's time range (`receivedAt` to `receivedAt + elapsed`). Overview canvas draws a matching `fillRect`. Both use `_wfFindTurn` to resolve the turn object. Min width 3px; overview clamps to canvas bounds. Updated by `wfHighlightTurn`, `wfDeferRender` (pan/zoom), and `selectStep` (step navigation). All three areas (overview, swimlane, step list) stay in sync. |
-| **Step Row** | `.tl-step-summary` | One step's display in the focused timeline. Row number + tool name/preview + status (✓/✗) + star + optional source badge. |
+| **Step Row** | `.tl-step-summary` | One step's display in the timeline. Row number + tool name/preview + status (✓/✗) + star + optional source badge. |
 | **Tool Group** | `.step-tools` | Vertical list of tool calls with ┌│└ brackets when multiple. |
 | **Spawn Badge** | `.spawn-badge` | `⑂ agent-name` marker in a Tool Group indicating an Agent spawn. |
 | **Idle Separator** | `.step-idle-sep` | Amber `⏸ 10.0m` row between Step Rows where idle > 5 min. |
@@ -153,7 +153,7 @@ All code, comments, and discussions use these names consistently.
 │          │               │  │ COST  $0.738         │ │                   ││
 │          │               │  │ ▒▒▒▒▒▒▒▒ ⏸ ▒▒████   │ │                   ││
 │          │               │  └──────────────────────┘ └───────────────────┘│
-│          │               │  ↑↓ steps  Esc exit  ⌘scroll zoom  drag pan   │
+│          │               │  ↑↓ steps  Esc reset  ⌘scroll zoom  drag pan  │
 └──────────┴───────────────┴────────────────────────────────────────────────┘
 ```
 
@@ -494,7 +494,7 @@ All changes behind `@media (pointer: coarse)` or `touchstart` detection — zero
 - **Small targets**: snap-to-nearest bar within 22px radius (O(log n) binary search)
 - **No `navigator.vibrate()`** (not supported in Safari)
 
-### P10: Context Minimap — B++ Design (score 9.7)
+### P10: Context Minimap — B++ Design (score 9.3)
 
 Full-height Zed-inspired minimap with inline step labels, always visible alongside the step list. Addresses problems #11 and #12 simultaneously.
 
@@ -616,7 +616,7 @@ Overview, swimlane turn bars, and minimap fill all reference this one object.
 
 | Element | Direction | Selection marker | Additional signals |
 |---------|-----------|------------------|--------------------|
-| Overview | Horizontal, 2-6px micro blocks | 1px bright vertical indicator line on selected turn | Viewport rect |
+| Overview | Horizontal, 2-6px micro blocks | Viewport rect (indicator line parked — #111) | Scale labels, duration badge |
 | Swimlane turn bar | Horizontal, 8px × width∝duration | Semi-transparent accent position cursor rect | Spawn connectors, gap spacing |
 | Minimap fill | **Vertical**, height∝tokens, 60-70px wide | Hover highlight | Zone threshold dashed lines, bottom size label, **inline step labels** |
 
@@ -680,9 +680,9 @@ Minimap participates in the existing bidirectional selection sync (P5). No new s
 
 This matches swimlane behavior: hover shows tooltip, click triggers sync. Consistent across all three elements.
 
-#### Overview indicator line (from P12)
+#### Overview indicator line (parked — #111 closed)
 
-The overview bar draws a 1px bright vertical line at the selected turn's time position. This line updates on any `selectTurn` call regardless of source (swimlane click, step list click, minimap click, keyboard nav). Implementation: extend `wfDrawOverview` to draw the indicator using `wfState.selectedTurnId` position.
+A 1px bright vertical line in the overview at the selected turn's position was considered but parked — the swimlane position cursor is visible enough in the current layout. Revisit if P10 minimap changes the focused-area proportions enough to obscure the swimlane cursor.
 
 ### P14: Minimap Follows Selected Turn (score 9.2)
 
@@ -757,6 +757,9 @@ Agent switch changes: fill ratio, zone color, bottom label, step content. Does N
 | Cost estimates | Rough pricing ($3/M in, $0.30/M cache, $15/M out) | Use ccxray's `server/pricing.js` for accurate rates |
 | Touch step rows | 24px height below 44pt HIG | Full-width tap area adequate for dev tool audience |
 | Chart on narrow screen | Scroll fallback at <2px/bar | Binning trades fidelity, not worth it |
+| Detail width (P16) | No focused mode — detail limited to ~60% of right area | Draggable resize handle; full-screen detail view if resize proves insufficient |
+| Minimap label crowding (P10) | Inline labels may crowd at 50+ steps | Coalescence merges small steps, reducing label count at exactly the point crowding would occur |
+| Overview indicator (P15) | Parked — no selected-turn marker in overview | Swimlane cursor is visible enough; revisit after P10 minimap changes layout |
 
 ## Test Data
 
