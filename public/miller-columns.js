@@ -577,7 +577,7 @@ function _navigateTargetInner(target, opts) {
       if (!loadResult.ok) return loadResult;
       selectedSection = 'timeline';
       setSelectedStepSelection(target.stepIdx, target.sub);
-      if (!isFocusedMode && opts.focus !== false && typeof enterFocusedMode === 'function') {
+      if (!inSplitView() && opts.focus !== false && typeof enterFocusedMode === 'function') {
         enterFocusedMode();
       } else {
         renderDetailCol();
@@ -748,7 +748,7 @@ function _selectTimelineStepWhenReady(turnIdx, stepIdx, sub) {
     const current = allEntries[turnIdx];
     if (!current || !current.reqLoaded || typeof prepareTimelineSteps !== 'function' || typeof selectStep !== 'function') return;
     selectedSection = 'timeline';
-    if (!isFocusedMode && typeof enterFocusedMode === 'function') {
+    if (!inSplitView() && typeof enterFocusedMode === 'function') {
       setSelectedStepSelection(stepIdx, sub);
       enterFocusedMode();
     } else {

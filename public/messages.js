@@ -689,8 +689,8 @@ function renderStepDetailHtml(req, tok) {
 
 function selectStep(stepIdx, sub) {
   if (!currentSteps[stepIdx]) return; // guard: invalid step index
-  // If not in focused mode, enter it first (click on step = drill into timeline)
-  if (!isFocusedMode && typeof enterFocusedMode === 'function') {
+  // If not in focused/split mode, enter it first (click on step = drill into timeline)
+  if (!inSplitView() && typeof enterFocusedMode === 'function') {
     if (typeof setSelectedStepSelection === 'function') setSelectedStepSelection(stepIdx, sub);
     else selectedMessageIdx = stepIdx * 1000 + (sub === 'thinking' ? 999 : (typeof sub === 'number' ? sub : 0));
     enterFocusedMode();
