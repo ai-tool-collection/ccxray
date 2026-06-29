@@ -1078,18 +1078,22 @@ function initMinimapInteractions(minimapEl, scrollAreaEl) {
 }
 
 // P16: draggable horizontal resize between Steps and Detail panels
+// ponytail: min-widths read from CSS — single source of truth, no hardcoded numbers
 function initStepsResize(handle, leftPane) {
+  var parent = leftPane.parentElement;
+  var detail = parent && parent.querySelector('.tl-split-detail');
+  if (!detail) return;
+  var minL = parseInt(getComputedStyle(leftPane).minWidth) || 220;
+  var minR = parseInt(getComputedStyle(detail).minWidth) || 280;
   var startX, startW;
   function onMove(e) {
-    var raw = startW + (e.clientX - startX);
-    var parent = leftPane.parentElement;
-    var maxW = parent ? parent.clientWidth - 320 - handle.offsetWidth : 500;
-    leftPane.style.width = Math.max(180, Math.min(raw, maxW)) + 'px';
+    var w = Math.max(minL, Math.min(startW + e.clientX - startX, parent.clientWidth - minR));
+    leftPane.style.width = w + 'px';
   }
   function onUp() {
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
-    localStorage.setItem('ccxray-steps-width', parseInt(leftPane.style.width));
+    localStorage.setItem('ccxray-steps-width', String(parseInt(leftPane.style.width)));
   }
   handle.addEventListener('mousedown', function(e) {
     e.preventDefault();
