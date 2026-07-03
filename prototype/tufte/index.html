@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ccxray — Workflow View Prototype</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0d1117; color: #e6edf3;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 13px; line-height: 1.4;
+  overflow: hidden; height: 100vh; display: flex; flex-direction: column;
+}
+body.dragging { user-select: none; -webkit-user-select: none; cursor: grabbing !important; }
+
+/* ── Topbar ──────────────────────────────────────────────────────────── */
+#topbar {
+  display: flex; align-items: center; height: 28px; padding: 0 12px;
+  background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0;
+  font-family: 'SF Mono','Menlo','Monaco',monospace; font-size: 11px;
+}
+#topbar .brand { color: #3fb950; font-weight: 700; margin-right: 12px; }
+#topbar .nav-item { color: #8b949e; }
+#topbar .nav-item a { color: #8b949e; text-decoration: none; }
+#topbar .nav-item a:hover { color: #e6edf3; }
+#topbar .nav-sep { color: #484f58; margin: 0 6px; }
+#topbar .right { margin-left: auto; display: flex; gap: 12px; align-items: center; }
+#topbar .quota-bar { width: 80px; height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
+#topbar .quota-fill { height: 100%; background: #58a6ff; border-radius: 3px; }
+
+/* ── Main layout: 3 columns ──────────────────────────────────────────── */
+#main-layout { display: flex; flex: 1; min-height: 0; }
+
+/* Projects column */
+#projects-col {
+  width: 160px; flex-shrink: 0; border-right: 1px solid #30363d;
+  overflow-y: auto; background: #0d1117;
+  font-family: 'SF Mono','Menlo','Monaco',monospace; font-size: 11px;
+}
+#projects-col .col-header {
+  padding: 6px 10px; color: #484f58; font-size: 9px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  border-bottom: 1px solid #1c2128; position: sticky; top: 0; background: #0d1117;
+}
+.project-item {
+  padding: 8px 10px; border-bottom: 1px solid #1c2128; cursor: pointer;
+}
+.project-item:hover { background: #161b22; }
+.project-item.active { background: #161b22; border-left: 2px solid #3fb950; }
+.project-item .proj-name { color: #e6edf3; font-weight: 600; }
+.project-item .proj-meta { color: #8b949e; font-size: 10px; }
+
+/* Sessions column */
+#sessions-col {
+  width: 200px; flex-shrink: 0; border-right: 1px solid #30363d;
+  overflow-y: auto; background: #0d1117;
+  font-family: 'SF Mono','Menlo','Monaco',monospace; font-size: 11px;
+}
+#sessions-col .col-header {
+  padding: 6px 10px; color: #484f58; font-size: 9px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  border-bottom: 1px solid #1c2128; position: sticky; top: 0; background: #0d1117;
+}
+.session-item {
+  padding: 8px 10px; border-bottom: 1px solid #1c2128; cursor: pointer;
+}
+.session-item:hover { background: #161b22; }
+.session-item.active { background: #161b22; border-left: 2px solid #58a6ff; }
+.session-item .sess-name { color: #e6edf3; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session-item .sess-meta { color: #8b949e; font-size: 10px; }
+.session-item .sess-cost { color: #3fb950; font-size: 10px; }
+
+/* Right content area: timeline + detail, no separator */
+#right-area { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+
+/* Timeline section — two-SVG split: sticky main lane + scrollable sub-lanes */
+/* ponytail: P1 — max-height set dynamically by JS based on lane count */
+#timeline-section { position: relative; flex-shrink: 0; background: #0d1117; overflow-y: auto; overflow-x: hidden; transition: max-height 200ms ease; }
+#timeline-header { position: sticky; top: 0; z-index: 5; background: #0d1117; }
+#main-svg, #macro-svg { user-select: none; -webkit-user-select: none; cursor: grab; display: block; }
+.wf-toggle { cursor: pointer; fill: #8b949e; }
+.wf-toggle:hover { fill: #e6edf3; }
+#zoom-label {
+  position: absolute; top: 4px; right: 12px; color: #484f58; font-size: 10px;
+  font-family: 'SF Mono','Menlo','Monaco',monospace; z-index: 10;
+}
+/* Resize handle between timeline and detail */
+#resize-handle {
+  height: 4px; cursor: row-resize; background: #0d1117; flex-shrink: 0;
+  border-top: 1px solid #30363d; border-bottom: 1px solid #30363d;
+}
+#resize-handle:hover { background: #58a6ff33; }
+
+/* Overview bar (Shneiderman: overview first, then zoom+filter, then detail) */
+#overview-bar {
+  display: flex; align-items: center; height: 32px; flex-shrink: 0;
+  border-bottom: 1px solid #30363d; background: #161b22;
+}
+#overview-label {
+  width: 240px; flex-shrink: 0; padding: 0 10px;
+  display: flex; align-items: center; gap: 4px;
+  font-family: 'SF Mono','Menlo','Monaco',monospace;
+  font-size: 9px; color: #484f58; text-transform: uppercase; letter-spacing: 0.5px;
+}
+#overview-label span { margin-right: auto; }
+#overview-label button {
+  background: transparent; border: 1px solid #30363d; color: #8b949e;
+  width: 18px; height: 18px; font-size: 12px; line-height: 1; cursor: pointer;
+  border-radius: 2px; font-family: 'SF Mono','Menlo','Monaco',monospace;
+  display: flex; align-items: center; justify-content: center; padding: 0;
+}
+#overview-label button:hover { color: #e6edf3; border-color: #8b949e; }
+#minimap { flex: 1; min-width: 0; height: 28px; cursor: pointer; display: block; margin: 2px 8px 2px 0; }
+
+/* Detail area (flows continuously from timeline, no border between) */
+#detail-area { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+
+/* Agent Card (left side of detail) */
+#agent-card {
+  width: 240px; flex-shrink: 0; overflow-y: auto; background: #161b22;
+  border-right: 1px solid #30363d;
+  font-family: 'SF Mono','Menlo','Monaco',monospace; font-size: 11px;
+  padding: 0;
+}
+#agent-card-header {
+  padding: 8px 10px; border-bottom: 1px solid #30363d; position: sticky; top: 0;
+  background: #161b22; z-index: 5;
+}
+#agent-card-header .ac-name { color: #e6edf3; font-weight: 600; font-size: 13px; }
+#agent-card-header .ac-model { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; margin-left: 4px; }
+#agent-card-header .ac-meta { color: #8b949e; font-size: 10px; margin-top: 2px; }
+#agent-card-header .ac-star { float: right; cursor: pointer; color: #484f58; font-size: 14px; }
+#agent-card-header .ac-star:hover { color: #d29922; }
+#agent-card-body { padding: 10px; }
+#agent-card-body .ac-section { margin-bottom: 12px; }
+#agent-card-body .ac-label { color: #484f58; font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
+#agent-card-body .ac-value { color: #e6edf3; }
+#agent-card-body .ac-dim { color: #8b949e; }
+#agent-card-body .ac-warn { color: #f85149; }
+.minimap-canvas { width: 100%; height: 48px; margin-top: 4px; cursor: pointer; display: block; }
+.sparkline-inline { width: 100%; height: 14px; display: block; margin-top: 2px; cursor: pointer; }
+.ac-nav-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 0; border-bottom: 1px solid #1c2128; cursor: pointer; color: #8b949e;
+}
+.ac-nav-item:hover { color: #e6edf3; }
+.ac-nav-item.active { color: #e6edf3; background: #21262d; border-radius: 3px; margin: 0 -4px; padding: 5px 4px; }
+.ac-nav-dot { width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; display: inline-block; }
+.ac-nav-badge {
+  background: #21262d; border: 1px solid #30363d; border-radius: 3px;
+  padding: 1px 5px; font-size: 10px; color: #8b949e;
+}
+.ac-nav-chevron { color: #484f58; }
+.ac-back-btn {
+  display: block; width: 100%; padding: 5px; margin-top: 8px;
+  background: transparent; border: 1px solid #30363d; color: #8b949e;
+  cursor: pointer; font-family: 'SF Mono','Menlo','Monaco',monospace;
+  font-size: 10px; border-radius: 3px; text-align: center;
+}
+.ac-back-btn:hover { color: #e6edf3; border-color: #8b949e; }
+
+/* P2: Chart header — sticky inside steps panel */
+#chart-header {
+  position: sticky; top: 0; z-index: 5; background: #0d1117;
+  padding: 4px 8px; border-bottom: 1px solid #30363d; flex-shrink: 0;
+}
+#chart-header .chart-label {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 8px; text-transform: uppercase; letter-spacing: 0.5px;
+  color: #484f58; margin-bottom: 1px;
+  font-family: 'SF Mono','Menlo','Monaco',monospace;
+}
+#chart-header .minimap-canvas { width: 100%; height: 56px; display: block; cursor: pointer; }
+#chart-header .sparkline-inline { width: 100%; height: 14px; display: block; cursor: pointer; margin-bottom: 2px; }
+
+/* Timeline Steps (right side of detail) */
+#timeline-steps {
+  flex: 1; overflow-y: auto; overflow-x: auto; padding: 0;
+  font-family: 'SF Mono','Menlo','Monaco',monospace; font-size: 12px;
+  display: flex; flex-direction: column;
+}
+#steps-header {
+  padding: 6px 12px; border-bottom: 1px solid #30363d;
+  position: sticky; top: 0; background: #0d1117; z-index: 5;
+  font-size: 11px; color: #8b949e;
+}
+#steps-header .sh-agent { color: #e6edf3; }
+#steps-list { padding: 0 12px 12px; }
+.step-row {
+  padding: 4px 0; border-bottom: 1px solid #1c2128; display: flex; gap: 8px;
+  align-items: flex-start; cursor: pointer;
+}
+.step-row:hover { background: #161b22; }
+.step-row.selected { background: #1a2332; border-left: 2px solid #58a6ff; padding-left: 6px; }
+.step-row.in-view { background: #121a14; }
+.step-num { color: #484f58; min-width: 32px; text-align: right; flex-shrink: 0; font-size: 11px; }
+.step-type { min-width: 60px; flex-shrink: 0; }
+.step-type-badge { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 10px; border: 1px solid #30363d; }
+.step-content { color: #8b949e; flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.step-content .tool-name { color: #3fb950; font-weight: 600; }
+.step-content .tool-count { color: #8b949e; font-size: 10px; margin-left: 1px; }
+.step-content .tool-result { color: #484f58; font-size: 11px; }
+.step-tools { display: flex; flex-direction: column; gap: 1px; }
+.step-tool-line { display: flex; align-items: center; gap: 4px; line-height: 1.3; }
+.step-bracket { color: #484f58; width: 8px; text-align: center; flex-shrink: 0; }
+.step-duration { color: #484f58; font-size: 11px; min-width: 50px; text-align: right; flex-shrink: 0; }
+.step-ctx { color: #484f58; font-size: 10px; min-width: 50px; text-align: right; flex-shrink: 0; }
+.step-star { color: #484f58; cursor: pointer; min-width: 16px; text-align: center; flex-shrink: 0; font-size: 12px; }
+.step-star:hover { color: #d29922; }
+.step-star.starred { color: #d29922; }
+.spawn-badge { color: #ff8a65; }
+.step-idle-sep {
+  display: flex; align-items: center; gap: 6px; padding: 2px 12px;
+  font-size: 10px; color: #d29922;
+  font-family: 'SF Mono','Menlo','Monaco',monospace;
+}
+.step-idle-line { flex: 1; height: 1px; background: #d2992244; }
+.step-idle-label { white-space: nowrap; flex-shrink: 0; }
+.agent-empty { color: #484f58; padding: 20px 16px; }
+
+/* Shared */
+.time-axis { fill: #8b949e; font-size: 10px; font-family: 'SF Mono','Menlo','Monaco',monospace; }
+.lane-label { fill: #e6edf3; font-size: 11px; font-family: 'SF Mono','Menlo','Monaco',monospace; pointer-events: none; }
+.lane-label-dim { fill: #8b949e; font-size: 10px; font-family: 'SF Mono','Menlo','Monaco',monospace; pointer-events: none; }
+.spawn-line { stroke: #30363d; stroke-width: 0.5; }
+.lane-bg { cursor: pointer; }
+
+#tooltip {
+  position: fixed; pointer-events: none; background: #1c2128; border: 1px solid #30363d;
+  padding: 6px 10px; font-family: 'SF Mono','Menlo','Monaco',monospace; font-size: 11px;
+  color: #e6edf3; z-index: 200; white-space: pre-line; max-width: 320px; display: none; line-height: 1.5;
+}
+
+/* Bottom bar */
+#bottom-bar {
+  height: 22px; padding: 0 12px; display: flex; align-items: center; gap: 16px;
+  background: #161b22; border-top: 1px solid #30363d; flex-shrink: 0;
+  font-family: 'SF Mono','Menlo','Monaco',monospace; font-size: 10px; color: #484f58;
+}
+#bottom-bar kbd { color: #8b949e; }
+</style>
+</head>
+<body>
+
+<!-- Topbar -->
+<div id="topbar">
+  <span class="brand">ccxray</span>
+  <span class="nav-item"><a href="#">Dashboard</a></span>
+  <span class="nav-sep">·</span>
+  <span class="nav-item"><a href="#">Usage</a></span>
+  <span class="nav-sep">·</span>
+  <span class="nav-item"><a href="#">System Prompt</a></span>
+  <div class="right">
+    <span class="nav-item" style="color:#3fb950">●1 streaming</span>
+    <span class="nav-item">Context HUD</span>
+    <div class="quota-bar"><div class="quota-fill" style="width:64%"></div></div>
+    <span class="nav-item">63.8%</span>
+  </div>
+</div>
+
+<!-- Main 3-column layout -->
+<div id="main-layout">
+  <!-- Projects column -->
+  <div id="projects-col">
+    <div class="col-header">PROJECTS</div>
+    <div id="projects-list"></div>
+  </div>
+
+  <!-- Sessions column -->
+  <div id="sessions-col">
+    <div class="col-header">SESSIONS</div>
+    <div id="sessions-list"></div>
+  </div>
+
+  <!-- Right area: timeline + detail -->
+  <div id="right-area">
+    <!-- Overview bar: full-width navigation, always visible above timeline -->
+    <div id="overview-bar">
+      <div id="overview-label">
+        <span>OVERVIEW</span>
+        <button id="zoom-in-btn" title="Zoom in">+</button>
+        <button id="zoom-out-btn" title="Zoom out">−</button>
+        <button id="zoom-reset-btn" title="Reset zoom">⟲</button>
+      </div>
+      <canvas id="minimap"></canvas>
+    </div>
+
+    <!-- Timeline: sticky main lane + scrollable sub-lanes -->
+    <div id="timeline-section">
+      <div id="timeline-header">
+        <span id="zoom-label"></span>
+        <svg id="main-svg"></svg>
+      </div>
+      <svg id="macro-svg"></svg>
+    </div>
+
+    <div id="resize-handle" title="Drag to resize"></div>
+
+    <!-- Detail area -->
+    <div id="detail-area">
+      <div id="agent-card">
+        <div id="agent-card-header"></div>
+        <div id="agent-card-body"></div>
+      </div>
+      <div id="timeline-steps">
+        <div id="chart-header"></div>
+        <div id="steps-scroll" style="flex:1;overflow-y:auto;min-height:0;">
+          <div id="steps-header"></div>
+          <div id="steps-list">
+            <div class="agent-empty">select a session to begin</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bottom bar -->
+<div id="bottom-bar">
+  <span><kbd>↑↓</kbd> steps</span>
+  <span><kbd>Esc</kbd> exit</span>
+  <span><kbd>f</kbd> ★ star</span>
+  <span><kbd>n</kbd> next star</span>
+  <span>scroll ↔ pan  ↕ lanes  <kbd>⌘</kbd>scroll zoom</span>
+</div>
+
+<div id="tooltip"></div>
+<script src="tufte.js?v=2"></script>
+</body>
+</html>

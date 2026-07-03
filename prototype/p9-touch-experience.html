@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>P9: iPad/Touch Experience Design</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0d1117; color: #e6edf3;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 13px; line-height: 1.4;
+}
+h2 { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; padding: 12px 16px 4px; }
+.mono { font-family: 'SF Mono','Menlo','Monaco',monospace; }
+
+.comparison { display: flex; gap: 24px; padding: 0 16px 16px; }
+.panel {
+  flex: 1; border: 1px solid #30363d; border-radius: 6px; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.panel-title {
+  background: #161b22; padding: 8px 12px; font-size: 11px; color: #8b949e;
+  border-bottom: 1px solid #30363d; font-family: 'SF Mono','Menlo',monospace;
+  display: flex; justify-content: space-between; flex-shrink: 0;
+}
+.tag { padding: 1px 6px; border-radius: 3px; font-size: 10px; }
+.tag-desktop { background: #58a6ff22; color: #58a6ff; border: 1px solid #58a6ff44; }
+.tag-touch { background: #d2a8ff22; color: #d2a8ff; border: 1px solid #d2a8ff44; }
+
+/* ── Shared elements ─────────────────────────────────────── */
+.demo-section { padding: 16px; border-bottom: 1px solid #1c2128; }
+.demo-label {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
+  color: #484f58; margin-bottom: 8px;
+}
+.anno { font-size: 9px; color: #f0883e; margin-top: 4px; display: block; }
+
+/* ── Resize Handle ───────────────────────────────────────── */
+.handle-demo { display: flex; flex-direction: column; align-items: stretch; }
+
+.handle-desktop {
+  height: 4px; background: #0d1117;
+  border-top: 1px solid #30363d; border-bottom: 1px solid #30363d;
+  cursor: row-resize; position: relative;
+}
+.handle-desktop:hover { background: #58a6ff33; }
+.handle-desktop .dim-label {
+  position: absolute; right: 4px; top: -10px; font-size: 8px; color: #484f58;
+}
+
+.handle-touch {
+  height: 16px; background: #0d1117;
+  border-top: 1px solid #30363d; border-bottom: 1px solid #30363d;
+  position: relative; display: flex; align-items: center; justify-content: center;
+}
+.handle-touch .grip {
+  display: flex; flex-direction: column; gap: 2px; opacity: 0.4;
+}
+.handle-touch .grip span {
+  width: 20px; height: 1px; background: #8b949e; border-radius: 1px;
+}
+/* 44px touch hit zone — visual stays 16px */
+.handle-touch::before {
+  content: ''; position: absolute;
+  top: -14px; bottom: -14px; left: 0; right: 0;
+  /* transparent — just expands hit zone */
+}
+.handle-touch .dim-label {
+  position: absolute; right: 4px; top: -10px; font-size: 8px; color: #484f58;
+}
+.hit-zone-viz {
+  position: absolute; top: -14px; bottom: -14px; left: 0; right: 0;
+  border: 1px dashed #d2a8ff44; border-radius: 2px;
+  pointer-events: none;
+}
+.hit-zone-label {
+  position: absolute; right: 4px; top: -24px; font-size: 8px; color: #d2a8ff88;
+}
+
+/* ── Overview Bar ────────────────────────────────────────── */
+.overview-demo {
+  height: 40px; background: #161b22; border: 1px solid #30363d;
+  border-radius: 4px; position: relative; display: flex; align-items: center;
+  padding: 0 8px;
+}
+.overview-controls {
+  display: flex; gap: 3px; margin-right: 8px;
+}
+.overview-controls button {
+  background: transparent; border: 1px solid #30363d; color: #8b949e;
+  width: 18px; height: 18px; font-size: 10px; cursor: pointer; border-radius: 2px;
+  display: flex; align-items: center; justify-content: center; padding: 0;
+}
+.overview-controls button:hover { color: #e6edf3; border-color: #8b949e; }
+.overview-controls button.brush-btn {
+  background: #58a6ff22; border-color: #58a6ff66; color: #58a6ff;
+}
+.minimap-strip {
+  flex: 1; height: 28px; background: #0d1117; border-radius: 2px;
+  position: relative;
+}
+.minimap-bars {
+  position: absolute; top: 4px; bottom: 4px; left: 0; right: 0;
+}
+.minimap-bar {
+  position: absolute; height: 3px; border-radius: 1px; top: 0;
+}
+.minimap-bar:nth-child(2) { top: 5px; }
+.minimap-bar:nth-child(3) { top: 10px; }
+.minimap-bar:nth-child(4) { top: 15px; }
+.viewport-rect {
+  position: absolute; top: 0; bottom: 0;
+  background: #58a6ff15; border: 1px solid #58a6ff66;
+  border-radius: 2px;
+}
+/* Edge zones */
+.edge-zone {
+  position: absolute; top: 0; bottom: 0; width: 20px;
+  /* normally invisible — shown on touch-down */
+}
+.edge-zone.left { left: -10px; }
+.edge-zone.right { right: -10px; }
+/* Touch feedback: edge lights up on contact */
+.edge-zone.active-viz {
+  border-left: 3px solid #58a6ff;
+}
+.edge-zone.active-viz.right {
+  border-left: none; border-right: 3px solid #58a6ff;
+}
+
+/* Zone labels for demo */
+.zone-label {
+  position: absolute; font-size: 7px; color: #d2a8ff88;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  pointer-events: none;
+}
+
+/* ── Touch Gestures Reference ────────────────────────────── */
+.gesture-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+.gesture-table th {
+  text-align: left; color: #484f58; font-size: 9px; text-transform: uppercase;
+  letter-spacing: 0.5px; padding: 4px 8px; border-bottom: 1px solid #30363d;
+}
+.gesture-table td {
+  padding: 5px 8px; border-bottom: 1px solid #1c2128; color: #e6edf3; vertical-align: top;
+}
+.gesture-table td:first-child { color: #8b949e; white-space: nowrap; width: 120px; }
+.gesture-table td:nth-child(2) { color: #58a6ff; width: 140px; }
+.gesture-table td:nth-child(3) { color: #d2a8ff; width: 140px; }
+.gesture-icon { font-size: 14px; margin-right: 4px; }
+
+/* ── Tooltip Demo ────────────────────────────────────────── */
+.tooltip-demo { position: relative; height: 80px; }
+.turn-bar-demo {
+  position: absolute; bottom: 20px; left: 40px;
+  width: 30px; height: 16px; background: #58a6ff; border-radius: 1px;
+}
+.finger-indicator {
+  position: absolute; bottom: 12px; left: 48px;
+  width: 24px; height: 24px; border-radius: 50%;
+  background: #ffffff11; border: 1px solid #ffffff33;
+}
+.tooltip-box {
+  position: absolute; bottom: 50px; left: 20px;
+  background: #21262d; border: 1px solid #30363d; border-radius: 4px;
+  padding: 4px 8px; font-size: 9px; white-space: nowrap;
+  box-shadow: 0 2px 8px #00000066;
+}
+.tooltip-box .tt-num { color: #e6edf3; font-weight: 600; }
+.tooltip-box .tt-dim { color: #8b949e; }
+
+/* ── Snap Demo ───────────────────────────────────────────── */
+.snap-demo { position: relative; height: 50px; display: flex; align-items: center; gap: 3px; padding-left: 8px; }
+.snap-bar { height: 16px; border-radius: 1px; }
+.snap-ring {
+  position: absolute; width: 44px; height: 44px; border-radius: 50%;
+  border: 1px dashed #d2a8ff44; top: 3px;
+  display: flex; align-items: center; justify-content: center;
+}
+.snap-ring .snap-dot { width: 6px; height: 6px; border-radius: 50%; background: #d2a8ff; }
+.snap-label { position: absolute; top: -2px; font-size: 7px; color: #d2a8ff88; }
+
+/* ── Direction Lock Demo ─────────────────────────────────── */
+.dir-demo {
+  position: relative; height: 80px; background: #161b22; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+}
+.dir-deadzone {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 1px dashed #484f58; position: relative;
+}
+.dir-deadzone .center-dot { position: absolute; top: 4px; left: 4px; width: 3px; height: 3px; border-radius: 50%; background: #8b949e; }
+.dir-arrow {
+  position: absolute; font-size: 9px; color: #8b949e;
+}
+.dir-arrow.h { color: #58a6ff; }
+.dir-arrow.v { color: #3fb950; }
+
+/* ── CSS-only rule box ───────────────────────────────────── */
+.rule-box {
+  padding: 16px; font-family: 'SF Mono','Menlo',monospace; font-size: 11px;
+  color: #8b949e; max-width: 1000px; margin: 0 auto 16px;
+}
+.rule-box p { margin-bottom: 4px; }
+.rule-box strong { color: #e6edf3; }
+.rule-box code { color: #3fb950; background: #21262d; padding: 1px 4px; border-radius: 2px; font-size: 10px; }
+</style>
+</head>
+<body>
+
+<h2>P9: iPad / Touch Experience — Desktop vs Touch Side-by-Side</h2>
+
+<!-- ═══ Section 1: Resize Handle ═══ -->
+<div class="comparison">
+<div class="panel">
+  <div class="panel-title"><span>Resize Handle</span><span class="tag tag-desktop">Desktop: 4px + hover cursor</span></div>
+  <div class="demo-section">
+    <div class="handle-demo">
+      <div style="height:40px; background:#0d1117; display:flex; align-items:flex-end; justify-content:center;">
+        <span class="mono" style="font-size:9px; color:#484f58;">timeline area ↑</span>
+      </div>
+      <div class="handle-desktop">
+        <span class="dim-label mono">4px</span>
+      </div>
+      <div style="height:40px; background:#0d1117; display:flex; align-items:flex-start; justify-content:center; padding-top:4px;">
+        <span class="mono" style="font-size:9px; color:#484f58;">↓ detail area</span>
+      </div>
+    </div>
+    <span class="anno">Discoverable via :hover cursor change (row-resize)</span>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-title"><span>Resize Handle</span><span class="tag tag-touch">Touch: 16px visual + 44px hit zone</span></div>
+  <div class="demo-section">
+    <div class="handle-demo">
+      <div style="height:34px; background:#0d1117; display:flex; align-items:flex-end; justify-content:center;">
+        <span class="mono" style="font-size:9px; color:#484f58;">timeline area ↑</span>
+      </div>
+      <div class="handle-touch" style="position:relative;">
+        <div class="grip"><span></span><span></span><span></span></div>
+        <span class="dim-label mono">16px visual</span>
+        <div class="hit-zone-viz"></div>
+        <span class="hit-zone-label mono">44px hit zone (::before)</span>
+      </div>
+      <div style="height:34px; background:#0d1117; display:flex; align-items:flex-start; justify-content:center; padding-top:4px;">
+        <span class="mono" style="font-size:9px; color:#484f58;">↓ detail area</span>
+      </div>
+    </div>
+    <span class="anno">Grip icon (≡) visible. ::before pseudo expands hit zone to 44px (HIG compliant). Visual stays 16px.</span>
+  </div>
+</div>
+</div>
+
+<!-- ═══ Section 2: Overview Bar ═══ -->
+<div class="comparison">
+<div class="panel">
+  <div class="panel-title"><span>Overview Bar</span><span class="tag tag-desktop">Desktop: cursor-based zones</span></div>
+  <div class="demo-section">
+    <div class="overview-demo">
+      <div class="overview-controls">
+        <button>+</button><button>−</button><button>⟲</button>
+      </div>
+      <div class="minimap-strip">
+        <div class="minimap-bars">
+          <div class="minimap-bar" style="background:#58a6ff; left:5%; width:85%;"></div>
+          <div class="minimap-bar" style="background:#f0883e; left:15%; width:30%;"></div>
+          <div class="minimap-bar" style="background:#d2a8ff; left:40%; width:25%;"></div>
+        </div>
+        <div class="viewport-rect" style="left:20%; width:35%;">
+        </div>
+        <div class="zone-label" style="left:22%; top:-12px;">cursor: grab</div>
+        <div class="zone-label" style="left:18%; top:32px;">cursor: col-resize</div>
+        <div class="zone-label" style="left:53%; top:32px;">cursor: col-resize</div>
+        <div class="zone-label" style="left:65%; top:-12px;">cursor: crosshair</div>
+      </div>
+    </div>
+    <span class="anno">Cursor icon changes per zone: grab (inside), col-resize (edges), crosshair (outside = brush)</span>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-title"><span>Overview Bar</span><span class="tag tag-touch">Touch: zone hit-test + 🔍 button</span></div>
+  <div class="demo-section">
+    <div class="overview-demo">
+      <div class="overview-controls">
+        <button>+</button><button>−</button><button>⟲</button>
+        <button class="brush-btn" title="Brush-to-zoom">🔍</button>
+      </div>
+      <div class="minimap-strip">
+        <div class="minimap-bars">
+          <div class="minimap-bar" style="background:#58a6ff; left:5%; width:85%;"></div>
+          <div class="minimap-bar" style="background:#f0883e; left:15%; width:30%;"></div>
+          <div class="minimap-bar" style="background:#d2a8ff; left:40%; width:25%;"></div>
+        </div>
+        <div class="viewport-rect" style="left:20%; width:35%;">
+          <!-- Expanded edge zones -->
+          <div class="edge-zone left active-viz"></div>
+          <div class="edge-zone right active-viz"></div>
+        </div>
+        <div class="zone-label" style="left:22%; top:-12px;">drag = pan</div>
+        <div class="zone-label" style="left:14%; top:32px; color:#58a6ff88;">±20px edge (lights up on touch)</div>
+        <div class="zone-label" style="left:65%; top:-12px;">tap = jump center</div>
+      </div>
+    </div>
+    <span class="anno">No cursor needed. Edges light up (3px #58a6ff) on touch-down. 🔍 button replaces hidden long-press brush-to-zoom.</span>
+  </div>
+</div>
+</div>
+
+<!-- ═══ Section 3: Tooltip + Snap-to-Nearest ═══ -->
+<div class="comparison">
+<div class="panel">
+  <div class="panel-title"><span>Turn Bar Interaction</span><span class="tag tag-desktop">Desktop: hover tooltip + precise click</span></div>
+  <div class="demo-section">
+    <div class="tooltip-demo">
+      <div class="tooltip-box" style="bottom:42px; left:28px;">
+        <span class="tt-num">#12</span> <span class="tt-dim">opus-4-6 · 8.2% · Read, Edit · 14s</span>
+      </div>
+      <div class="turn-bar-demo"></div>
+      <div style="position:absolute; bottom:8px; left:30px; font-size:8px; color:#484f58;" class="mono">↑ hover shows tooltip</div>
+    </div>
+    <span class="anno">Mouse hover shows tooltip. Click selects precisely on the bar.</span>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-title"><span>Turn Bar Interaction</span><span class="tag tag-touch">Touch: tap + snap-to-nearest + offset tooltip</span></div>
+  <div class="demo-section">
+    <div style="position:relative; height: 80px;">
+      <!-- Tooltip above finger -->
+      <div class="tooltip-box" style="bottom:58px; left:28px;">
+        <span class="tt-num">#12</span> <span class="tt-dim">opus-4-6 · 8.2% · Read, Edit · 14s</span>
+      </div>
+      <!-- Turn bar -->
+      <div class="turn-bar-demo" style="bottom:20px;"></div>
+      <!-- Finger indicator -->
+      <div class="finger-indicator"></div>
+      <!-- Snap radius viz -->
+      <div class="snap-ring" style="left:37px;">
+        <div class="snap-dot"></div>
+      </div>
+      <div style="position:absolute; bottom:2px; left:10px; font-size:7px; color:#d2a8ff88;" class="mono">22px snap radius</div>
+      <div style="position:absolute; top:2px; left:75px; font-size:7px; color:#f0883e88;" class="mono">tooltip 40px above touch ↗</div>
+    </div>
+    <span class="anno">Tap anywhere → snap to nearest bar within 22px. Tooltip above finger (not under it). Tap elsewhere = dismiss.</span>
+  </div>
+</div>
+</div>
+
+<!-- ═══ Section 4: Gesture Reference Table ═══ -->
+<div style="padding: 0 16px 16px;">
+<div class="panel">
+  <div class="panel-title"><span>Complete Gesture Map</span></div>
+  <div class="demo-section" style="padding: 8px;">
+    <table class="gesture-table mono">
+      <thead>
+        <tr><th>Zone</th><th>Desktop</th><th>iPad Touch</th><th>Result</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Timeline</td>
+          <td>Mouse drag</td>
+          <td>1-finger horizontal drag</td>
+          <td>Pan time axis</td>
+        </tr>
+        <tr>
+          <td>Timeline</td>
+          <td>Ctrl/⌘ + scroll</td>
+          <td>2-finger pinch</td>
+          <td>Zoom (center = gesture midpoint)</td>
+        </tr>
+        <tr>
+          <td>Timeline</td>
+          <td>Double-click</td>
+          <td>Double-tap</td>
+          <td>Reset zoom</td>
+        </tr>
+        <tr>
+          <td>Timeline</td>
+          <td>Vertical scroll</td>
+          <td>1-finger vertical drag</td>
+          <td>Scroll lanes (native momentum)</td>
+        </tr>
+        <tr>
+          <td>Timeline</td>
+          <td>Hover turn bar</td>
+          <td>Tap (snap-to-nearest 22px)</td>
+          <td>Tooltip + select turn</td>
+        </tr>
+        <tr>
+          <td>Overview: inside</td>
+          <td>Drag (grab cursor)</td>
+          <td>Drag</td>
+          <td>Pan viewport</td>
+        </tr>
+        <tr>
+          <td>Overview: edge</td>
+          <td>Drag (col-resize cursor)</td>
+          <td>Drag (edge lights up on touch)</td>
+          <td>Resize viewport start/end</td>
+        </tr>
+        <tr>
+          <td>Overview: outside</td>
+          <td>Drag (crosshair → brush)</td>
+          <td>Tap = jump center</td>
+          <td>Move viewport / zoom range</td>
+        </tr>
+        <tr>
+          <td>Overview: 🔍 button</td>
+          <td>Click</td>
+          <td>Tap → drag to define range</td>
+          <td>Brush-to-zoom (explicit)</td>
+        </tr>
+        <tr>
+          <td>Resize handle</td>
+          <td>Drag (row-resize cursor)</td>
+          <td>Drag (grip icon ≡, 44px zone)</td>
+          <td>Adjust timeline/detail split</td>
+        </tr>
+        <tr>
+          <td>Charts</td>
+          <td>Click bar</td>
+          <td>Tap (snap-to-nearest)</td>
+          <td>Select turn, blue cursor</td>
+        </tr>
+        <tr>
+          <td>Steps Panel</td>
+          <td>Scroll</td>
+          <td>1-finger vertical (native)</td>
+          <td>Scroll step list</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+</div>
+
+<!-- ═══ Section 5: Direction Lock ═══ -->
+<div style="padding: 0 16px 16px;">
+<div class="panel">
+  <div class="panel-title"><span>Direction Lock — 6px Dead Zone</span><span class="tag tag-touch">Timeline area only</span></div>
+  <div class="demo-section" style="display: flex; gap: 24px; align-items: center;">
+    <div class="dir-demo" style="width: 200px;">
+      <div class="dir-deadzone">
+        <div class="center-dot"></div>
+      </div>
+      <div class="dir-arrow h" style="top:37px; right:24px;">→ horizontal wins: JS pan (preventDefault)</div>
+      <div class="dir-arrow v" style="bottom:8px; left:40px;">↓ vertical wins: native scroll (passthrough)</div>
+      <div class="dir-arrow" style="top:8px; left:70px; font-size:8px;">6px dead zone</div>
+    </div>
+    <div class="mono" style="font-size:10px; color:#8b949e; flex:1;">
+      <p style="margin-bottom:4px;">First 6px of drag → measure <code style="color:#3fb950;">|ΔX| vs |ΔY|</code></p>
+      <p style="margin-bottom:4px;">• <span style="color:#58a6ff;">Horizontal wins</span> → <code style="color:#3fb950;">preventDefault()</code> + JS pan</p>
+      <p style="margin-bottom:4px;">• <span style="color:#3fb950;">Vertical wins</span> → passthrough to native scroll</p>
+      <p style="margin-bottom:4px;">• Direction locked for rest of gesture</p>
+      <p style="color:#f0883e;">⚠ touchmove listener must use { passive: false } in Safari</p>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ═══ Implementation Notes ═══ -->
+<div class="rule-box">
+  <p><strong>P9 Design Rules:</strong></p>
+  <p>• All touch adaptations behind <code>@media (pointer: coarse)</code> or <code>touchstart</code> detection. Desktop = zero impact.</p>
+  <p>• Resize handle: visual 16px + <code>::before</code> transparent 44px hit zone (Apple HIG compliant).</p>
+  <p>• Overview bar edge: lights up 3px #58a6ff on touch-down (200ms). Replaces cursor affordance.</p>
+  <p>• Brush-to-zoom: visible <code>🔍</code> button (not hidden long-press). Tap → brush mode → drag → release.</p>
+  <p>• Snap-to-nearest: 22px radius, <code>O(log n)</code> binary search. Works on turn bars + chart bars.</p>
+  <p>• Direction lock: <strong>6px</strong> dead zone (not 10px). <code>{ passive: false }</code> on touchmove listener.</p>
+  <p>• Pinch-to-zoom: JS <code>Math.hypot</code> on two-finger delta. <code>touch-action: pan-y</code> on SVGs.</p>
+  <p>• iPad Magic Keyboard → <code>pointer: fine</code> → desktop experience (correct behavior).</p>
+  <p>• No <code>navigator.vibrate()</code> (not supported in Safari).</p>
+  <p>• ~120 LOC total (100 JS + 20 CSS).</p>
+</div>
+
+</body>
+</html>

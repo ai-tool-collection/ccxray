@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>P7: Streaming / In-Progress Turn State</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0d1117; color: #e6edf3;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 13px; line-height: 1.4;
+}
+h2 { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; padding: 12px 16px 4px; }
+.mono { font-family: 'SF Mono','Menlo','Monaco',monospace; }
+
+.sections { display: flex; flex-direction: column; gap: 24px; padding: 0 16px 24px; max-width: 1100px; }
+
+.section {
+  border: 1px solid #30363d; border-radius: 6px; overflow: hidden;
+}
+.section-title {
+  background: #161b22; padding: 8px 12px; font-size: 11px; color: #8b949e;
+  border-bottom: 1px solid #30363d; font-family: 'SF Mono','Menlo',monospace;
+  display: flex; justify-content: space-between;
+}
+.section-title .tag { padding: 1px 6px; border-radius: 3px; font-size: 10px; }
+.tag-active { background: #3fb95022; color: #3fb950; border: 1px solid #3fb95044; }
+.tag-complete { background: #58a6ff22; color: #58a6ff; border: 1px solid #58a6ff44; }
+.tag-spawn { background: #d2a8ff22; color: #d2a8ff; border: 1px solid #d2a8ff44; }
+
+.section-body { padding: 16px; }
+
+/* ── Animations ──────────────────────────────────────────── */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+@keyframes pulse-line {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 0.2; }
+}
+@keyframes ghost-glow {
+  0%, 100% { border-right-color: #3fb95088; }
+  50% { border-right-color: #3fb95022; }
+}
+@keyframes flash-complete {
+  0% { background: #ffffff44; }
+  100% { background: transparent; }
+}
+
+/* ── Timeline Lane Demo ──────────────────────────────────── */
+.lane-demo { display: flex; flex-direction: column; gap: 8px; }
+.lane-row { display: flex; align-items: center; height: 44px; }
+.lane-label-demo {
+  width: 180px; flex-shrink: 0; font-size: 10px; padding: 0 8px;
+  display: flex; flex-direction: column; justify-content: center;
+}
+.lane-label-demo .ln { color: #e6edf3; }
+.lane-label-demo .lm { color: #8b949e; font-size: 9px; }
+.lane-label-demo.selected { border-left: 2px solid #58a6ff; background: #58a6ff0a; }
+.lane-label-demo.selected .ln::before { content: '▶ '; color: #58a6ff; }
+.lane-label-demo.spawning { opacity: 0.5; }
+
+.lane-bars-demo { flex: 1; height: 44px; position: relative; display: flex; flex-direction: column; }
+.turn-bars-row { height: 22px; display: flex; align-items: center; gap: 2px; padding: 2px 0; }
+.sparkline-row { height: 16px; }
+.sparkline-row svg { width: 100%; height: 100%; }
+
+/* Completed turn bar */
+.bar { height: 16px; border-radius: 1px; display: inline-block; }
+.bar-opus { background: #58a6ff; }
+.bar-haiku { background: #f0883e; }
+.bar-fable { background: #d2a8ff; }
+
+/* Ghost bar (active/streaming) */
+.bar-ghost {
+  height: 16px; border-radius: 1px; display: inline-block;
+  opacity: 0.3;
+  border-right: 2px dashed;
+  animation: ghost-glow 1.5s ease-in-out infinite;
+}
+.bar-ghost.opus { background: #58a6ff4d; border-right-color: #3fb95088; }
+.bar-ghost.haiku { background: #f0883e4d; border-right-color: #3fb95088; }
+
+/* Just-completed flash */
+.bar-flash {
+  height: 16px; border-radius: 1px; display: inline-block;
+  animation: flash-complete 0.3s ease-out;
+}
+
+/* Spawning lane dot */
+.spawn-dot {
+  color: #3fb950; font-size: 12px;
+  animation: pulse-dot 1.5s ease-in-out infinite;
+  margin-left: 4px;
+}
+
+/* ── Steps Panel Demo ────────────────────────────────────── */
+.steps-demo { max-width: 600px; }
+.step-row-demo {
+  padding: 4px 8px; border-bottom: 1px solid #1c2128;
+  display: flex; align-items: flex-start; gap: 6px; font-size: 10px;
+}
+.step-row-demo:hover { background: #161b22; }
+.step-row-demo.active-step {
+  background: #3fb95008;
+  border-left: 2px solid #3fb95066;
+}
+.step-row-demo.completed-step { }
+.step-row-demo.selected-step { border-left: 2px solid #58a6ff; background: #161b22; }
+.step-star { color: #484f58; font-size: 10px; flex-shrink: 0; width: 14px; }
+.step-dot-active {
+  color: #3fb950; font-size: 12px; flex-shrink: 0; width: 14px;
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+.step-num { color: #8b949e; flex-shrink: 0; min-width: 28px; }
+.step-tools { flex: 1; color: #3fb950; }
+.step-tools-pending { flex: 1; color: #8b949e; font-style: italic; }
+.step-bracket { color: #30363d; }
+.step-ctx { color: #8b949e; font-size: 9px; flex-shrink: 0; min-width: 32px; text-align: right; }
+.step-dur { color: #484f58; font-size: 9px; flex-shrink: 0; min-width: 36px; text-align: right; }
+.step-dur-live { color: #3fb950; font-size: 9px; flex-shrink: 0; min-width: 36px; text-align: right; }
+.step-idle { padding: 3px 8px; color: #d29922; font-size: 9px; border-bottom: 1px solid #1c2128; }
+.step-thinking { color: #d2a8ff; }
+
+/* ── Chart Demo ──────────────────────────────────────────── */
+.chart-demo { position: relative; max-width: 600px; }
+.chart-label-row {
+  display: flex; justify-content: space-between; font-size: 8px;
+  text-transform: uppercase; letter-spacing: 0.5px; color: #484f58; margin-bottom: 1px;
+}
+.chart-area {
+  width: 100%; height: 48px; background: #161b22; border-radius: 2px;
+  position: relative; overflow: hidden; margin-bottom: 4px;
+}
+.spark-area {
+  width: 100%; height: 14px; background: #161b22; border-radius: 2px;
+  position: relative; overflow: hidden; margin-bottom: 3px;
+}
+.c-bar { position: absolute; bottom: 0; border-radius: 1px 1px 0 0; }
+.active-line {
+  position: absolute; top: 0; bottom: 0; width: 1px; background: #3fb950;
+  animation: pulse-line 1.5s ease-in-out infinite;
+  z-index: 2;
+}
+
+/* ── Annotation ──────────────────────────────────────────── */
+.anno {
+  display: inline-block; font-size: 9px; color: #f0883e; margin-left: 8px;
+  font-family: 'SF Mono','Menlo',monospace; vertical-align: middle;
+}
+.rule-box {
+  padding: 16px; font-family: 'SF Mono','Menlo',monospace; font-size: 11px;
+  color: #8b949e; max-width: 900px; margin: 0 auto 16px;
+}
+.rule-box p { margin-bottom: 4px; }
+.rule-box strong { color: #e6edf3; }
+.rule-box code { color: #3fb950; background: #21262d; padding: 1px 4px; border-radius: 2px; font-size: 10px; }
+
+/* ── State table ─────────────────────────────────────────── */
+.state-table { width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 12px; }
+.state-table th { text-align: left; color: #484f58; font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 8px; border-bottom: 1px solid #30363d; }
+.state-table td { padding: 4px 8px; border-bottom: 1px solid #1c2128; color: #e6edf3; vertical-align: top; }
+.state-table td:first-child { color: #8b949e; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<h2>P7: Streaming / In-Progress Turn Visual States</h2>
+
+<div class="sections">
+
+<!-- ═══ Section 1: Timeline Lanes ═══ -->
+<div class="section">
+  <div class="section-title mono">
+    <span>Timeline Lanes — Active vs Completed vs Spawning</span>
+    <span class="tag tag-active">live session</span>
+  </div>
+  <div class="section-body">
+    <div class="lane-demo">
+      <!-- Main lane: some completed + one active -->
+      <div class="lane-row">
+        <div class="lane-label-demo selected mono">
+          <span class="ln">main</span>
+          <span class="lm">opus-4-6 · 1000K</span>
+        </div>
+        <div class="lane-bars-demo">
+          <div class="turn-bars-row">
+            <div class="bar bar-opus" style="width:20px;"></div>
+            <div class="bar bar-opus" style="width:35px;"></div>
+            <div class="bar bar-opus" style="width:15px;"></div>
+            <div class="bar bar-opus" style="width:28px;"></div>
+            <div class="bar bar-opus" style="width:42px;"></div>
+            <div class="bar bar-opus" style="width:18px;"></div>
+            <div class="bar bar-opus" style="width:30px;"></div>
+            <!-- Active turn: ghost bar -->
+            <div class="bar-ghost opus" style="width:24px;"></div>
+            <span class="anno">← ghost bar (30% opacity, dashed right border, pulsing)</span>
+          </div>
+          <div class="sparkline-row">
+            <svg viewBox="0 0 400 16" preserveAspectRatio="none">
+              <!-- sparkline stops before ghost bar — gap = "data pending" -->
+              <path d="M0,14 L30,13 L65,11 L85,9 L115,7 L155,6 L175,5 L210,4" fill="none" stroke="#58a6ff99" stroke-width="1"/>
+              <path d="M0,14 L30,13 L65,11 L85,9 L115,7 L155,6 L175,5 L210,4 L210,16 L0,16Z" fill="#58a6ff18"/>
+              <!-- gap annotation -->
+              <text x="220" y="10" fill="#f0883e" font-size="4" font-family="SF Mono,Menlo,monospace">← gap (no ctx% yet)</text>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sub-lane: completed -->
+      <div class="lane-row">
+        <div class="lane-label-demo mono">
+          <span class="ln">p1-research</span>
+          <span class="lm">haiku-4-5 · 200K</span>
+        </div>
+        <div class="lane-bars-demo">
+          <div class="turn-bars-row" style="padding-left: 40px;">
+            <div class="bar bar-haiku" style="width:12px;"></div>
+            <div class="bar bar-haiku" style="width:18px;"></div>
+            <div class="bar bar-haiku" style="width:8px;"></div>
+            <div class="bar bar-haiku" style="width:14px;"></div>
+            <div class="bar bar-haiku" style="width:10px;"></div>
+            <span class="anno">← all solid (completed)</span>
+          </div>
+          <div class="sparkline-row">
+            <svg viewBox="0 0 400 16" preserveAspectRatio="none">
+              <path d="M80,14 L100,10 L120,7 L140,5 L155,6" fill="none" stroke="#f0883e99" stroke-width="1"/>
+              <path d="M80,14 L100,10 L120,7 L140,5 L155,6 L155,16 L80,16Z" fill="#f0883e18"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sub-lane: actively streaming -->
+      <div class="lane-row">
+        <div class="lane-label-demo mono">
+          <span class="ln">code-review</span>
+          <span class="lm">haiku-4-5 · 200K</span>
+        </div>
+        <div class="lane-bars-demo">
+          <div class="turn-bars-row" style="padding-left: 80px;">
+            <div class="bar bar-haiku" style="width:10px;"></div>
+            <div class="bar-ghost haiku" style="width:18px;"></div>
+            <span class="anno">← subagent also streaming</span>
+          </div>
+          <div class="sparkline-row">
+            <svg viewBox="0 0 400 16" preserveAspectRatio="none">
+              <path d="M160,14 L175,8" fill="none" stroke="#f0883e99" stroke-width="1"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sub-lane: just spawned, no turns yet -->
+      <div class="lane-row">
+        <div class="lane-label-demo spawning mono">
+          <span class="ln">fixture-gen</span>
+          <span class="lm">haiku-4-5 · 200K</span>
+        </div>
+        <div class="lane-bars-demo">
+          <div class="turn-bars-row" style="padding-left: 120px;">
+            <span class="spawn-dot">●</span>
+            <span class="anno">← spawned, waiting for first turn (label 50% opacity)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Section 2: Steps Panel ═══ -->
+<div class="section">
+  <div class="section-title mono">
+    <span>Steps Panel — Active Row States</span>
+    <span class="tag tag-active">live updates</span>
+  </div>
+  <div class="section-body">
+    <div class="steps-demo mono">
+      <!-- Completed rows -->
+      <div class="step-row-demo selected-step">
+        <span class="step-star">★</span>
+        <span class="step-num">#5</span>
+        <span class="step-tools"><span class="step-bracket">┌</span> Bash<br><span class="step-bracket">│</span> Read ×3<br><span class="step-bracket">└</span> Edit</span>
+        <span class="step-ctx">8.2%</span>
+        <span class="step-dur">18s</span>
+      </div>
+      <div class="step-row-demo completed-step">
+        <span class="step-star">☆</span>
+        <span class="step-num">#6</span>
+        <span class="step-tools">Bash</span>
+        <span class="step-ctx">9.0%</span>
+        <span class="step-dur">6s</span>
+      </div>
+      <div class="step-row-demo completed-step">
+        <span class="step-star">☆</span>
+        <span class="step-num">#7</span>
+        <span class="step-tools"><span class="step-bracket">┌</span> Read<br><span class="step-bracket">└</span> Edit</span>
+        <span class="step-ctx">10.5%</span>
+        <span class="step-dur">14s</span>
+      </div>
+
+      <!-- Active: tools appearing incrementally -->
+      <div class="step-row-demo active-step">
+        <span class="step-dot-active">●</span>
+        <span class="step-num">#8</span>
+        <span class="step-tools"><span class="step-bracket">┌</span> Edit<br><span class="step-bracket">└</span> Bash</span>
+        <span class="step-ctx"></span>
+        <span class="step-dur-live">14s</span>
+      </div>
+      <span class="anno" style="margin-left: 20px;">↑ active: green ● pulse, tools appear incrementally, elapsed ticks, no ctx% yet</span>
+
+      <div style="height: 16px;"></div>
+
+      <!-- Active: thinking state (>3s no content) -->
+      <div class="step-row-demo active-step">
+        <span class="step-dot-active">●</span>
+        <span class="step-num">#8</span>
+        <span class="step-tools-pending step-thinking">🧠 thinking...</span>
+        <span class="step-ctx"></span>
+        <span class="step-dur-live">7s</span>
+      </div>
+      <span class="anno" style="margin-left: 20px;">↑ thinking: >3s no content_block_start → show 🧠 (replaces tool list until first tool arrives)</span>
+
+      <div style="height: 16px;"></div>
+
+      <!-- Just completed (flash) -->
+      <div class="step-row-demo completed-step" style="animation: flash-complete 2s ease-out;">
+        <span class="step-star">☆</span>
+        <span class="step-num">#8</span>
+        <span class="step-tools"><span class="step-bracket">┌</span> Edit<br><span class="step-bracket">└</span> Bash</span>
+        <span class="step-ctx">12.1%</span>
+        <span class="step-dur">22s</span>
+      </div>
+      <span class="anno" style="margin-left: 20px;">↑ just completed: ● → ☆, ctx% appears, timer stops, brief white flash</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Section 3: Charts ═══ -->
+<div class="section">
+  <div class="section-title mono">
+    <span>Charts (Steps Panel Header) — Active Turn Indicator</span>
+    <span class="tag tag-active">pulsing green line</span>
+  </div>
+  <div class="section-body">
+    <div class="chart-demo mono">
+      <div class="chart-label-row"><span>Context</span><span>peak 12.1%</span></div>
+      <div class="chart-area">
+        <div class="c-bar" style="left:2%; width:8%; height:15%; background:#3fb950;"></div>
+        <div class="c-bar" style="left:12%; width:8%; height:22%; background:#3fb950;"></div>
+        <div class="c-bar" style="left:22%; width:8%; height:30%; background:#3fb950;"></div>
+        <div class="c-bar" style="left:32%; width:8%; height:38%; background:#3fb950;"></div>
+        <div class="c-bar" style="left:42%; width:8%; height:45%; background:#d29922;"></div>
+        <div class="c-bar" style="left:52%; width:8%; height:52%; background:#d29922;"></div>
+        <div class="c-bar" style="left:62%; width:8%; height:48%; background:#d29922;"></div>
+        <!-- No bar for active turn — green pulsing line instead -->
+        <div class="active-line" style="left: 75%;"></div>
+      </div>
+
+      <div class="chart-label-row"><span>Cache</span><span>94.0% hit</span></div>
+      <div class="spark-area">
+        <div class="c-bar" style="left:2%; width:8%; height:90%; background:#3fb950;"></div>
+        <div class="c-bar" style="left:12%; width:8%; height:95%; background:#3fb950;"></div>
+        <div class="c-bar" style="left:22%; width:8%; height:88%; background:#3fb950;"></div>
+        <div class="c-bar" style="left:32%; width:8%; height:92%; background:#3fb950;"></div>
+        <div class="c-bar" style="left:42%; width:8%; height:96%; background:#3fb950;"></div>
+        <div class="c-bar" style="left:52%; width:8%; height:94%; background:#3fb950;"></div>
+        <div class="c-bar" style="left:62%; width:8%; height:91%; background:#3fb950;"></div>
+        <div class="active-line" style="left: 75%;"></div>
+      </div>
+
+      <div class="chart-label-row"><span>Cost</span><span>$2.18</span></div>
+      <div class="spark-area">
+        <div class="c-bar" style="left:2%; width:8%; height:40%; background:#ffa657;"></div>
+        <div class="c-bar" style="left:12%; width:8%; height:55%; background:#ffa657;"></div>
+        <div class="c-bar" style="left:22%; width:8%; height:35%; background:#ffa657;"></div>
+        <div class="c-bar" style="left:32%; width:8%; height:70%; background:#ffa657;"></div>
+        <div class="c-bar" style="left:42%; width:8%; height:50%; background:#ffa657;"></div>
+        <div class="c-bar" style="left:52%; width:8%; height:60%; background:#ffa657;"></div>
+        <div class="c-bar" style="left:62%; width:8%; height:45%; background:#ffa657;"></div>
+        <div class="active-line" style="left: 75%;"></div>
+      </div>
+      <span class="anno">↑ pulsing green line at rightmost X = "turn in progress, no data yet"</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Section 4: State Transition Table ═══ -->
+<div class="section">
+  <div class="section-title mono">
+    <span>State Transition Reference</span>
+  </div>
+  <div class="section-body">
+    <table class="state-table mono">
+      <thead>
+        <tr><th>Element</th><th>Streaming</th><th>Thinking (>3s)</th><th>Completion</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Turn bar</td>
+          <td>Ghost: 30% opacity, dashed right border, width grows 1fps</td>
+          <td>Same ghost bar (thinking is pre-tool)</td>
+          <td>→ solid, 100% opacity, width snaps. 200ms transition. Completion handler fires immediately (bypasses rAF throttle)</td>
+        </tr>
+        <tr>
+          <td>Sparkline</td>
+          <td>Gap (no point, path doesn't extend)</td>
+          <td>Same gap</td>
+          <td>→ point appended, path extends. CSS transition</td>
+        </tr>
+        <tr>
+          <td>Step row</td>
+          <td>● pulse + tools (incremental) + elapsed timer</td>
+          <td>● pulse + 🧠 thinking... + elapsed timer</td>
+          <td>→ ☆ + final tools + ctx% + duration. Brief white flash</td>
+        </tr>
+        <tr>
+          <td>Charts</td>
+          <td>Pulsing green line at rightmost X. No bar</td>
+          <td>Same green line</td>
+          <td>→ bar appears, green line moves right or disappears</td>
+        </tr>
+        <tr>
+          <td>Lane spawn</td>
+          <td>Label 50% opacity, pulsing ● in bars area</td>
+          <td>N/A</td>
+          <td>→ label 100% opacity, ● → first ghost bar</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+</div>
+
+<div class="rule-box">
+  <p><strong>P7 Design Rules:</strong></p>
+  <p>• <code>ghost bar</code> = model color 30% + dashed right border + pulse animation. Width updated 1fps via rAF.</p>
+  <p>• <code>completion</code> fires immediately on SSE message_stop, bypasses rAF throttle. 200ms CSS transition to solid.</p>
+  <p>• <code>🧠 thinking</code> shown after 3s with no content_block_start. Replaced by first tool name on arrival.</p>
+  <p>• <code>sparkline gap</code> — no estimate, no fake data. Gap = honest "pending."</p>
+  <p>• All animations use opacity/transform only (compositor layer, no reflow). ~25 LOC CSS + ~15 LOC JS.</p>
+</div>
+
+</body>
+</html>

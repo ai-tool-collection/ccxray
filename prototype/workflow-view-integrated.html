@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workflow View — Integrated Design (P1+P2+P7+P9)</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+  background: #0d1117; color: #e6edf3;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 13px; line-height: 1.4;
+  height: 100%; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.mono { font-family: 'SF Mono','Menlo','Monaco',monospace; }
+
+/* ── Tab switcher ────────────────────────────────────────── */
+.tab-bar {
+  display: flex; background: #161b22; border-bottom: 1px solid #30363d;
+  padding: 0 16px; position: sticky; top: 0; z-index: 100;
+}
+.tab {
+  padding: 8px 16px; font-size: 11px; color: #8b949e; cursor: pointer;
+  border-bottom: 2px solid transparent; font-family: 'SF Mono','Menlo',monospace;
+}
+.tab:hover { color: #e6edf3; }
+.tab.active { color: #e6edf3; border-bottom-color: #58a6ff; }
+.scene { display: none; flex: 1; min-height: 0; }
+.scene.active { display: flex; flex: 1; min-height: 0; }
+
+/* ── Main frame ──────────────────────────────────────────── */
+.frame {
+  flex: 1; display: flex; flex-direction: column; min-height: 0;
+}
+
+/* ── Topbar ──────────────────────────────────────────────── */
+.topbar {
+  display: flex; align-items: center; height: 28px; padding: 0 12px;
+  background: #161b22; border-bottom: 1px solid #30363d; flex-shrink: 0;
+  font-size: 11px;
+}
+.topbar .brand { color: #3fb950; font-weight: 700; margin-right: 12px; }
+.topbar .nav { color: #8b949e; }
+.topbar .sep { color: #484f58; margin: 0 6px; }
+.topbar .right { margin-left: auto; display: flex; gap: 12px; align-items: center; font-size: 10px; color: #8b949e; }
+.quota-bar { width: 80px; height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
+.quota-fill { height: 100%; border-radius: 3px; }
+
+/* ── 3-column layout ─────────────────────────────────────── */
+.columns { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+
+/* Projects + Sessions columns */
+.col {
+  flex-shrink: 0; overflow-y: auto; background: #0d1117;
+  border-right: 1px solid #30363d; font-size: 10px;
+}
+.col-hdr {
+  padding: 4px 8px; color: #484f58; font-size: 9px; text-transform: uppercase;
+  letter-spacing: 0.5px; border-bottom: 1px solid #1c2128;
+  position: sticky; top: 0; background: #0d1117; z-index: 5;
+}
+.col-item { padding: 6px 8px; border-bottom: 1px solid #1c2128; cursor: pointer; }
+.col-item:hover { background: #161b22; }
+.col-item.active { background: #161b22; }
+.col-item .name { color: #e6edf3; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.col-item .meta { color: #8b949e; font-size: 9px; }
+.col-item .cost { color: #3fb950; font-size: 9px; }
+.proj.active { border-left: 2px solid #3fb950; }
+.sess.active { border-left: 2px solid #58a6ff; }
+.sess .star { float: right; color: #484f58; font-size: 10px; }
+
+/* ── Right area ──────────────────────────────────────────── */
+.right-area { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+
+/* ── Overview bar ────────────────────────────────────────── */
+.overview-bar {
+  height: 32px; flex-shrink: 0; border-bottom: 1px solid #30363d;
+  background: #161b22; display: flex; align-items: center;
+}
+.ov-label {
+  width: 200px; flex-shrink: 0; padding: 0 8px; font-size: 9px;
+  color: #484f58; text-transform: uppercase; letter-spacing: 0.5px;
+  display: flex; align-items: center; gap: 3px;
+}
+.ov-label button {
+  background: transparent; border: 1px solid #30363d; color: #8b949e;
+  width: 16px; height: 16px; font-size: 10px; cursor: pointer; border-radius: 2px;
+  display: flex; align-items: center; justify-content: center; padding: 0;
+}
+.ov-label button:hover { color: #e6edf3; border-color: #8b949e; }
+.ov-label button.brush { background: #58a6ff15; border-color: #58a6ff44; color: #58a6ff; }
+.minimap {
+  flex: 1; height: 24px; margin: 0 8px 0 0; background: #0d1117;
+  border-radius: 2px; position: relative;
+}
+.mm-lane { position: absolute; height: 2px; border-radius: 1px; }
+.mm-vp {
+  position: absolute; top: 0; bottom: 0; background: #58a6ff15;
+  border: 1px solid #58a6ff55; border-radius: 2px;
+}
+.mm-vp .badge {
+  position: absolute; bottom: 0; right: 2px; font-size: 7px; color: #58a6ff;
+}
+
+/* ── Timeline ────────────────────────────────────────────── */
+.timeline {
+  flex-shrink: 0; background: #0d1117; overflow: hidden;
+  transition: max-height 200ms ease; /* P1: smooth grow on spawn */
+}
+.time-axis {
+  height: 14px; display: flex; align-items: center; padding: 0 4px;
+  font-size: 8px; color: #484f58; margin-left: 200px;
+}
+.time-axis span { flex: 1; }
+.time-axis span:last-child { text-align: right; }
+.time-axis span:nth-child(2) { text-align: center; }
+
+.lane { display: flex; height: 40px; align-items: center; }
+.lane-lbl {
+  width: 200px; flex-shrink: 0; padding: 0 8px; font-size: 10px;
+  display: flex; flex-direction: column; justify-content: center;
+}
+.lane-lbl .ln { color: #e6edf3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lane-lbl.sel .ln::before { content: '▶ '; color: #58a6ff; }
+.lane-lbl .lm { color: #8b949e; font-size: 9px; }
+.lane-lbl.sel { border-left: 2px solid #58a6ff; background: #58a6ff08; }
+.lane-lbl.spawning { opacity: 0.5; }
+
+.lane-bars { flex: 1; height: 40px; display: flex; flex-direction: column; }
+.bars-row { height: 20px; display: flex; align-items: center; gap: 1px; padding: 2px 0; flex-wrap: nowrap; }
+.spark-row { height: 16px; }
+.spark-row svg { width: 100%; height: 100%; }
+
+.bar { height: 14px; border-radius: 1px; display: inline-block; flex-shrink: 0; }
+
+/* P7: Ghost bar */
+@keyframes ghost-pulse { 0%,100%{border-right-color:#3fb95088;} 50%{border-right-color:#3fb95022;} }
+@keyframes dot-pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+@keyframes line-pulse { 0%,100%{opacity:0.8;} 50%{opacity:0.2;} }
+@keyframes flash { 0%{background:#fff3;} 100%{background:transparent;} }
+
+.bar-ghost {
+  height: 14px; border-radius: 1px; display: inline-block; flex-shrink: 0;
+  opacity: 0.3; border-right: 2px dashed #3fb95088;
+  animation: ghost-pulse 1.5s ease-in-out infinite;
+}
+.spawn-dot { color: #3fb950; font-size: 11px; animation: dot-pulse 1.5s ease-in-out infinite; margin-left: 4px; }
+
+/* ── Resize handle ───────────────────────────────────────── */
+.resize-handle {
+  height: 4px; cursor: row-resize; background: #0d1117; flex-shrink: 0;
+  border-top: 1px solid #30363d; border-bottom: 1px solid #30363d;
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+}
+.resize-handle:hover { background: #58a6ff33; }
+/* P9: Touch adaptation */
+@media (pointer: coarse) {
+  .resize-handle {
+    height: 16px;
+  }
+  .resize-handle::before {
+    content: ''; position: absolute; top: -14px; bottom: -14px; left: 0; right: 0;
+  }
+  .resize-handle .grip { display: flex; }
+}
+.resize-handle .grip {
+  display: none; flex-direction: column; gap: 2px;
+}
+.resize-handle .grip span {
+  width: 20px; height: 1px; background: #8b949e44; border-radius: 1px;
+}
+
+/* ── Detail area ─────────────────────────────────────────── */
+.detail { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+
+/* Agent Card (P2: text-only, no charts) */
+.agent-card {
+  width: 200px; flex-shrink: 0; overflow-y: auto; background: #161b22;
+  border-right: 1px solid #30363d; font-size: 10px;
+}
+.ac-hdr {
+  padding: 8px; border-bottom: 1px solid #30363d; position: sticky; top: 0;
+  background: #161b22; z-index: 5; border-left: 2px solid var(--mc, #58a6ff);
+}
+.ac-name { color: #e6edf3; font-weight: 600; font-size: 12px; }
+.ac-model { display: inline-block; padding: 1px 4px; border-radius: 3px; font-size: 9px; margin-left: 2px; }
+.ac-meta { color: #8b949e; font-size: 9px; margin-top: 2px; }
+.ac-star { float: right; cursor: pointer; color: #484f58; font-size: 13px; }
+.ac-body { padding: 8px; }
+.ac-sect { margin-bottom: 8px; }
+.ac-lbl { color: #484f58; font-size: 8px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 1px; }
+.ac-val { color: #e6edf3; }
+.ac-dim { color: #8b949e; font-size: 9px; }
+.ac-warn { color: #f85149; }
+.ac-nav { border-top: 1px solid #30363d; margin-top: 4px; padding-top: 4px; }
+.ac-nav-item { display: flex; justify-content: space-between; padding: 3px 0; color: #8b949e; cursor: pointer; font-size: 10px; }
+.ac-nav-item:hover { color: #e6edf3; }
+.ac-dot { width: 5px; height: 5px; border-radius: 50%; margin-right: 4px; display: inline-block; }
+
+/* Steps panel (P2: charts header + step list) */
+.steps { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+
+/* P2: Charts as sticky header */
+.chart-hdr {
+  flex-shrink: 0; background: #0d1117; border-bottom: 1px solid #30363d;
+  padding: 4px 8px; overflow-x: auto;
+}
+.chart-hdr::-webkit-scrollbar { height: 2px; }
+.chart-hdr::-webkit-scrollbar-thumb { background: #30363d; border-radius: 1px; }
+.chart-row { display: flex; justify-content: space-between; font-size: 8px; color: #484f58; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 1px; }
+.chart-box { width: 100%; height: 48px; background: #161b22; border-radius: 2px; position: relative; overflow: hidden; margin-bottom: 3px; }
+.spark-box { width: 100%; height: 14px; background: #161b22; border-radius: 2px; position: relative; overflow: hidden; margin-bottom: 2px; }
+.c-bar { position: absolute; bottom: 0; border-radius: 1px 1px 0 0; }
+.c-line { position: absolute; top: 0; bottom: 0; width: 1px; z-index: 2; }
+.threshold { position: absolute; left: 0; right: 0; border-bottom: 1px dashed; z-index: 1; }
+.active-line { position: absolute; top: 0; bottom: 0; width: 1px; background: #3fb950; animation: line-pulse 1.5s ease-in-out infinite; z-index: 3; }
+
+/* Step list */
+.step-list { flex: 1; overflow-y: auto; }
+.step-hdr {
+  padding: 4px 8px; color: #484f58; font-size: 9px; text-transform: uppercase;
+  letter-spacing: 0.5px; border-bottom: 1px solid #1c2128;
+  position: sticky; top: 0; background: #0d1117; z-index: 2;
+}
+.step {
+  padding: 3px 8px; border-bottom: 1px solid #1c2128;
+  display: flex; align-items: flex-start; gap: 4px; font-size: 10px;
+}
+.step:hover { background: #161b22; }
+.step.sel { border-left: 2px solid #58a6ff; background: #161b22; }
+.step.active-step { background: #3fb95008; border-left: 2px solid #3fb95044; }
+.s-star { color: #484f58; font-size: 10px; flex-shrink: 0; width: 12px; }
+.s-dot { color: #3fb950; font-size: 11px; flex-shrink: 0; width: 12px; animation: dot-pulse 1.5s ease-in-out infinite; }
+.s-num { color: #8b949e; flex-shrink: 0; min-width: 24px; }
+.s-tools { flex: 1; color: #3fb950; }
+.s-brk { color: #30363d; }
+.s-spawn { color: #d2a8ff; font-size: 9px; }
+.s-think { color: #d2a8ff; font-style: italic; }
+.s-ctx { color: #8b949e; font-size: 9px; flex-shrink: 0; min-width: 28px; text-align: right; }
+.s-dur { color: #484f58; font-size: 9px; flex-shrink: 0; min-width: 28px; text-align: right; }
+.s-dur-live { color: #3fb950; font-size: 9px; flex-shrink: 0; min-width: 28px; text-align: right; }
+.s-idle { padding: 2px 8px; color: #d29922; font-size: 9px; border-bottom: 1px solid #1c2128; }
+
+/* Bottom bar */
+.bottom-bar {
+  height: 18px; background: #161b22; border-top: 1px solid #30363d;
+  display: flex; align-items: center; padding: 0 12px; flex-shrink: 0;
+  font-size: 8px; color: #484f58; gap: 10px;
+}
+.bottom-bar kbd { background: #21262d; border: 1px solid #30363d; padding: 0 2px; border-radius: 2px; font-size: 7px; }
+
+/* Model colors */
+.m-o46 { background: #58a6ff33; color: #58a6ff; }
+.m-o48 { background: #7ee78733; color: #7ee787; }
+.m-fab { background: #d2a8ff33; color: #d2a8ff; }
+.m-hai { background: #f0883e33; color: #f0883e; }
+
+/* ── Annotations ─────────────────────────────────────────── */
+.p-tag {
+  display: inline-block; font-size: 7px; padding: 0 3px; border-radius: 2px;
+  vertical-align: middle; margin-left: 3px; font-weight: 600; letter-spacing: 0.3px;
+}
+.p-tag.p1 { background: #3fb95022; color: #3fb950; border: 1px solid #3fb95044; }
+.p-tag.p2 { background: #58a6ff22; color: #58a6ff; border: 1px solid #58a6ff44; }
+.p-tag.p7 { background: #d2a8ff22; color: #d2a8ff; border: 1px solid #d2a8ff44; }
+.p-tag.p9 { background: #f0883e22; color: #f0883e; border: 1px solid #f0883e44; }
+</style>
+</head>
+<body>
+
+<div class="tab-bar mono">
+  <div class="tab active" onclick="showScene('single')">Single-Lane (14t)</div>
+  <div class="tab" onclick="showScene('multi')">Multi-Lane Live (88t, 7 agents)</div>
+  <div class="tab" style="margin-left:auto; font-size:9px;" onclick="toggleTags()">Toggle P-tags</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- SCENE 1: Single-Lane Session                               -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="scene active" id="scene-single">
+<div class="frame">
+  <div class="topbar mono">
+    <span class="brand">ccxray</span>
+    <span class="nav">Dashboard</span><span class="sep">›</span>
+    <span class="nav">ccxray</span><span class="sep">›</span>
+    <span class="nav" style="color:#e6edf3;">0df173ba</span>
+    <div class="right">
+      <span>3.0m</span>
+      <div class="quota-bar"><div class="quota-fill" style="width:12%; background:#3fb950;"></div></div>
+    </div>
+  </div>
+
+  <div class="columns">
+    <!-- Projects -->
+    <div class="col mono" style="width:120px;">
+      <div class="col-hdr">Projects</div>
+      <div class="col-item proj active"><div class="name">ccxray</div><div class="meta">18 sessions</div><div class="cost">$174.53</div></div>
+      <div class="col-item proj"><div class="name">interplaytop</div><div class="meta">3 sessions</div><div class="cost">$45.16</div></div>
+    </div>
+    <!-- Sessions -->
+    <div class="col mono" style="width:160px;">
+      <div class="col-hdr">Sessions</div>
+      <div class="col-item sess active"><div class="star">★</div><div class="name">0df173ba</div><div class="meta">opus-4-6 · 14t</div><div class="cost">$0.72 · 3m</div></div>
+      <div class="col-item sess"><div class="name">84895640</div><div class="meta">opus-4-6 · 319t</div><div class="cost">$51.02 · 2.1h</div></div>
+      <div class="col-item sess"><div class="name">e80743c5</div><div class="meta">opus+haiku · 88t</div><div class="cost">$8.43 · 45m</div></div>
+      <div class="col-item sess"><div class="name">1085045f</div><div class="meta">opus-4-8 · 154t</div><div class="cost">$26.42 · 1.2h</div></div>
+    </div>
+
+    <div class="right-area">
+      <!-- P1: No overview bar for single-lane -->
+      <!-- Timeline: compact ~54px -->
+      <div class="timeline" style="height: 54px;">
+        <div class="time-axis"><span>0</span><span>1.5m</span><span>3.0m</span></div>
+        <div class="lane">
+          <div class="lane-lbl sel mono" title="main · opus-4-6 · 1000K">
+            <span class="ln">main <span class="p-tag p1">P1</span></span>
+            <span class="lm">opus-4-6 · 1000K</span>
+          </div>
+          <div class="lane-bars">
+            <div class="bars-row">
+              <div class="bar" style="width:12px; background:#58a6ff;"></div>
+              <div class="bar" style="width:18px; background:#58a6ff;"></div>
+              <div class="bar" style="width:8px; background:#58a6ff;"></div>
+              <div class="bar" style="width:24px; background:#58a6ff;"></div>
+              <div class="bar" style="width:14px; background:#58a6ff;"></div>
+              <div class="bar" style="width:20px; background:#58a6ff;"></div>
+              <div class="bar" style="width:10px; background:#58a6ff;"></div>
+              <div class="bar" style="width:28px; background:#58a6ff;"></div>
+              <div class="bar" style="width:8px; background:#58a6ff;"></div>
+              <div class="bar" style="width:22px; background:#58a6ff;"></div>
+              <div class="bar" style="width:14px; background:#58a6ff;"></div>
+              <div class="bar" style="width:10px; background:#58a6ff;"></div>
+              <div class="bar" style="width:16px; background:#58a6ff;"></div>
+              <div class="bar" style="width:8px; background:#58a6ff;"></div>
+            </div>
+            <div class="spark-row"><svg viewBox="0 0 300 16" preserveAspectRatio="none"><path d="M0,15 L21,14 L43,13 L64,11 L96,9 L117,8 L139,7 L160,5 L171,6 L193,4 L214,4 L236,3 L257,3 L300,2" fill="none" stroke="#58a6ff88" stroke-width="1"/><path d="M0,15 L21,14 L43,13 L64,11 L96,9 L117,8 L139,7 L160,5 L171,6 L193,4 L214,4 L236,3 L257,3 L300,2 L300,16 L0,16Z" fill="#58a6ff15"/></svg></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="resize-handle"><div class="grip"><span></span><span></span><span></span></div></div>
+
+      <div class="detail">
+        <!-- Agent Card: text-only -->
+        <div class="agent-card mono" style="--mc:#58a6ff;">
+          <div class="ac-hdr">
+            <span class="ac-star">☆</span>
+            <div class="ac-name">main</div>
+            <span class="ac-model m-o46">opus-4-6</span>
+            <div class="ac-meta">14t · 3.0m <span class="p-tag p2">P2</span></div>
+          </div>
+          <div class="ac-body">
+            <div class="ac-sect"><div class="ac-lbl">Context</div><div class="ac-val">12.2% <span class="ac-dim">(122K/1000K)</span></div><div class="ac-dim">peak 12.2%</div></div>
+            <div class="ac-sect"><div class="ac-lbl">Cache</div><div class="ac-val">94.0% hit</div></div>
+            <div class="ac-sect"><div class="ac-lbl">Cost</div><div class="ac-val">$0.72</div><div class="ac-dim">avg $0.051/turn</div></div>
+            <div class="ac-nav">
+              <div class="ac-nav-item"><span><span class="ac-dot" style="background:#58a6ff;"></span>Timeline</span><span>14</span></div>
+              <div class="ac-nav-item"><span><span class="ac-dot" style="background:#3fb950;"></span>Context</span><span>Sys·Core</span></div>
+              <div class="ac-nav-item"><span>💰 Cost</span></div>
+              <div class="ac-nav-item"><span>RAW</span><span>Req·Evt</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="steps">
+          <!-- P2: Charts in steps header -->
+          <div class="chart-hdr mono">
+            <div class="chart-row"><span>Context <span class="p-tag p2">P2</span></span><span>peak 12.2%</span></div>
+            <div class="chart-box">
+              <div class="threshold" style="bottom:60%; border-color:#3fb95044;"></div>
+              <div class="c-bar" style="left:2%;width:5%;height:8%;background:#3fb950;"></div><div class="c-bar" style="left:9%;width:5%;height:12%;background:#3fb950;"></div><div class="c-bar" style="left:16%;width:5%;height:18%;background:#3fb950;"></div><div class="c-bar" style="left:23%;width:5%;height:24%;background:#3fb950;"></div><div class="c-bar" style="left:30%;width:5%;height:28%;background:#3fb950;"></div><div class="c-bar" style="left:37%;width:5%;height:32%;background:#3fb950;"></div><div class="c-bar" style="left:44%;width:5%;height:34%;background:#3fb950;"></div><div class="c-bar" style="left:51%;width:5%;height:36%;background:#3fb950;"></div><div class="c-bar" style="left:58%;width:5%;height:34%;background:#3fb950;"></div><div class="c-bar" style="left:65%;width:5%;height:38%;background:#3fb950;"></div><div class="c-bar" style="left:72%;width:5%;height:40%;background:#3fb950;"></div><div class="c-bar" style="left:79%;width:5%;height:38%;background:#3fb950;"></div><div class="c-bar" style="left:86%;width:5%;height:40%;background:#3fb950;"></div><div class="c-bar" style="left:93%;width:5%;height:42%;background:#3fb950;"></div>
+              <div class="c-line" style="left:65%; background:#58a6ff;"></div>
+            </div>
+            <div class="chart-row"><span>Cache</span><span>94.0%</span></div>
+            <div class="spark-box">
+              <div class="c-bar" style="left:2%;width:5%;height:90%;background:#3fb950;"></div><div class="c-bar" style="left:9%;width:5%;height:95%;background:#3fb950;"></div><div class="c-bar" style="left:16%;width:5%;height:88%;background:#3fb950;"></div><div class="c-bar" style="left:23%;width:5%;height:92%;background:#3fb950;"></div><div class="c-bar" style="left:30%;width:5%;height:96%;background:#3fb950;"></div><div class="c-bar" style="left:37%;width:5%;height:94%;background:#3fb950;"></div><div class="c-bar" style="left:44%;width:5%;height:91%;background:#3fb950;"></div><div class="c-bar" style="left:51%;width:5%;height:97%;background:#3fb950;"></div><div class="c-bar" style="left:58%;width:5%;height:93%;background:#3fb950;"></div><div class="c-bar" style="left:65%;width:5%;height:95%;background:#3fb950;"></div><div class="c-bar" style="left:72%;width:5%;height:90%;background:#3fb950;"></div><div class="c-bar" style="left:79%;width:5%;height:96%;background:#3fb950;"></div><div class="c-bar" style="left:86%;width:5%;height:98%;background:#3fb950;"></div><div class="c-bar" style="left:93%;width:5%;height:94%;background:#3fb950;"></div>
+              <div class="c-line" style="left:65%; background:#58a6ff;"></div>
+            </div>
+            <div class="chart-row"><span>Cost</span><span>$0.72</span></div>
+            <div class="spark-box">
+              <div class="c-bar" style="left:2%;width:5%;height:40%;background:#ffa657;"></div><div class="c-bar" style="left:9%;width:5%;height:55%;background:#ffa657;"></div><div class="c-bar" style="left:16%;width:5%;height:35%;background:#ffa657;"></div><div class="c-bar" style="left:23%;width:5%;height:70%;background:#ffa657;"></div><div class="c-bar" style="left:30%;width:5%;height:50%;background:#ffa657;"></div><div class="c-bar" style="left:37%;width:5%;height:60%;background:#ffa657;"></div><div class="c-bar" style="left:44%;width:5%;height:45%;background:#ffa657;"></div><div class="c-bar" style="left:51%;width:5%;height:80%;background:#ffa657;"></div><div class="c-bar" style="left:58%;width:5%;height:30%;background:#ffa657;"></div><div class="c-bar" style="left:65%;width:5%;height:65%;background:#ffa657;"></div><div class="c-bar" style="left:72%;width:5%;height:50%;background:#ffa657;"></div><div class="c-bar" style="left:79%;width:5%;height:55%;background:#ffa657;"></div><div class="c-bar" style="left:86%;width:5%;height:60%;background:#ffa657;"></div><div class="c-bar" style="left:93%;width:5%;height:40%;background:#ffa657;"></div>
+              <div class="c-line" style="left:65%; background:#58a6ff;"></div>
+            </div>
+          </div>
+          <div class="step-list">
+            <div class="step-hdr mono">Timeline · 14 steps</div>
+            <div class="step mono sel"><span class="s-star">☆</span><span class="s-num">#1</span><span class="s-tools">Read</span><span class="s-ctx">1.2%</span><span class="s-dur">8s</span></div>
+            <div class="step mono"><span class="s-star">☆</span><span class="s-num">#2</span><span class="s-tools"><span class="s-brk">┌</span> Bash<br><span class="s-brk">└</span> Read</span><span class="s-ctx">2.1%</span><span class="s-dur">12s</span></div>
+            <div class="step mono"><span class="s-star">☆</span><span class="s-num">#3</span><span class="s-tools">Edit</span><span class="s-ctx">3.0%</span><span class="s-dur">6s</span></div>
+            <div class="step mono"><span class="s-star">☆</span><span class="s-num">#4</span><span class="s-tools"><span class="s-brk">┌</span> Bash<br><span class="s-brk">│</span> Read<br><span class="s-brk">└</span> Edit</span><span class="s-ctx">4.5%</span><span class="s-dur">18s</span></div>
+            <div class="step mono"><span class="s-star">☆</span><span class="s-num">#5</span><span class="s-tools">Bash</span><span class="s-ctx">5.2%</span><span class="s-dur">10s</span></div>
+            <div class="step mono"><span class="s-star">☆</span><span class="s-num">#6</span><span class="s-tools"><span class="s-brk">┌</span> Read<br><span class="s-brk">└</span> Edit</span><span class="s-ctx">6.1%</span><span class="s-dur">14s</span></div>
+            <div class="step mono"><span class="s-star">★</span><span class="s-num">#7</span><span class="s-tools">Bash</span><span class="s-ctx">6.8%</span><span class="s-dur">8s</span></div>
+            <div class="s-idle mono">⏸ 12.0m</div>
+            <div class="step mono"><span class="s-star">☆</span><span class="s-num">#8</span><span class="s-tools"><span class="s-brk">┌</span> Read ×3<br><span class="s-brk">│</span> Edit<br><span class="s-brk">└</span> Bash</span><span class="s-ctx" style="color:#d29922;">7.5%</span><span class="s-dur">22s</span></div>
+            <div class="step mono"><span class="s-star">☆</span><span class="s-num">#9</span><span class="s-tools">Read</span><span class="s-ctx">8.0%</span><span class="s-dur">6s</span></div>
+            <div class="step mono"><span class="s-star">☆</span><span class="s-num">#10</span><span class="s-tools"><span class="s-brk">┌</span> Edit<br><span class="s-brk">└</span> Bash</span><span class="s-ctx">9.2%</span><span class="s-dur">16s</span></div>
+            <div class="step mono"><span class="s-star">☆</span><span class="s-num">#11</span><span class="s-tools">Read</span><span class="s-ctx">10.1%</span><span class="s-dur">10s</span></div>
+            <div class="step mono"><span class="s-star">☆</span><span class="s-num">#12</span><span class="s-tools">Edit</span><span class="s-ctx">10.8%</span><span class="s-dur">8s</span></div>
+            <div class="step mono"><span class="s-star">☆</span><span class="s-num">#13</span><span class="s-tools"><span class="s-brk">┌</span> Bash<br><span class="s-brk">└</span> Read</span><span class="s-ctx">11.5%</span><span class="s-dur">12s</span></div>
+            <div class="step mono"><span class="s-star">☆</span><span class="s-num">#14</span><span class="s-tools">Bash</span><span class="s-ctx">12.2%</span><span class="s-dur">6s</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="bottom-bar mono"><kbd>↑↓</kbd> steps <kbd>Esc</kbd> exit <kbd>⌘</kbd>scroll zoom <kbd>drag</kbd> pan <span class="p-tag p9">P9</span> pinch zoom · tap select · 🔍 brush</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- SCENE 2: Multi-Lane Live Session                           -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="scene" id="scene-multi">
+<div class="frame">
+  <div class="topbar mono">
+    <span class="brand">ccxray</span>
+    <span class="nav">Dashboard</span><span class="sep">›</span>
+    <span class="nav">ccxray</span><span class="sep">›</span>
+    <span class="nav" style="color:#e6edf3;">e80743c5</span>
+    <div class="right">
+      <span style="color:#3fb950;">● live</span>
+      <span>38.2m</span>
+      <div class="quota-bar"><div class="quota-fill" style="width:40%; background:#d29922;"></div></div>
+    </div>
+  </div>
+
+  <div class="columns">
+    <div class="col mono" style="width:120px;">
+      <div class="col-hdr">Projects</div>
+      <div class="col-item proj active"><div class="name">ccxray</div><div class="meta">18 sessions</div><div class="cost">$174.53</div></div>
+    </div>
+    <div class="col mono" style="width:160px;">
+      <div class="col-hdr">Sessions</div>
+      <div class="col-item sess"><div class="name">0df173ba</div><div class="meta">opus-4-6 · 14t</div><div class="cost">$0.72 · 3m</div></div>
+      <div class="col-item sess active"><div class="star">★</div><div class="name">e80743c5</div><div class="meta">opus+haiku · 88t</div><div class="cost">$8.43 · 38m</div></div>
+      <div class="col-item sess"><div class="name">1085045f</div><div class="meta">opus-4-8 · 154t</div><div class="cost">$26.42 · 1.2h</div></div>
+    </div>
+
+    <div class="right-area">
+      <!-- P1: Overview bar appears for multi-lane -->
+      <div class="overview-bar mono">
+        <div class="ov-label">
+          <span>overview <span class="p-tag p1">P1</span></span>
+          <button>+</button><button>−</button><button>⟲</button>
+          <button class="brush" title="Brush-to-zoom">🔍<span class="p-tag p9" style="margin:0;">P9</span></button>
+        </div>
+        <div class="minimap">
+          <div class="mm-lane" style="background:#58a6ff;top:2px;left:2%;width:90%;"></div>
+          <div class="mm-lane" style="background:#f0883e;top:6px;left:12%;width:25%;"></div>
+          <div class="mm-lane" style="background:#f0883e;top:10px;left:18%;width:20%;"></div>
+          <div class="mm-lane" style="background:#d2a8ff;top:14px;left:30%;width:30%;"></div>
+          <div class="mm-lane" style="background:#58a6ff;top:18px;left:50%;width:15%;"></div>
+          <div class="mm-lane" style="background:#f0883e;top:22px;left:60%;width:10%;opacity:0.4;"></div>
+          <div class="mm-vp" style="left:15%;width:35%;"><span class="badge">12.3m</span></div>
+        </div>
+      </div>
+
+      <!-- P1: Timeline auto-sized for 7 lanes -->
+      <div class="timeline" style="height: 310px; overflow-y: auto;">
+        <div class="time-axis"><span>0</span><span>19m</span><span>38m</span></div>
+        <!-- Main lane (sticky) -->
+        <div class="lane" style="position:sticky; top:14px; z-index:3; background:#0d1117;">
+          <div class="lane-lbl sel mono" title="main · opus-4-6 · 1000K"><span class="ln">main</span><span class="lm">opus-4-6 · 1000K</span></div>
+          <div class="lane-bars">
+            <div class="bars-row">
+              <div class="bar" style="width:5px;background:#58a6ff;"></div><div class="bar" style="width:8px;background:#58a6ff;"></div><div class="bar" style="width:4px;background:#58a6ff;"></div><div class="bar" style="width:12px;background:#58a6ff;"></div><div class="bar" style="width:6px;background:#58a6ff;"></div><div class="bar" style="width:18px;background:#58a6ff;"></div><div class="bar" style="width:4px;background:#58a6ff;"></div><div class="bar" style="width:8px;background:#58a6ff;"></div><div class="bar" style="width:5px;background:#58a6ff;"></div><div class="bar" style="width:20px;background:#58a6ff;"></div><div class="bar" style="width:4px;background:#58a6ff;"></div><div class="bar" style="width:10px;background:#58a6ff;"></div><div class="bar" style="width:6px;background:#58a6ff;"></div><div class="bar" style="width:5px;background:#58a6ff;"></div><div class="bar" style="width:14px;background:#58a6ff;"></div><div class="bar" style="width:8px;background:#58a6ff;"></div><div class="bar" style="width:4px;background:#58a6ff;"></div>
+              <div class="bar-ghost" style="width:16px;background:#58a6ff33;"></div>
+            </div>
+            <div class="spark-row"><svg viewBox="0 0 300 16" preserveAspectRatio="none"><path d="M0,15 L20,13 L40,11 L60,9 L80,7 L100,6 L120,5 L140,4 L160,5 L180,4 L200,3 L220,4 L240,3 L260,3" fill="none" stroke="#58a6ff88" stroke-width="1"/><path d="M0,15 L20,13 L40,11 L60,9 L80,7 L100,6 L120,5 L140,4 L160,5 L180,4 L200,3 L220,4 L240,3 L260,3 L260,16 L0,16Z" fill="#58a6ff15"/></svg></div>
+          </div>
+        </div>
+        <!-- Sub-lanes -->
+        <div class="lane">
+          <div class="lane-lbl mono" title="p1-research · haiku-4-5 · 200K"><span class="ln">p1-research</span><span class="lm">haiku-4-5 · 200K</span></div>
+          <div class="lane-bars"><div class="bars-row" style="padding-left:30px;"><div class="bar" style="width:10px;background:#f0883e;"></div><div class="bar" style="width:16px;background:#f0883e;"></div><div class="bar" style="width:8px;background:#f0883e;"></div><div class="bar" style="width:12px;background:#f0883e;"></div><div class="bar" style="width:6px;background:#f0883e;"></div></div><div class="spark-row"><svg viewBox="0 0 300 16" preserveAspectRatio="none"><path d="M60,15 L80,10 L100,7 L120,5 L140,8" fill="none" stroke="#f0883e88" stroke-width="1"/></svg></div></div>
+        </div>
+        <div class="lane">
+          <div class="lane-lbl mono" title="p1-evaluator · haiku-4-5 · 200K"><span class="ln">p1-evaluator</span><span class="lm">haiku-4-5 · 200K</span></div>
+          <div class="lane-bars"><div class="bars-row" style="padding-left:55px;"><div class="bar" style="width:8px;background:#f0883e;"></div><div class="bar" style="width:14px;background:#f0883e;"></div><div class="bar" style="width:10px;background:#f0883e;"></div></div><div class="spark-row"><svg viewBox="0 0 300 16" preserveAspectRatio="none"><path d="M110,15 L130,8 L160,5" fill="none" stroke="#f0883e88" stroke-width="1"/></svg></div></div>
+        </div>
+        <div class="lane">
+          <div class="lane-lbl mono" title="spec-routing · fable-5 · 1000K"><span class="ln">spec-routing</span><span class="lm">fable-5 · 1000K</span></div>
+          <div class="lane-bars"><div class="bars-row" style="padding-left:40px;"><div class="bar" style="width:6px;background:#d2a8ff;"></div><div class="bar" style="width:10px;background:#d2a8ff;"></div><div class="bar" style="width:18px;background:#d2a8ff;"></div><div class="bar" style="width:8px;background:#d2a8ff;"></div><div class="bar" style="width:12px;background:#d2a8ff;"></div><div class="bar" style="width:4px;background:#d2a8ff;"></div><div class="bar" style="width:10px;background:#d2a8ff;"></div></div><div class="spark-row"><svg viewBox="0 0 300 16" preserveAspectRatio="none"><path d="M80,15 L100,10 L120,6 L140,4 L160,3 L180,5 L200,4" fill="none" stroke="#d2a8ff88" stroke-width="1"/></svg></div></div>
+        </div>
+        <div class="lane">
+          <div class="lane-lbl mono" title="code-review · opus-4-6 · 1000K"><span class="ln">code-review</span><span class="lm">opus-4-6 · 1000K</span></div>
+          <div class="lane-bars"><div class="bars-row" style="padding-left:100px;"><div class="bar" style="width:8px;background:#58a6ff;"></div><div class="bar-ghost" style="width:12px;background:#58a6ff33;"></div></div><div class="spark-row"><svg viewBox="0 0 300 16" preserveAspectRatio="none"><path d="M200,15 L220,8" fill="none" stroke="#58a6ff88" stroke-width="1"/></svg></div></div>
+        </div>
+        <!-- P7: Spawning lane -->
+        <div class="lane">
+          <div class="lane-lbl spawning mono" title="fixture-gen · haiku-4-5 · 200K"><span class="ln">fixture-gen <span class="p-tag p7">P7</span></span><span class="lm">haiku-4-5 · 200K</span></div>
+          <div class="lane-bars"><div class="bars-row" style="padding-left:130px;"><span class="spawn-dot">●</span></div></div>
+        </div>
+      </div>
+
+      <div class="resize-handle"><div class="grip"><span></span><span></span><span></span></div></div>
+
+      <div class="detail">
+        <div class="agent-card mono" style="--mc:#58a6ff;">
+          <div class="ac-hdr">
+            <span class="ac-star">☆</span>
+            <div class="ac-name">main</div>
+            <span class="ac-model m-o46">opus-4-6</span>
+            <div class="ac-meta">18t · 38.2m · orchestrator</div>
+          </div>
+          <div class="ac-body">
+            <div class="ac-sect"><div class="ac-lbl">Context</div><div class="ac-val">39.7% <span class="ac-dim">(397K/1000K)</span></div><div class="ac-dim">peak 39.7%</div></div>
+            <div class="ac-sect"><div class="ac-lbl">Cache</div><div class="ac-val">87.3% hit</div><div class="ac-dim">1 idle gap</div></div>
+            <div class="ac-sect"><div class="ac-lbl">Cost</div><div class="ac-val">$8.43</div><div class="ac-dim">avg $0.47/turn</div></div>
+            <div class="ac-nav">
+              <div class="ac-nav-item"><span><span class="ac-dot" style="background:#58a6ff;"></span>Timeline</span><span>18</span></div>
+              <div class="ac-nav-item"><span><span class="ac-dot" style="background:#3fb950;"></span>Context</span><span>Sys·Core·MCP</span></div>
+              <div class="ac-nav-item"><span>💰 Cost</span></div>
+              <div class="ac-nav-item"><span>RAW</span><span>Req·Evt</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="steps">
+          <div class="chart-hdr mono">
+            <div class="chart-row"><span>Context</span><span>peak 39.7%</span></div>
+            <div class="chart-box">
+              <div class="threshold" style="bottom:60%;border-color:#3fb95044;"></div>
+              <div class="threshold" style="bottom:16.5%;border-color:#f8514944;"></div>
+              <div class="c-bar" style="left:1%;width:4.5%;height:8%;background:#3fb950;"></div><div class="c-bar" style="left:6.5%;width:4.5%;height:14%;background:#3fb950;"></div><div class="c-bar" style="left:12%;width:4.5%;height:20%;background:#3fb950;"></div><div class="c-bar" style="left:17.5%;width:4.5%;height:26%;background:#3fb950;"></div><div class="c-bar" style="left:23%;width:4.5%;height:32%;background:#3fb950;"></div><div class="c-bar" style="left:28.5%;width:4.5%;height:38%;background:#3fb950;"></div><div class="c-bar" style="left:34%;width:4.5%;height:42%;background:#d29922;"></div><div class="c-bar" style="left:39.5%;width:4.5%;height:48%;background:#d29922;"></div><div class="c-bar" style="left:45%;width:4.5%;height:52%;background:#d29922;"></div><div class="c-bar" style="left:50.5%;width:4.5%;height:55%;background:#d29922;"></div><div class="c-bar" style="left:56%;width:4.5%;height:58%;background:#d29922;"></div><div class="c-bar" style="left:61.5%;width:4.5%;height:54%;background:#d29922;"></div><div class="c-bar" style="left:67%;width:4.5%;height:60%;background:#d29922;"></div><div class="c-bar" style="left:72.5%;width:4.5%;height:62%;background:#d29922;"></div><div class="c-bar" style="left:78%;width:4.5%;height:58%;background:#d29922;"></div><div class="c-bar" style="left:83.5%;width:4.5%;height:65%;background:#d29922;"></div><div class="c-bar" style="left:89%;width:4.5%;height:68%;background:#d29922;"></div>
+              <div class="active-line" style="left:95%;"></div>
+            </div>
+            <div class="chart-row"><span>Cache</span><span>87.3%</span></div>
+            <div class="spark-box">
+              <div class="c-bar" style="left:1%;width:4.5%;height:92%;background:#3fb950;"></div><div class="c-bar" style="left:6.5%;width:4.5%;height:95%;background:#3fb950;"></div><div class="c-bar" style="left:12%;width:4.5%;height:88%;background:#3fb950;"></div><div class="c-bar" style="left:17.5%;width:4.5%;height:94%;background:#3fb950;"></div><div class="c-bar" style="left:23%;width:4.5%;height:90%;background:#3fb950;"></div><div class="c-bar" style="left:28.5%;width:4.5%;height:93%;background:#3fb950;"></div><div class="c-bar" style="left:34%;width:4.5%;height:30%;background:#d29922;"></div><div class="c-bar" style="left:39.5%;width:4.5%;height:88%;background:#3fb950;"></div><div class="c-bar" style="left:45%;width:4.5%;height:92%;background:#3fb950;"></div><div class="c-bar" style="left:50.5%;width:4.5%;height:95%;background:#3fb950;"></div><div class="c-bar" style="left:56%;width:4.5%;height:90%;background:#3fb950;"></div>
+              <div class="active-line" style="left:95%;"></div>
+            </div>
+            <div class="chart-row"><span>Cost</span><span>$8.43</span></div>
+            <div class="spark-box">
+              <div class="c-bar" style="left:1%;width:4.5%;height:40%;background:#ffa657;"></div><div class="c-bar" style="left:6.5%;width:4.5%;height:55%;background:#ffa657;"></div><div class="c-bar" style="left:12%;width:4.5%;height:35%;background:#ffa657;"></div><div class="c-bar" style="left:17.5%;width:4.5%;height:70%;background:#ffa657;"></div><div class="c-bar" style="left:23%;width:4.5%;height:90%;background:#ffa657;"></div><div class="c-bar" style="left:28.5%;width:4.5%;height:45%;background:#ffa657;"></div>
+              <div class="active-line" style="left:95%;"></div>
+            </div>
+          </div>
+          <div class="step-list">
+            <div class="step-hdr mono">Timeline · main · 18 steps <span class="p-tag p7">P7 live</span></div>
+            <div class="step mono"><span class="s-star">☆</span><span class="s-num">#1</span><span class="s-tools">Monitor</span><span class="s-ctx">2.1%</span><span class="s-dur">4s</span></div>
+            <div class="step mono"><span class="s-star">☆</span><span class="s-num">#2</span><span class="s-tools"><span class="s-brk">┌</span> Bash<br><span class="s-brk">│</span> Read ×3<br><span class="s-brk">│</span> <span class="s-spawn">⑂ p1-research</span><br><span class="s-brk">└</span> <span class="s-spawn">⑂ p1-evaluator</span></span><span class="s-ctx">5.8%</span><span class="s-dur">12s</span></div>
+            <div class="step mono sel"><span class="s-star">☆</span><span class="s-num">#3</span><span class="s-tools"><span class="s-brk">┌</span> Edit<br><span class="s-brk">│</span> Bash<br><span class="s-brk">└</span> <span class="s-spawn">⑂ spec-routing</span></span><span class="s-ctx">8.2%</span><span class="s-dur">15s</span></div>
+            <div class="s-idle mono">⏸ 8.3m</div>
+            <div class="step mono"><span class="s-star">☆</span><span class="s-num">#4</span><span class="s-tools"><span class="s-brk">┌</span> Read ×2<br><span class="s-brk">└</span> Edit</span><span class="s-ctx" style="color:#d29922;">12.1%</span><span class="s-dur">8s</span></div>
+            <div class="step mono"><span class="s-star">☆</span><span class="s-num">#5</span><span class="s-tools"><span class="s-brk">┌</span> Bash<br><span class="s-brk">│</span> Read<br><span class="s-brk">│</span> <span class="s-spawn">⑂ code-review</span><br><span class="s-brk">└</span> <span class="s-spawn">⑂ fixture-gen</span></span><span class="s-ctx">18.4%</span><span class="s-dur">22s</span></div>
+            <!-- P7: Active step (streaming) -->
+            <div class="step mono active-step"><span class="s-dot">●</span><span class="s-num">#6</span><span class="s-tools s-think">🧠 thinking...</span><span class="s-ctx"></span><span class="s-dur-live">7s</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="bottom-bar mono"><kbd>↑↓</kbd> steps <kbd>f</kbd> star <kbd>n</kbd> next star <kbd>a</kbd> next agent <kbd>Esc</kbd> exit <span class="p-tag p9">P9</span> pinch zoom · tap select</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+function showScene(id) {
+  document.querySelectorAll('.scene').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => { if (!t.style.marginLeft) t.classList.remove('active'); });
+  document.getElementById('scene-' + id).classList.add('active');
+  for (const t of document.querySelectorAll('.tab')) { if (t.textContent.includes(id === 'single' ? 'Single' : 'Multi')) t.classList.add('active'); }
+}
+function toggleTags() {
+  document.querySelectorAll('.p-tag').forEach(t => t.style.display = t.style.display === 'none' ? '' : 'none');
+}
+</script>
+
+</body>
+</html>

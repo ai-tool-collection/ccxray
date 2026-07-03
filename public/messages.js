@@ -689,8 +689,8 @@ function renderStepDetailHtml(req, tok) {
 
 function selectStep(stepIdx, sub) {
   if (!currentSteps[stepIdx]) return; // guard: invalid step index
-  // If not in focused mode, enter it first (click on step = drill into timeline)
-  if (!isFocusedMode && typeof enterFocusedMode === 'function') {
+  // If not in focused/split mode, enter it first (click on step = drill into timeline)
+  if (!inSplitView() && typeof enterFocusedMode === 'function') {
     if (typeof setSelectedStepSelection === 'function') setSelectedStepSelection(stepIdx, sub);
     else selectedMessageIdx = stepIdx * 1000 + (sub === 'thinking' ? 999 : (typeof sub === 'number' ? sub : 0));
     enterFocusedMode();
@@ -702,8 +702,10 @@ function selectStep(stepIdx, sub) {
   else selectedMessageIdx = stepIdx * 1000;
 
   // Split pane: update list highlights + detail pane
-  const listEl = colDetail.querySelector('.tl-scroll-area');
-  const detailEl = colDetail.querySelector('.tl-split-detail');
+  // In workflow mode, focused timeline renders into #wf-steps-content, not colDetail
+  var _stepRoot = typeof wfStepsRoot === 'function' ? wfStepsRoot() : colDetail;
+  const listEl = _stepRoot.querySelector('.tl-scroll-area');
+  const detailEl = _stepRoot.querySelector('.tl-split-detail');
   if (listEl) {
     listEl.querySelectorAll('.tl-step-summary').forEach(el => {
       el.classList.remove('active');
@@ -723,10 +725,14 @@ function selectStep(stepIdx, sub) {
   }
 
   // Minimap active state — shared by both modes (step-level, not sub-item)
-  const mm = colDetail.querySelector('.minimap');
+  const mm = _stepRoot.querySelector('.minimap');
   if (mm) {
     mm.querySelectorAll('.minimap-block').forEach(b =>
       b.classList.toggle('mm-active', b.dataset.step === String(stepIdx)));
+  }
+  // Workflow: sync overview + swimlane cursor to current turn
+  if (typeof _wfUpdateCursor === 'function' && typeof wfState !== 'undefined' && wfState) {
+    _wfUpdateCursor(wfState.selectedTurnId);
   }
   renderBreadcrumb();
 }
@@ -741,7 +747,8 @@ function findTimelineStepElement(listEl, stepIdx, sub) {
 
 function scrollTimelineStepIntoView(stepIdx, sub, opts) {
   opts = opts || {};
-  const listEl = colDetail.querySelector('.tl-scroll-area');
+  const stepsHost = typeof wfStepsRoot === 'function' ? wfStepsRoot() : colDetail;
+  const listEl = stepsHost.querySelector('.tl-scroll-area');
   if (!listEl) return false;
   const stepEl = findTimelineStepElement(listEl, stepIdx, sub);
   if (!stepEl) return false;
@@ -757,7 +764,8 @@ function scrollTimelineStepIntoViewWhenReady(stepIdx, sub, attempts, opts) {
   opts = opts || {};
   return new Promise(resolve => {
     requestAnimationFrame(() => {
-      const listEl = colDetail.querySelector('.tl-scroll-area');
+      const stepsHost = typeof wfStepsRoot === 'function' ? wfStepsRoot() : colDetail;
+      const listEl = stepsHost.querySelector('.tl-scroll-area');
       const stepEl = findTimelineStepElement(listEl, stepIdx, sub);
       if (listEl && stepEl) {
         const ok = scrollTimelineStepIntoView(stepIdx, sub, opts);
@@ -917,9 +925,13 @@ function renderMinimapHtml(steps, perMessage, activeStepIdx, maxContext, usage) 
     const isActive = activeStepIdx >= 0 && b.stepIdx === activeStepIdx;
     const errStyle = b.isError ? ';border-left:2px solid var(--red)' : '';
     const cls = 'minimap-block' + (b.isError ? ' mm-error' : '') + (isActive ? ' mm-active' : '');
+    // ponytail: inline label — short name visible without hover, tooltip has token count
+    var shortLabel = b.label.replace(/^tool_result:/, '').replace(/^tool_use:/, '');
+    if (shortLabel.length > 10) shortLabel = shortLabel.slice(0, 9) + '…';
     html += '<div class="' + cls + '" data-step="' + b.stepIdx + '" data-block="' + i + '" data-tokens="' + b.tokens + '" '
       + 'style="background:' + b.color + errStyle + '" '
-      + 'title="' + b.label + ' · ' + b.tokens.toLocaleString() + ' tok"></div>';
+      + 'title="' + b.label + ' · ' + b.tokens.toLocaleString() + ' tok">'
+      + '<span class="mm-label">' + shortLabel + '</span></div>';
   }
   html += '</div>';
 
@@ -927,7 +939,8 @@ function renderMinimapHtml(steps, perMessage, activeStepIdx, maxContext, usage) 
   html += '<div class="minimap-empty" title="' + remaining.toLocaleString() + ' remaining"></div>';
 
   // Usage label (hover only)
-  html += '<div class="minimap-usage">' + usedPct + '%</div>';
+  var ctxLabel = ctxWindow >= 1000000 ? (ctxWindow / 1000000).toFixed(0) + 'M' : Math.round(ctxWindow / 1000) + 'K';
+  html += '<div class="minimap-usage">' + usedPct + '% · ' + ctxLabel + '</div>';
 
   return html;
 }
@@ -965,7 +978,11 @@ function layoutMinimapBlocks(minimapEl) {
 
   for (const el of blockEls) {
     const tokens = parseInt(el.dataset.tokens) || 1;
-    el.style.height = Math.max(0.5, tokens * scale) + 'px';
+    const h = Math.max(0.5, tokens * scale);
+    el.style.height = h + 'px';
+    // ponytail: hide label when block too short to read
+    const lbl = el.querySelector('.mm-label');
+    if (lbl) lbl.style.display = h < 8 ? 'none' : '';
   }
 
   blocksContainer.style.height = blocksH + 'px';
@@ -1006,7 +1023,7 @@ function initMinimapInteractions(minimapEl, scrollAreaEl) {
     return closest;
   }
 
-  // Click to navigate
+  // Click to navigate — P15: full sync via wfHighlightTurn + selectStep
   minimapEl.addEventListener('click', (e) => {
     if (e.target.classList.contains('minimap-empty')) return;
     const mmRect = minimapEl.getBoundingClientRect();
@@ -1014,6 +1031,9 @@ function initMinimapInteractions(minimapEl, scrollAreaEl) {
     if (block) {
       const targetStep = parseInt(block.dataset.step);
       if (targetStep >= 0 && typeof selectStep === 'function') {
+        if (typeof wfHighlightTurn === 'function' && typeof wfState !== 'undefined' && wfState && selectedTurnIdx >= 0 && wfState.selectedTurnId !== allEntries[selectedTurnIdx]?.id) {
+          wfHighlightTurn(allEntries[selectedTurnIdx]?.id);
+        }
         selectStep(targetStep);
         const stepEl = scrollAreaEl.querySelector('[data-step="' + targetStep + '"]');
         if (stepEl) stepEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -1057,4 +1077,31 @@ function initMinimapInteractions(minimapEl, scrollAreaEl) {
   ro.observe(minimapEl);
 
   _minimapCleanup = () => { ro.disconnect(); };
+}
+
+// P16: draggable horizontal resize between Steps and Detail panels
+// ponytail: min-widths read from CSS — single source of truth, no hardcoded numbers
+function initStepsResize(handle, leftPane) {
+  var parent = leftPane.parentElement;
+  var detail = parent && parent.querySelector('.tl-split-detail');
+  if (!detail) return;
+  var minL = parseInt(getComputedStyle(leftPane).minWidth) || 220;
+  var minR = parseInt(getComputedStyle(detail).minWidth) || 280;
+  var startX, startW;
+  function onMove(e) {
+    var w = Math.max(minL, Math.min(startW + e.clientX - startX, parent.clientWidth - minR));
+    leftPane.style.width = w + 'px';
+  }
+  function onUp() {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    localStorage.setItem('ccxray-steps-width', String(parseInt(leftPane.style.width)));
+  }
+  handle.addEventListener('mousedown', function(e) {
+    e.preventDefault();
+    startX = e.clientX;
+    startW = leftPane.offsetWidth;
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
 }

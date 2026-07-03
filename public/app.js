@@ -18,6 +18,10 @@ function switchTab(tab, forceDiff) {
 
   // Show/hide content areas
   document.getElementById('columns').style.display = tab === 'dashboard' ? '' : 'none';
+  // Clear focused mode when returning to dashboard — prevents empty screen
+  if (tab === 'dashboard' && typeof exitFocusedMode === 'function' && typeof isFocusedMode !== 'undefined' && isFocusedMode) {
+    exitFocusedMode();
+  }
   const costPage = document.getElementById('cost-page');
   const diffOverlay = document.getElementById('diff-overlay');
   if (tab === 'usage') {
@@ -88,6 +92,9 @@ function toggleTheme() {
   document.documentElement.setAttribute('data-theme', next);
   localStorage.setItem('theme', next);
   updateThemeIcon();
+  // Invalidate canvas color cache so overview/swimlane repaint with new theme
+  if (typeof _wfCssCache !== 'undefined') _wfCssCache = null;
+  if (typeof wfRenderTimeline === 'function') wfRenderTimeline();
 }
 function updateThemeIcon() {
   const btn = document.getElementById('theme-toggle');
@@ -99,8 +106,9 @@ updateThemeIcon();
 // ── Unified Escape + tab switching handler ──────────────────────────
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
-  // Don't intercept when miller-columns focused mode is active
-  if (typeof isFocusedMode !== 'undefined' && isFocusedMode) return;
+  // Don't intercept when in split view (focused mode or workflow timeline) —
+  // dashboard tab only: Esc/1-3 must keep working from Usage/System Prompt
+  if (activeTab === 'dashboard' && inSplitView()) return;
 
   // Escape → switch to dashboard
   if (e.key === 'Escape' && activeTab !== 'dashboard') {

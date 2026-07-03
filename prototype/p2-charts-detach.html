@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>P2: Charts Detach to Steps Panel Header</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0d1117; color: #e6edf3;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 13px; line-height: 1.4;
+}
+h2 { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; padding: 12px 16px 4px; }
+.comparison { display: flex; gap: 24px; padding: 0 16px 16px; }
+.panel {
+  flex: 1; border: 1px solid #30363d; border-radius: 6px; overflow: hidden;
+  display: flex; flex-direction: column; height: 680px;
+}
+.panel-title {
+  background: #161b22; padding: 8px 12px; font-size: 11px; color: #8b949e;
+  border-bottom: 1px solid #30363d; font-family: 'SF Mono','Menlo',monospace;
+  display: flex; justify-content: space-between; flex-shrink: 0;
+}
+.panel-title .tag { background: #21262d; padding: 1px 6px; border-radius: 3px; font-size: 10px; }
+.panel-title .tag.bad { border: 1px solid #f8514966; color: #f85149; }
+.panel-title .tag.good { border: 1px solid #3fb95066; color: #3fb950; }
+
+/* Shared */
+.mono { font-family: 'SF Mono','Menlo','Monaco',monospace; }
+.detail-area { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+
+/* ── Agent Card (text-only in new design) ─────────────────── */
+.agent-card {
+  width: 220px; flex-shrink: 0; overflow-y: auto; background: #161b22;
+  border-right: 1px solid #30363d; font-size: 10px;
+}
+.agent-card.old { width: 220px; }
+.ac-header {
+  padding: 8px 10px; border-bottom: 1px solid #30363d; position: sticky; top: 0;
+  background: #161b22; z-index: 5; border-left: 2px solid var(--mc, #58a6ff);
+}
+.ac-name { color: #e6edf3; font-weight: 600; font-size: 12px; }
+.ac-model { display: inline-block; padding: 1px 4px; border-radius: 3px; font-size: 9px; margin-left: 2px; }
+.ac-meta { color: #8b949e; font-size: 9px; margin-top: 2px; }
+.ac-star { float: right; cursor: pointer; color: #484f58; font-size: 13px; }
+.ac-body { padding: 10px; }
+.ac-section { margin-bottom: 10px; }
+.ac-label { color: #484f58; font-size: 8px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+.ac-value { color: #e6edf3; }
+.ac-dim { color: #8b949e; font-size: 9px; }
+.ac-warn { color: #f85149; }
+.model-opus46 { background: #58a6ff33; color: #58a6ff; }
+
+/* ── Old design: charts crammed in 220px ────────────────── */
+.chart-in-card {
+  width: 100%; height: 48px; background: #21262d; border-radius: 2px;
+  margin-top: 2px; position: relative; overflow: hidden;
+}
+.spark-in-card {
+  width: 100%; height: 14px; background: #21262d; border-radius: 2px;
+  margin-top: 2px; position: relative; overflow: hidden;
+}
+/* Sub-pixel bars: 319 bars in ~200px = 0.63px each → solid blob */
+.subpixel-blob {
+  position: absolute; bottom: 0; border-radius: 1px 1px 0 0;
+}
+
+/* ── New design: charts in Steps Panel header ────────────── */
+.steps-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+
+.chart-header {
+  flex-shrink: 0; background: #0d1117; border-bottom: 1px solid #30363d;
+  position: sticky; top: 0; z-index: 3; padding: 4px 8px;
+  overflow-x: auto; /* ponytail: scroll fallback for small screens, invisible on wide */
+}
+.chart-header::-webkit-scrollbar { height: 3px; }
+.chart-header::-webkit-scrollbar-track { background: transparent; }
+.chart-header::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+
+.chart-label-row {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 8px; text-transform: uppercase; letter-spacing: 0.5px; color: #484f58;
+  margin-bottom: 1px;
+}
+.chart-wide {
+  width: 100%; height: 48px; background: #161b22; border-radius: 2px;
+  position: relative; overflow: hidden; margin-bottom: 4px;
+  /* ponytail: min-width ensures ≥2px/bar, scroll kicks in on small screens */
+  min-width: var(--chart-min-w, 100%);
+}
+.spark-wide {
+  width: 100%; height: 14px; background: #161b22; border-radius: 2px;
+  position: relative; overflow: hidden; margin-bottom: 3px;
+  min-width: var(--chart-min-w, 100%);
+}
+.chart-bar {
+  position: absolute; bottom: 0; border-radius: 1px 1px 0 0;
+}
+.threshold-line {
+  position: absolute; top: 0; bottom: 0; border-left: 1px dashed;
+  z-index: 1;
+}
+.cursor-line {
+  position: absolute; top: 0; bottom: 0; width: 1px; background: #58a6ff;
+  z-index: 2; pointer-events: none;
+}
+
+/* ── Steps list ──────────────────────────────────────────── */
+.steps-list { flex: 1; overflow-y: auto; }
+.steps-hdr {
+  padding: 4px 8px; color: #484f58; font-size: 9px; text-transform: uppercase;
+  letter-spacing: 0.5px; border-bottom: 1px solid #1c2128;
+  position: sticky; top: 0; background: #0d1117; z-index: 2;
+}
+.step-row {
+  padding: 3px 8px; border-bottom: 1px solid #1c2128;
+  display: flex; align-items: flex-start; gap: 4px; font-size: 10px;
+}
+.step-row:hover { background: #161b22; }
+.step-row.sel { border-left: 2px solid #58a6ff; background: #161b22; }
+.step-star { color: #484f58; font-size: 10px; flex-shrink: 0; }
+.step-num { color: #8b949e; flex-shrink: 0; min-width: 28px; }
+.step-tools { flex: 1; color: #3fb950; }
+.step-bracket { color: #30363d; }
+.step-ctx { color: #8b949e; font-size: 9px; flex-shrink: 0; min-width: 32px; text-align: right; }
+.step-dur { color: #484f58; font-size: 9px; flex-shrink: 0; min-width: 28px; text-align: right; }
+.step-idle { padding: 2px 8px; color: #d29922; font-size: 9px; border-bottom: 1px solid #1c2128; }
+
+/* Nav items */
+.ac-nav { border-top: 1px solid #30363d; margin-top: 4px; padding-top: 4px; }
+.ac-nav-item {
+  display: flex; justify-content: space-between; padding: 4px 0;
+  color: #8b949e; cursor: pointer; font-size: 10px;
+}
+.ac-nav-item:hover { color: #e6edf3; }
+.ac-nav-dot { width: 5px; height: 5px; border-radius: 50%; margin-right: 4px; display: inline-block; }
+
+/* ── Annotation ──────────────────────────────────────────── */
+.callout {
+  position: absolute; font-size: 9px; color: #f0883e;
+  font-family: 'SF Mono','Menlo',monospace; pointer-events: none;
+}
+.rule-box {
+  padding: 12px 16px; font-family: 'SF Mono','Menlo',monospace; font-size: 11px;
+  color: #8b949e; max-width: 900px; margin: 0 auto 16px;
+}
+.rule-box p { margin-bottom: 4px; }
+.rule-box strong { color: #e6edf3; }
+.rule-box code { color: #3fb950; background: #21262d; padding: 1px 4px; border-radius: 2px; font-size: 10px; }
+</style>
+</head>
+<body>
+
+<h2>P2 Solution: Charts Detach to Steps Panel Header — 319-turn session comparison</h2>
+
+<div class="comparison">
+
+<!-- ═══ LEFT: BEFORE (charts in 220px Agent Card) ═══ -->
+<div class="panel">
+  <div class="panel-title">
+    <span>BEFORE: Charts in Agent Card (220px)</span>
+    <span class="tag bad">0.63px/bar — unreadable</span>
+  </div>
+  <div class="detail-area">
+    <div class="agent-card old mono" style="--mc:#58a6ff;">
+      <div class="ac-header">
+        <span class="ac-star">☆</span>
+        <div class="ac-name">main</div>
+        <span class="ac-model model-opus46">opus-4-6</span>
+        <div class="ac-meta">319t · 2.1h · orchestrator</div>
+      </div>
+      <div class="ac-body">
+        <div class="ac-section">
+          <div class="ac-label">Context</div>
+          <div class="ac-value">100.0% <span class="ac-dim">(1000K / 1000K)</span></div>
+          <div class="ac-dim">peak 100.0% <span class="ac-warn">⚠</span></div>
+          <!-- 319 bars in 200px = solid blob -->
+          <div class="chart-in-card">
+            <!-- Simulated sub-pixel mess: just solid gradient blocks -->
+            <div style="position:absolute; left:0; bottom:0; width:25%; height:20%; background: linear-gradient(90deg, #3fb950 0%, #3fb950 100%); border-radius:1px;"></div>
+            <div style="position:absolute; left:25%; bottom:0; width:25%; height:50%; background: linear-gradient(90deg, #3fb950 0%, #d29922 100%); border-radius:1px;"></div>
+            <div style="position:absolute; left:50%; bottom:0; width:20%; height:85%; background: linear-gradient(90deg, #d29922 0%, #f85149 100%); border-radius:1px;"></div>
+            <div style="position:absolute; left:70%; bottom:0; width:10%; height:95%; background: #f85149; border-radius:1px;"></div>
+            <div style="position:absolute; left:80%; bottom:0; width:5%; height:30%; background: #3fb950; border-radius:1px;"></div>
+            <div style="position:absolute; left:85%; bottom:0; width:15%; height:75%; background: linear-gradient(90deg, #d29922 0%, #f85149 100%); border-radius:1px;"></div>
+            <!-- annotation -->
+            <div style="position:absolute; top:2px; right:4px; font-size:8px; color:#f85149;">← solid blob</div>
+          </div>
+        </div>
+        <div class="ac-section">
+          <div class="ac-label">Cache</div>
+          <div class="ac-value">67.2% hit</div>
+          <div class="spark-in-card">
+            <div style="position:absolute; left:0; bottom:0; width:100%; height:70%; background: linear-gradient(90deg, #3fb950 0%, #3fb950 30%, #d29922 40%, #3fb950 50%, #3fb950 80%, #d29922 85%, #3fb950 100%);"></div>
+          </div>
+        </div>
+        <div class="ac-section">
+          <div class="ac-label">Cost</div>
+          <div class="ac-value">$51.02 <span class="ac-dim">avg $0.16/turn</span></div>
+          <div class="spark-in-card">
+            <div style="position:absolute; left:0; bottom:0; width:100%; height:50%; background: linear-gradient(90deg, #ffa65744 0%, #ffa657 30%, #ffa65788 60%, #ffa657 100%);"></div>
+          </div>
+        </div>
+        <div class="ac-nav">
+          <div class="ac-nav-item"><span><span class="ac-nav-dot" style="background:#58a6ff;"></span>Timeline</span><span>319 steps</span></div>
+          <div class="ac-nav-item"><span><span class="ac-nav-dot" style="background:#3fb950;"></span>Context</span><span>Sys · Core</span></div>
+          <div class="ac-nav-item"><span>💰 Cost Efficiency</span></div>
+          <div class="ac-nav-item"><span>RAW</span><span>Req · Events</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="steps-panel">
+      <div class="steps-list">
+        <div class="steps-hdr mono">Timeline · 319 steps</div>
+        <div class="step-row mono sel"><span class="step-star">☆</span><span class="step-num">#1</span><span class="step-tools">Read</span><span class="step-ctx">0.3%</span><span class="step-dur">4s</span></div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">#2</span><span class="step-tools"><span class="step-bracket">┌</span> Bash<br><span class="step-bracket">└</span> Read ×3</span><span class="step-ctx">1.1%</span><span class="step-dur">12s</span></div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">#3</span><span class="step-tools">Edit</span><span class="step-ctx">1.8%</span><span class="step-dur">6s</span></div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">#4</span><span class="step-tools"><span class="step-bracket">┌</span> Read<br><span class="step-bracket">│</span> Edit<br><span class="step-bracket">└</span> Bash</span><span class="step-ctx">2.5%</span><span class="step-dur">18s</span></div>
+        <div class="step-idle mono">⏸ 12.0m</div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">#5</span><span class="step-tools"><span class="step-bracket">┌</span> Read ×2<br><span class="step-bracket">└</span> Bash</span><span class="step-ctx" style="color:#d29922;">3.8%</span><span class="step-dur">15s</span></div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">#6</span><span class="step-tools">Edit</span><span class="step-ctx">4.5%</span><span class="step-dur">8s</span></div>
+        <div class="step-row mono"><span class="step-star">★</span><span class="step-num">#7</span><span class="step-tools">Bash</span><span class="step-ctx">5.2%</span><span class="step-dur">6s</span></div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">#8</span><span class="step-tools"><span class="step-bracket">┌</span> Read<br><span class="step-bracket">└</span> Edit</span><span class="step-ctx">6.0%</span><span class="step-dur">14s</span></div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">#9</span><span class="step-tools">Read</span><span class="step-ctx">6.8%</span><span class="step-dur">5s</span></div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">#10</span><span class="step-tools"><span class="step-bracket">┌</span> Bash ×2<br><span class="step-bracket">│</span> Read<br><span class="step-bracket">└</span> Edit</span><span class="step-ctx">8.2%</span><span class="step-dur">22s</span></div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">…</span><span class="step-tools" style="color:#484f58;">309 more steps</span><span class="step-ctx"></span><span class="step-dur"></span></div>
+        <div class="step-idle mono">⏸ 8.5m</div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">#319</span><span class="step-tools">Bash</span><span class="step-ctx">100%</span><span class="step-dur">4s</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ RIGHT: AFTER (charts in Steps Panel header) ═══ -->
+<div class="panel">
+  <div class="panel-title">
+    <span>AFTER: Charts in Steps Panel Header</span>
+    <span class="tag good">2.5px/bar — readable</span>
+  </div>
+  <div class="detail-area">
+    <div class="agent-card mono" style="--mc:#58a6ff; width: 180px;">
+      <div class="ac-header">
+        <span class="ac-star">☆</span>
+        <div class="ac-name">main</div>
+        <span class="ac-model model-opus46">opus-4-6</span>
+        <div class="ac-meta">319t · 2.1h · orchestrator</div>
+      </div>
+      <div class="ac-body">
+        <!-- Text-only summaries — no charts -->
+        <div class="ac-section">
+          <div class="ac-label">Context</div>
+          <div class="ac-value">100.0% <span class="ac-dim">(1000K / 1000K)</span></div>
+          <div class="ac-dim">peak 100.0% <span class="ac-warn">⚠ autocompact</span></div>
+        </div>
+        <div class="ac-section">
+          <div class="ac-label">Cache</div>
+          <div class="ac-value">67.2% hit</div>
+          <div class="ac-dim">5 idle gaps (cache cold)</div>
+        </div>
+        <div class="ac-section">
+          <div class="ac-label">Cost</div>
+          <div class="ac-value">$51.02</div>
+          <div class="ac-dim">avg $0.16/turn</div>
+        </div>
+        <div class="ac-nav">
+          <div class="ac-nav-item"><span><span class="ac-nav-dot" style="background:#58a6ff;"></span>Timeline</span><span>319</span></div>
+          <div class="ac-nav-item"><span><span class="ac-nav-dot" style="background:#3fb950;"></span>Context</span><span>Sys·Core</span></div>
+          <div class="ac-nav-item"><span>💰 Cost</span></div>
+          <div class="ac-nav-item"><span>RAW</span><span>Req·Evt</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="steps-panel">
+      <!-- Charts as sticky header — full remaining width -->
+      <div class="chart-header mono" style="--chart-min-w: 638px;">
+        <!-- Context minimap -->
+        <div class="chart-label-row"><span>Context</span><span>peak 100% ⚠</span></div>
+        <div class="chart-wide" id="ctx-chart">
+          <!-- 40% threshold -->
+          <div class="threshold-line" style="left:0; right:0; top:0; bottom: 60%; border-left:none; border-bottom: 1px dashed #3fb95066;"></div>
+          <!-- 83.5% threshold -->
+          <div class="threshold-line" style="left:0; right:0; top:0; bottom: 16.5%; border-left:none; border-bottom: 1px dashed #f8514966;"></div>
+          <!-- Bars — showing readable individual bars at full width -->
+          <!-- ~50 representative bars across the width -->
+          <div class="chart-bar" style="left:0.5%; width:1.5%; height:5%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:2.5%; width:1.5%; height:8%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:4.5%; width:1.5%; height:12%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:6.5%; width:1.5%; height:16%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:8.5%; width:1.5%; height:20%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:10.5%; width:1.5%; height:24%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:12.5%; width:1.5%; height:28%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:14.5%; width:1.5%; height:32%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:16.5%; width:1.5%; height:35%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:18.5%; width:1.5%; height:38%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:20.5%; width:1.5%; height:42%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:22.5%; width:1.5%; height:45%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:24.5%; width:1.5%; height:48%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:26.5%; width:1.5%; height:52%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:28.5%; width:1.5%; height:55%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:30.5%; width:1.5%; height:58%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:32.5%; width:1.5%; height:62%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:34.5%; width:1.5%; height:65%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:36.5%; width:1.5%; height:68%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:38.5%; width:1.5%; height:72%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:40.5%; width:1.5%; height:75%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:42.5%; width:1.5%; height:78%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:44.5%; width:1.5%; height:80%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:46.5%; width:1.5%; height:82%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:48.5%; width:1.5%; height:84%; background:#f85149;"></div>
+          <div class="chart-bar" style="left:50.5%; width:1.5%; height:86%; background:#f85149;"></div>
+          <div class="chart-bar" style="left:52.5%; width:1.5%; height:88%; background:#f85149;"></div>
+          <div class="chart-bar" style="left:54.5%; width:1.5%; height:90%; background:#f85149;"></div>
+          <div class="chart-bar" style="left:56.5%; width:1.5%; height:92%; background:#f85149;"></div>
+          <div class="chart-bar" style="left:58.5%; width:1.5%; height:95%; background:#f85149;"></div>
+          <div class="chart-bar" style="left:60.5%; width:1.5%; height:98%; background:#f85149;"></div>
+          <div class="chart-bar" style="left:62.5%; width:1.5%; height:100%; background:#f85149;"></div>
+          <!-- compaction drop -->
+          <div class="chart-bar" style="left:64.5%; width:1.5%; height:25%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:66.5%; width:1.5%; height:30%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:68.5%; width:1.5%; height:35%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:70.5%; width:1.5%; height:42%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:72.5%; width:1.5%; height:50%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:74.5%; width:1.5%; height:58%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:76.5%; width:1.5%; height:65%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:78.5%; width:1.5%; height:72%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:80.5%; width:1.5%; height:78%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:82.5%; width:1.5%; height:82%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:84.5%; width:1.5%; height:85%; background:#f85149;"></div>
+          <div class="chart-bar" style="left:86.5%; width:1.5%; height:88%; background:#f85149;"></div>
+          <div class="chart-bar" style="left:88.5%; width:1.5%; height:92%; background:#f85149;"></div>
+          <div class="chart-bar" style="left:90.5%; width:1.5%; height:95%; background:#f85149;"></div>
+          <div class="chart-bar" style="left:92.5%; width:1.5%; height:97%; background:#f85149;"></div>
+          <div class="chart-bar" style="left:94.5%; width:1.5%; height:99%; background:#f85149;"></div>
+          <div class="chart-bar" style="left:96.5%; width:1.5%; height:100%; background:#f85149;"></div>
+          <!-- Blue cursor line at turn ~#200 -->
+          <div class="cursor-line" style="left: 62.5%;"></div>
+        </div>
+
+        <!-- Cache sparkline -->
+        <div class="chart-label-row"><span>Cache</span><span>67.2% hit</span></div>
+        <div class="spark-wide">
+          <div class="chart-bar" style="left:0%; width:1.5%; height:95%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:2%; width:1.5%; height:90%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:4%; width:1.5%; height:92%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:6%; width:1.5%; height:88%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:8%; width:1.5%; height:93%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:10%; width:1.5%; height:85%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:12%; width:1.5%; height:90%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:14%; width:1.5%; height:87%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:16%; width:1.5%; height:91%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:18%; width:1.5%; height:94%; background:#3fb950;"></div>
+          <!-- idle gap → cache cold -->
+          <div class="chart-bar" style="left:20%; width:1.5%; height:30%; background:#d29922;"></div>
+          <div class="chart-bar" style="left:22%; width:1.5%; height:85%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:24%; width:1.5%; height:90%; background:#3fb950;"></div>
+          <div class="chart-bar" style="left:62.5%; width:0; height:100%; border-left: 1px solid #58a6ff;"></div>
+        </div>
+
+        <!-- Cost sparkline -->
+        <div class="chart-label-row"><span>Cost</span><span>$51.02</span></div>
+        <div class="spark-wide">
+          <div class="chart-bar" style="left:0%; width:1.5%; height:40%; background:#ffa657;"></div>
+          <div class="chart-bar" style="left:2%; width:1.5%; height:55%; background:#ffa657;"></div>
+          <div class="chart-bar" style="left:4%; width:1.5%; height:35%; background:#ffa657;"></div>
+          <div class="chart-bar" style="left:6%; width:1.5%; height:70%; background:#ffa657;"></div>
+          <div class="chart-bar" style="left:8%; width:1.5%; height:50%; background:#ffa657;"></div>
+          <div class="chart-bar" style="left:10%; width:1.5%; height:60%; background:#ffa657;"></div>
+          <div class="chart-bar" style="left:12%; width:1.5%; height:45%; background:#ffa657;"></div>
+          <div class="chart-bar" style="left:14%; width:1.5%; height:80%; background:#ffa657;"></div>
+          <div class="chart-bar" style="left:62.5%; width:0; height:100%; border-left: 1px solid #58a6ff;"></div>
+        </div>
+      </div>
+
+      <!-- Step list scrolls beneath sticky charts -->
+      <div class="steps-list">
+        <div class="steps-hdr mono">Timeline · 319 steps</div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">#1</span><span class="step-tools">Read</span><span class="step-ctx">0.3%</span><span class="step-dur">4s</span></div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">#2</span><span class="step-tools"><span class="step-bracket">┌</span> Bash<br><span class="step-bracket">└</span> Read ×3</span><span class="step-ctx">1.1%</span><span class="step-dur">12s</span></div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">#3</span><span class="step-tools">Edit</span><span class="step-ctx">1.8%</span><span class="step-dur">6s</span></div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">#4</span><span class="step-tools"><span class="step-bracket">┌</span> Read<br><span class="step-bracket">│</span> Edit<br><span class="step-bracket">└</span> Bash</span><span class="step-ctx">2.5%</span><span class="step-dur">18s</span></div>
+        <div class="step-idle mono">⏸ 12.0m</div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">#5</span><span class="step-tools"><span class="step-bracket">┌</span> Read ×2<br><span class="step-bracket">└</span> Bash</span><span class="step-ctx" style="color:#d29922;">3.8%</span><span class="step-dur">15s</span></div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">#6</span><span class="step-tools">Edit</span><span class="step-ctx">4.5%</span><span class="step-dur">8s</span></div>
+        <div class="step-row mono sel"><span class="step-star">★</span><span class="step-num">#200</span><span class="step-tools"><span class="step-bracket">┌</span> Bash ×2<br><span class="step-bracket">│</span> Read<br><span class="step-bracket">└</span> Edit</span><span class="step-ctx" style="color:#f85149;">100%</span><span class="step-dur">22s</span></div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">#201</span><span class="step-tools">Read</span><span class="step-ctx">25%</span><span class="step-dur">5s</span></div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">…</span><span class="step-tools" style="color:#484f58;">more steps</span><span class="step-ctx"></span><span class="step-dur"></span></div>
+        <div class="step-row mono"><span class="step-star">☆</span><span class="step-num">#319</span><span class="step-tools">Bash</span><span class="step-ctx" style="color:#f85149;">100%</span><span class="step-dur">4s</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<div class="rule-box">
+  <p><strong>P2 Design Rule:</strong></p>
+  <p>• Charts move from Agent Card → Steps Panel sticky header. Agent Card = text-only summary.</p>
+  <p>• Chart width = Steps Panel width (400-800px). <code>min-width: turnCount × 2px</code> with <code>overflow-x: auto</code> fallback.</p>
+  <p>• Blue cursor line is vertical through all 3 charts + step list. Click chart → select turn. Click step → move cursor.</p>
+  <p>• Agent Card keeps: header, context/cache/cost TEXT, nav items. No charts. Cleaner, less scroll.</p>
+  <p>• Lane Label ↔ Agent Card alignment preserved (both 240px text). Charts don't need to match lane labels.</p>
+</div>
+
+</body>
+</html>

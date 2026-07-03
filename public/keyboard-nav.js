@@ -31,8 +31,8 @@ function _hasBadgeDescendants() {
 function getStarTargetFromSelection() {
   if (!window.xrayStars) return null;
 
-  // In focused mode: use targetFromCurrentSelection() for step/turn context
-  if (isFocusedMode) {
+  // In split view (focused or workflow timeline): use targetFromCurrentSelection()
+  if (inSplitView()) {
     const t = typeof targetFromCurrentSelection === 'function' ? targetFromCurrentSelection() : null;
     if (!t) return null;
     if (t.kind === 'step') {
@@ -288,7 +288,7 @@ function _timelineCallMatchesType(call, type) {
 }
 
 function _hasTimelineStepType(type) {
-  if (!isFocusedMode || selectedSection !== 'timeline' || !Array.isArray(currentSteps)) return false;
+  if (!inSplitView() || selectedSection !== 'timeline' || !Array.isArray(currentSteps)) return false;
   return currentSteps.some(step => step && step.type === 'tool-group' && step.calls.some(call => _timelineCallMatchesType(call, type)));
 }
 
@@ -325,12 +325,13 @@ function getCmdBarState() {
   if (_loading) return null;
   if (typeof activeTab !== 'undefined' && activeTab !== 'dashboard') return null;
 
-  if (isFocusedMode) {
+  if (inSplitView()) {
     if (selectedSection === 'timeline') {
+      var _exitCmd = (typeof wfState !== 'undefined' && wfState) ? [] : [{ key: 'Esc/←', label: 'exit', clickKey: 'Escape' }];
       return {
         row1: [
           { key: '↑↓', label: 'steps' },
-          { key: 'Esc/←', label: 'exit', clickKey: 'Escape' },
+          ..._exitCmd,
           { key: 'f', label: _fStarLabel(), id: 'f-star', clickKey: 'f' },
           ..._starNavItems('timeline-star-nav'),
         ],
@@ -518,7 +519,7 @@ document.addEventListener('keydown', (e) => {
 
   if (key === 'n' || key === 'N') {
     const dir = key === 'N' ? 'prev' : 'next';
-    const jumped = isFocusedMode && selectedSection === 'timeline'
+    const jumped = inSplitView() && selectedSection === 'timeline'
       ? jumpToTimelineStar(dir)
       : jumpToStar(dir);
     if (jumped) e.preventDefault();
@@ -560,9 +561,9 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
-  // Focused mode intercept — takes priority over column navigation
-  if (isFocusedMode) {
-    if (key === 'Escape' || key === 'ArrowLeft') {
+  // Split view intercept — focused mode OR workflow timeline (P16)
+  if (inSplitView()) {
+    if ((key === 'Escape' || key === 'ArrowLeft') && isFocusedMode) {
       exitFocusedMode(); e.preventDefault(); return;
     }
     // T12: step-type jump shortcuts
@@ -572,9 +573,10 @@ document.addEventListener('keydown', (e) => {
     }
     if ((key === 'ArrowUp' || key === 'ArrowDown') && selectedSection === 'timeline') {
       e.preventDefault();
-      const all = [...colDetail.querySelectorAll('.tl-step-summary')];
+      const _kbRoot = typeof wfStepsRoot === 'function' ? wfStepsRoot() : colDetail;
+      const all = [..._kbRoot.querySelectorAll('.tl-step-summary')];
       if (!all.length) return;
-      const curEl = colDetail.querySelector('.tl-step-summary.active');
+      const curEl = _kbRoot.querySelector('.tl-step-summary.active');
       const curIdx = curEl ? all.indexOf(curEl) : -1;
       const nextIdx = Math.max(0, Math.min(all.length - 1, curIdx + (key === 'ArrowDown' ? 1 : -1)));
       const target = all[nextIdx];
@@ -602,11 +604,20 @@ document.addEventListener('keydown', (e) => {
       renderCmdBar();
       return;
     }
+    // Workflow lane nav (j/k/Tab/Esc) — the split-view swallow below must not eat these.
+    // Dashboard tab only: a hidden workflow view must not react to keys from other tabs.
+    if (!isFocusedMode && activeTab === 'dashboard' && typeof wfState !== 'undefined' && wfState && typeof wfKeyHandler === 'function') {
+      if (wfKeyHandler(key, e)) { e.preventDefault(); return; }
+    }
     return; // swallow other keys in focused mode
   }
 
   // Enter on sections → enter focused mode
   if (key === 'Enter' && focusedCol === 'sections' && selectedSection) { enterFocusedMode(); e.preventDefault(); return; }
+  // Workflow shortcuts: j/k/Tab/Esc dispatched before arrow-only guard (dashboard tab only)
+  if (focusedCol === 'turns' && activeTab === 'dashboard' && typeof wfState !== 'undefined' && wfState && typeof wfKeyHandler === 'function') {
+    if (wfKeyHandler(key, e)) { e.preventDefault(); return; }
+  }
   // Escape in main mode → move left one column
   if (key === 'Escape') {
     const leftOf = { sessions: 'projects', turns: 'sessions', sections: 'turns' };
@@ -673,9 +684,10 @@ document.addEventListener('keydown', (e) => {
 
 // ── T12: Step-type jump shortcuts ─────────────────────────────────────────────
 function jumpToStepType(type, dir) {
-  const allStepEls = [...colDetail.querySelectorAll('.tl-step-summary')];
+  const _jRoot = typeof wfStepsRoot === 'function' ? wfStepsRoot() : colDetail;
+  const allStepEls = [..._jRoot.querySelectorAll('.tl-step-summary')];
   if (!allStepEls.length) return;
-  const curEl = colDetail.querySelector('.tl-step-summary.active');
+  const curEl = _jRoot.querySelector('.tl-step-summary.active');
 
   const candidates = allStepEls.filter(el => _timelineStepElementMatchesType(el, type));
 

@@ -577,7 +577,7 @@ function _navigateTargetInner(target, opts) {
       if (!loadResult.ok) return loadResult;
       selectedSection = 'timeline';
       setSelectedStepSelection(target.stepIdx, target.sub);
-      if (!isFocusedMode && opts.focus !== false && typeof enterFocusedMode === 'function') {
+      if (!inSplitView() && opts.focus !== false && typeof enterFocusedMode === 'function') {
         enterFocusedMode();
       } else {
         renderDetailCol();
@@ -748,7 +748,7 @@ function _selectTimelineStepWhenReady(turnIdx, stepIdx, sub) {
     const current = allEntries[turnIdx];
     if (!current || !current.reqLoaded || typeof prepareTimelineSteps !== 'function' || typeof selectStep !== 'function') return;
     selectedSection = 'timeline';
-    if (!isFocusedMode && typeof enterFocusedMode === 'function') {
+    if (!inSplitView() && typeof enterFocusedMode === 'function') {
       setSelectedStepSelection(stepIdx, sub);
       enterFocusedMode();
     } else {
@@ -1315,12 +1315,16 @@ let selectedStepSub = null;
 let selectedStepSubExplicit = false;
 let focusedCol = 'projects'; // 'projects' | 'sessions' | 'turns' | 'sections' | 'messages'
 let isFocusedMode = false;
+// ponytail: "split pane active" — classic focused OR workflow timeline (P16: workflow never uses isFocusedMode)
+function inSplitView() { return isFocusedMode || (typeof wfState !== 'undefined' && !!wfState && selectedSection === 'timeline'); }
 
 function enterFocusedMode() {
   if (isFocusedMode) return;
+  if (typeof wfState !== 'undefined' && wfState) return;
   isFocusedMode = true;
   document.getElementById('columns').classList.add('focused');
   renderDetailCol();
+  if (typeof wfDeferRender === 'function' && typeof wfState !== 'undefined' && wfState) wfDeferRender();
   if (typeof renderCmdBar === 'function') renderCmdBar();
 }
 
@@ -1329,7 +1333,14 @@ function exitFocusedMode() {
   isFocusedMode = false;
   document.getElementById('columns').classList.remove('focused');
   setFocus('sections');
-  renderDetailCol();
+  // Workflow timeline: wfRenderCurrentSection handles the switch to flat turn list;
+  // skip renderDetailCol to avoid its delayed commitDetailHtml overwriting wfRenderSteps
+  var isWfTimeline = typeof wfState !== 'undefined' && wfState && wfState.selectedSection === 'timeline';
+  if (!isWfTimeline) renderDetailCol();
+  if (typeof wfDeferRender === 'function' && typeof wfState !== 'undefined' && wfState) {
+    wfDeferRender();
+    if (isWfTimeline && typeof wfRenderCurrentSection === 'function') wfRenderCurrentSection();
+  }
   if (typeof renderCmdBar === 'function') renderCmdBar();
 }
 const colProjects = document.getElementById('col-projects');
@@ -1650,6 +1661,11 @@ function selectProject(name) {
   colTurns.querySelectorAll('.turn-item').forEach(el => { el.style.display = 'none'; });
   colSections.innerHTML = '';
   colDetail.innerHTML = '';
+  // Clear workflow timeline
+  if (typeof wfState !== 'undefined') wfState = null;
+  document.getElementById('columns').classList.remove('wf-active');
+  var wfEl = document.getElementById('wf-timeline');
+  if (wfEl) wfEl.remove();
   renderBreadcrumb();
   setFocus('projects');
 }
@@ -1978,6 +1994,13 @@ function selectSessionAndLatestTurn(sid) {
   colTurns.querySelectorAll('.turn-item').forEach(el => {
     el.style.display = (sid && el.dataset.sessionId === sid) ? '' : 'none';
   });
+  // Workflow view
+  var columnsEl = document.getElementById('columns');
+  if (typeof wfBuildState === 'function' && sid) {
+    wfState = wfBuildState(sid);
+    if (wfState) { wfRenderTimeline(); columnsEl.classList.add('wf-active'); }
+    else { columnsEl.classList.remove('wf-active'); }
+  }
   // Auto-select latest turn in this session
   const visible = getVisibleTurnIndices();
   if (visible.length) selectTurn(visible[visible.length - 1]);
@@ -2091,6 +2114,21 @@ function selectSession(id) {
   updateRetryEmptyState(id);
   renderSessionToolBar(id);
   renderSessionSparkline(id);
+
+  // Workflow swimlane view: col-turns becomes full-width right area
+  var columnsEl = document.getElementById('columns');
+  if (typeof wfBuildState === 'function' && id) {
+    wfState = wfBuildState(id);
+    if (wfState) { wfRenderTimeline(); columnsEl.classList.add('wf-active'); }
+    else { columnsEl.classList.remove('wf-active'); }
+  } else {
+    columnsEl.classList.remove('wf-active');
+  }
+
+  // Auto-select latest turn so agent card + steps panel populate
+  var visible = getVisibleTurnIndices();
+  if (visible.length) selectTurn(visible[visible.length - 1]);
+
   renderBreadcrumb();
 }
 
@@ -2160,12 +2198,14 @@ function selectTurn(idx, opts) {
   if (idx < 0 || idx >= allEntries.length) return;
   if (typeof hideNewTurnPill === 'function') hideNewTurnPill();
   // Exit focused mode when switching turns — user is browsing, not drilling into timeline
-  if (isFocusedMode) {
+  // In workflow mode, keep focused mode (timeline stays in split-pane view)
+  if (isFocusedMode && !(typeof wfState !== 'undefined' && wfState)) {
     isFocusedMode = false;
     document.getElementById('columns').classList.remove('focused');
   }
   selectedTurnIdx = idx;
   clearSelectedStepSelection();
+  if (typeof wfHighlightTurn === 'function' && wfState) wfHighlightTurn(allEntries[idx]?.id);
   colTurns.querySelectorAll('.turn-item').forEach(el => {
     el.classList.toggle('selected', parseInt(el.dataset.entryIdx) === idx);
   });
@@ -2520,7 +2560,10 @@ function renderDetailCol() {
     requestAnimationFrame(() => {
       setTimeout(() => {
         if (renderToken !== renderDetailRenderToken) return;
-        colDetail.innerHTML = html;
+        // Workflow mode: redirect all sections (including timeline) to #wf-steps-content
+        var target = (typeof wfState !== 'undefined' && wfState && wfState.selectedSection)
+          ? document.getElementById('wf-steps-content') : null;
+        (target || colDetail).innerHTML = html;
         requestAnimationFrame(() => {
           if (renderToken !== renderDetailRenderToken) return;
           colDetail.style.opacity = '1';
@@ -2542,7 +2585,13 @@ function renderDetailCol() {
 
   const sectionLabel = selectedSection.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   let headerHtml;
-  if (isFocusedMode) {
+  var isWf = typeof wfState !== 'undefined' && wfState;
+  if (isWf) {
+    // P16: workflow — always side-by-side, no focused mode toggle
+    headerHtml = '<div class="col-header" style="display:flex;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border)">'
+      + '<span style="font-size:11px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:0.08em">' + escapeHtml(sectionLabel) + '</span>'
+      + '</div>';
+  } else if (isFocusedMode) {
     headerHtml = '<div class="fp-header">'
       + '<button class="fp-back" onclick="exitFocusedMode()">←</button>'
       + '<span class="fp-title">' + escapeHtml(sectionLabel) + '</span>'
@@ -2561,8 +2610,8 @@ function renderDetailCol() {
       } else { inner = e.reqLoaded ? '<div class="col-empty">No system prompt</div>' : loading; }
       break;
     case 'timeline': {
-      if (!isFocusedMode) {
-        // Non-focused: show step summary list with minimap (no detail pane)
+      if (!isFocusedMode && !isWf) {
+        // Non-focused (classic only): show step summary list with minimap (no detail pane)
         // User clicks a step or presses Enter to enter split-pane
         prepareTimelineSteps(req.messages || req.input, resEvents, e.provider || 'anthropic');
         if (!currentSteps.length) {
@@ -2621,19 +2670,27 @@ function renderDetailCol() {
       const detailHtml = selectedMessageIdx >= 0
         ? renderStepDetailHtml(req, tok)
         : '<div class="col-empty" style="padding:20px">← Select a step</div>';
+      var savedStepsW = Math.max(360, Math.min(parseInt(localStorage.getItem('ccxray-steps-width')) || 360, 500));
       const focusedHtml = headerHtml + summaryHtml
         + '<div class="tl-split">'
-        + '<div class="tl-with-minimap" style="width:280px;min-width:200px;max-width:400px;flex-shrink:0;border-right:1px solid var(--border)">'
+        + '<div class="tl-with-minimap" style="width:' + savedStepsW + 'px">'
         + '<div class="minimap" title="auto-compact at ~' + (((window.ccxraySettings?.autoCompactPct) || 0.835) * 100).toFixed(1) + '%">' + minimapHtml + '</div>'
         + '<div class="tl-scroll-area">' + stepsHtml + '</div>'
         + '</div>'
+        + '<div class="tl-resize-handle"></div>'
         + '<div class="tl-split-detail">' + detailHtml + '</div>'
         + '</div>';
       commitDetailHtml(focusedHtml, function() {
         requestAnimationFrame(() => {
-          const mm = colDetail.querySelector('.minimap');
-          const sa = colDetail.querySelector('.tl-scroll-area');
+          // In workflow mode, focused timeline renders into #wf-steps-content
+          var _root = typeof wfStepsRoot === 'function' ? wfStepsRoot() : colDetail;
+          const mm = _root.querySelector('.minimap');
+          const sa = _root.querySelector('.tl-scroll-area');
           if (mm && sa) { layoutMinimapBlocks(mm); initMinimapInteractions(mm, sa); }
+          // P16: wire up horizontal resize handle
+          var handle = _root.querySelector('.tl-resize-handle');
+          var leftPane = _root.querySelector('.tl-with-minimap');
+          if (handle && leftPane) initStepsResize(handle, leftPane);
           if (typeof renderCmdBar === 'function') renderCmdBar();
         });
         if (currentSteps.length && selectedMessageIdx < 0) {
@@ -2711,8 +2768,9 @@ function renderDetailCol() {
   commitDetailHtml(headerHtml + '<div class="detail-scroll"' + scrollStyle + '>' + inner + '</div>', function() {
     if (selectedSection === 'timeline') {
       requestAnimationFrame(() => {
-        const mm = colDetail.querySelector('.minimap');
-        const sa = colDetail.querySelector('.tl-scroll-area');
+        var _root2 = typeof wfStepsRoot === 'function' ? wfStepsRoot() : colDetail;
+        const mm = _root2.querySelector('.minimap');
+        const sa = _root2.querySelector('.tl-scroll-area');
         if (mm && sa) { layoutMinimapBlocks(mm); initMinimapInteractions(mm, sa); }
       });
     }
