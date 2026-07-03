@@ -532,7 +532,7 @@ Minimap total height = model's context window. Filled portion = consumed tokens.
 | **Step labels** | Inline small text (8-9px) on each step block: `sys prompt`, `#24 Read`, `×5 Bash` | Eliminates hover-to-discover; step identity is preattentive, not attentive |
 | **Width** | 60-70px (was 36-48px) | Wider to accommodate inline text; acceptable trade — on 1440px screen, Steps+Detail still gets ~950px |
 | **Empty space** | Zone threshold dashed lines + labels | Prevents "broken UI" perception; empty space becomes information ("this much room left") |
-| **Low-fill coalescence** | Adjacent same-type steps merge when individual height < 3px, show `×N` label inline | Preserves height=tokens metaphor; inline label (e.g. `×5 Read`) compensates for per-step granularity loss |
+| **Low-fill coalescence**（design intent — not yet implemented） | Adjacent same-type steps merge when individual height < 3px, show `×N` label inline | Preserves height=tokens metaphor; inline label (e.g. `×5 Read`) compensates for per-step granularity loss |
 
 #### Zone threshold lines
 
@@ -585,7 +585,7 @@ Rules:
 
 #### Ceiling and tradeoffs
 
-**Score: 9.3/10** (revised from 9.7 after P16 changes). Inline text labels recover most of the coalescence granularity loss — merged blocks show `×5 Read` instead of requiring hover. The remaining 0.7 gap is: at 50+ steps with small fonts, labels may crowd — but this is the exact scenario where coalescence triggers, reducing label count.
+**Score: 9.3/10** (revised from 9.7 after P16 changes). Inline text labels are designed to recover most of the coalescence granularity loss — merged blocks would show `×5 Read` instead of requiring hover (coalescence itself is not yet implemented). The remaining 0.7 gap is: at 50+ steps with small fonts, labels may crowd — but this is the exact scenario where coalescence would trigger, reducing label count.
 
 The upgrade path if this becomes a real pain: add a keyboard shortcut (e.g. `m`) to toggle between "proportional mode" (height=tokens, current) and "equal mode" (all steps same height, pure navigation). But YAGNI until user feedback says otherwise.
 
@@ -619,7 +619,7 @@ Overview, swimlane turn bars, and minimap fill all reference this one object.
 
 | Element | Direction | Selection marker | Additional signals |
 |---------|-----------|------------------|--------------------|
-| Overview | Horizontal, 2-6px micro blocks | Viewport rect (indicator line parked — #111) | Scale labels, duration badge |
+| Overview | Horizontal, 2-6px micro blocks | Viewport rect + 1px selected-turn indicator line (#111) | Scale labels, duration badge |
 | Swimlane turn bar | Horizontal, 8px × width∝duration | Semi-transparent accent position cursor rect | Spawn connectors, gap spacing |
 | Minimap fill | **Vertical**, height∝tokens, 60-70px wide | Hover highlight | Zone threshold dashed lines, bottom size label, **inline step labels** |
 
@@ -761,8 +761,8 @@ Agent switch changes: fill ratio, zone color, bottom label, step content. Does N
 | Touch step rows | 24px height below 44pt HIG | Full-width tap area adequate for dev tool audience |
 | Chart on narrow screen | Scroll fallback at <2px/bar | Binning trades fidelity, not worth it |
 | Detail width (P16) | No focused mode — detail limited to ~60% of right area | Draggable resize handle; full-screen detail view if resize proves insufficient |
-| Minimap label crowding (P10) | Inline labels may crowd at 50+ steps | Coalescence merges small steps, reducing label count at exactly the point crowding would occur |
-| Overview indicator (P15) | Parked — no selected-turn marker in overview | Swimlane cursor is visible enough; revisit after P10 minimap changes layout |
+| Minimap label crowding (P10) | Inline labels may crowd at 50+ steps | Coalescence（not yet implemented）would merge small steps, reducing label count at exactly the point crowding would occur |
+| Overview indicator (P15) | Implemented (#111) — 1px bright line at selected turn | — |
 
 ## Test Data
 
