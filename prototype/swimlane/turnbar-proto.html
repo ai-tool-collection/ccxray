@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Swimlane Turn Bar Prototype</title>
+<style>
+:root{--bg:#0d1117;--surface:#161b22;--border:#30363d;--text:#e6edf3;--dim:#8b949e;--accent:#58a6ff;--cache-read:#4dd0e1}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'SF Mono','Cascadia Code',monospace;font-size:13px;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:auto}
+header{padding:8px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+header h1{font-size:14px;color:var(--accent)}
+.legend{display:flex;gap:12px;font-size:10px;color:var(--dim);margin-left:auto;flex-wrap:wrap}
+.legend span{display:flex;align-items:center;gap:4px}
+.legend .dot{width:8px;height:8px;border-radius:2px;flex-shrink:0}
+.motto{font-size:11px;color:var(--dim);padding:4px 16px;border-bottom:1px solid var(--border)}
+#lane-wrap,.lane-section{overflow-x:auto;overflow-y:hidden;padding:12px 16px}
+.lane-label{font-size:10px;color:var(--dim);margin-bottom:4px}
+.lane{position:relative;height:44px;background:var(--surface);border-radius:4px;border:1px solid var(--border);margin-bottom:8px}
+.lane-sub{height:44px;opacity:0.8}
+.tb{position:absolute;bottom:0;min-width:2px;border-radius:1px 1px 0 0;cursor:pointer;transition:filter 0.1s}
+.tb:hover{filter:brightness(1.3);z-index:10}
+.tb.cm{border-bottom:3px solid var(--cache-read)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.7}}
+.tb.dng{animation:pulse 2s ease-in-out infinite}
+/* v2 styles */
+.tb2{position:absolute;bottom:0;min-width:4px;margin-right:1px;border-radius:1px 1px 0 0;cursor:pointer;transition:filter 0.1s}
+.tb2:hover{filter:brightness(1.3);z-index:10}
+.tb2.cm2{border-bottom:3px solid var(--cache-read)}
+.tb2.dng2{animation:pulse 2s ease-in-out infinite;clip-path:polygon(50% 0,100% 4px,100% 100%,0 100%,0 4px)}
+.tb2 .pl{position:absolute;left:50%;top:2px;transform:translateX(-50%);font-size:7px;color:rgba(255,255,255,0.9);pointer-events:none;white-space:nowrap;text-shadow:0 0 3px rgba(0,0,0,0.9)}
+.section-title{font-size:13px;color:var(--accent);padding:12px 16px 0;border-top:1px solid var(--border);margin-top:8px}
+.section-desc{font-size:10px;color:var(--dim);padding:2px 16px 0;line-height:1.5}
+.change-tag{display:inline-block;font-size:9px;padding:1px 5px;border-radius:3px;margin:0 2px;font-weight:600}
+.model-switch-v2{position:absolute;top:0;bottom:0;width:1px;border-left:1px dashed var(--dim);opacity:0.4}
+/* v3 styles */
+.tb3{position:absolute;bottom:0;min-width:4px;margin-right:1px;border-radius:1px 1px 0 0;cursor:pointer;transition:filter 0.1s}
+.tb3:hover{filter:brightness(1.3);z-index:10}
+.tb3.cm3{border-bottom:3px solid var(--cache-read)}
+.tb3.dng3{animation:pulse 2s ease-in-out infinite;border-top:3px solid #ff6b6b}
+.tb3.zone-green{border-left:1px solid #237832}
+.tb3 .pl{position:absolute;left:50%;top:2px;transform:translateX(-50%);font-size:7px;color:rgba(255,255,255,0.9);pointer-events:none;white-space:nowrap;text-shadow:0 0 3px rgba(0,0,0,0.9)}
+.tb .pl{position:absolute;left:50%;top:2px;transform:translateX(-50%);font-size:7px;color:rgba(255,255,255,0.9);pointer-events:none;white-space:nowrap;text-shadow:0 0 3px rgba(0,0,0,0.9)}
+/* v4 styles */
+.tb4{position:absolute;bottom:0;min-width:4px;margin-right:1px;border-radius:1px 1px 0 0;cursor:pointer;transition:filter 0.15s}
+.tb4:hover{filter:brightness(1.3);z-index:10}
+.tb4.dng4{animation:pulse 2s ease-in-out infinite}
+.tb4 .pl{position:absolute;left:50%;top:2px;transform:translateX(-50%);font-size:7px;color:rgba(255,255,255,0.9);pointer-events:none;white-space:nowrap;text-shadow:0 0 3px rgba(0,0,0,0.9)}
+.tb4:hover{transform:scaleY(1.5);transform-origin:bottom;filter:brightness(1.2);z-index:20}
+.event-track{position:relative;height:8px;background:var(--surface);border-radius:0 0 4px 4px;border:1px solid var(--border);border-top:none;margin-top:-1px;margin-bottom:8px}
+.ev-dot{position:absolute;bottom:2px;width:4px;height:4px;border-radius:50%;pointer-events:auto;cursor:pointer}
+.ev-dot.ev-error{background:#f85149;border-radius:1px}
+.ev-dot.ev-cache{background:#4dd0e1}
+.ev-dot.ev-dup{background:rgba(255,255,255,0.7);border-radius:1px;transform:rotate(45deg)}
+.ev-dot.ev-cred{background:#d29922;box-shadow:0 0 4px #d29922}
+.ev-dot.ev-max{background:#f85149;border-radius:50%;width:3px;height:3px}
+.filter-bar{display:flex;gap:6px;padding:4px 16px;font-size:10px;align-items:center;flex-wrap:wrap}
+.filter-btn{background:var(--surface);border:1px solid var(--border);color:var(--dim);padding:2px 8px;border-radius:3px;cursor:pointer;font-family:inherit;font-size:10px;display:flex;align-items:center;gap:4px;transition:all 0.15s}
+.filter-btn:hover{border-color:var(--dim);color:var(--text)}
+.filter-btn.active{border-color:var(--accent);color:var(--text);background:rgba(88,166,255,0.1)}
+.filter-btn .fdot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.v4-legend{display:flex;gap:8px;font-size:9px;color:var(--dim);padding:2px 16px;flex-wrap:wrap}
+.v4-legend span{display:flex;align-items:center;gap:3px}
+#tt{position:fixed;display:none;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:8px 10px;font-size:11px;color:var(--text);z-index:100;pointer-events:none;max-width:280px;box-shadow:0 2px 8px rgba(0,0,0,0.5);line-height:1.6}
+#tt .r{display:flex;justify-content:space-between;gap:16px}
+#tt .l{color:var(--dim)}
+#tt .v{font-weight:600}
+#tt .v.warn{color:#d29922}
+#tt .v.danger{color:#f85149}
+#tt .v.good{color:#3fb950}
+#info{padding:10px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--dim);line-height:1.6}
+#info code{color:var(--accent);background:var(--surface);padding:1px 4px;border-radius:2px}
+.model-chip{display:inline-block;font-size:9px;padding:1px 4px;border-radius:2px;margin-left:6px}
+</style></head><body>
+<header>
+<h1>Swimlane Turn Bar — Design Prototype</h1>
+<div class="legend">
+<span><span class="dot" style="background:#7ee0a0"></span>ctx &lt;40%</span>
+<span><span class="dot" style="background:#d29922"></span>ctx 40-80%</span>
+<span><span class="dot" style="background:#f85149"></span>ctx &gt;80% (pulse)</span>
+<span><span class="dot" style="background:var(--cache-read)"></span>cache &lt;50%</span>
+<span>height = cost</span>
+</div>
+</header>
+<div class="motto">越高越貴，越深越滿，閃的快爆，藍底沒cache</div>
+<div id="lane-wrap"></div>
+<div class="section-title">v2 — Fixed Design (9.05/10)</div>
+<div class="section-desc">
+越高越貴，越深越滿，<strong>尖的</strong>閃的快爆，藍底沒cache<br>
+<span class="change-tag" style="background:#3fb95022;color:#3fb950">P1</span> min-width 4px + 1px gap — 密集區可讀
+<span class="change-tag" style="background:#f8514922;color:#f85149">P2</span> 紅色明度範圍 ×2.3 (#ff9e99→#7a1a1a) — 81% vs 99% 可辨
+<span class="change-tag" style="background:#8b949e22;color:#8b949e">P3</span> model switch 改灰色虛線 — 不再跟 cyan 撞色
+<span class="change-tag" style="background:#d2a8ff22;color:#d2a8ff">P4</span> &gt;80% 尖角頂部 (clip-path) — 形狀冗餘，色盲可用
+</div>
+<div id="lane-wrap-v2" class="lane-section"></div>
+
+<div class="section-title">v3 — Final Design (9.0/10)</div>
+<div class="section-desc">
+越高越貴，越深越滿，<strong>亮的</strong>閃的快爆，藍底沒cache<br>
+<span class="change-tag" style="background:#3fb95022;color:#3fb950">形狀冗餘</span> green zone 加左邊框 → 色盲三段辨識：有左邊│無邊│有頂邊
+<span class="change-tag" style="background:#f8514922;color:#f85149">亮頂邊</span> 取代尖角 clip-path → 寬窄 bar 信號正相關
+<span class="change-tag" style="background:#58a6ff22;color:#58a6ff">明度</span> = context %（深=滿）· 紅 zone ΔL=51 · in-bar % 文字
+</div>
+<div id="lane-wrap-v3" class="lane-section"></div>
+
+<div class="section-title">v4 — Event Track + Filter (9.5/10)</div>
+<div class="section-desc">
+越高越貴，越深越滿，亮的閃的快爆 · 事件移到副軌道 · 篩選控制信噪比 · hover 放大細節<br>
+<span class="change-tag" style="background:#58a6ff22;color:#58a6ff">NEW</span> 8px event track — 事件標記從 bar 邊框解放
+<span class="change-tag" style="background:#3fb95022;color:#3fb950">NEW</span> Filter toggles — 一鍵聚焦單一事件類型
+<span class="change-tag" style="background:#bc8cff22;color:#bc8cff">NEW</span> Hover-expand — 矮 bar hover 時 scaleY(1.5x)
+<span class="change-tag" style="background:#f0883e22;color:#f0883e">CLEAN</span> Bar 回歸純 4 維：height=cost · hue=zone · lightness=ctx% · pulse=danger
+</div>
+<div class="filter-bar" id="v4-filters">
+  <span style="color:var(--dim)">Filter:</span>
+  <button class="filter-btn active" data-filter="error"><span class="fdot" style="background:#f85149"></span>errors</button>
+  <button class="filter-btn active" data-filter="cache"><span class="fdot" style="background:#4dd0e1"></span>cache miss</button>
+  <button class="filter-btn active" data-filter="dup"><span class="fdot" style="background:rgba(255,255,255,0.7)"></span>dup calls</button>
+  <button class="filter-btn active" data-filter="cred"><span class="fdot" style="background:#d29922"></span>credential</button>
+  <button class="filter-btn active" data-filter="max"><span class="fdot" style="background:#f85149;border-radius:50%;width:4px;height:4px"></span>max_tokens</button>
+</div>
+<div class="v4-legend">
+  <span>Event track: </span>
+  <span><span class="fdot" style="background:#f85149;width:5px;height:5px;border-radius:1px;display:inline-block"></span> error (■)</span>
+  <span><span class="fdot" style="background:#4dd0e1;width:5px;height:5px;border-radius:50%;display:inline-block"></span> cache (●)</span>
+  <span><span class="fdot" style="background:rgba(255,255,255,0.7);width:5px;height:5px;border-radius:1px;transform:rotate(45deg);display:inline-block"></span> dup (◆)</span>
+  <span><span class="fdot" style="background:#d29922;width:5px;height:5px;border-radius:50%;box-shadow:0 0 3px #d29922;display:inline-block"></span> cred (glow)</span>
+</div>
+<div id="lane-wrap-v4" class="lane-section"></div>
+
+<div class="section-title">v5 — Usage-style Dropdown Filter + Event Track (9.07/10)</div>
+<div class="section-desc">
+群組按鈕 click=toggle 整組 · ▾ 展開下拉選子項 · ghost dots（10% opacity）保持位置感知<br>
+<span class="change-tag" style="background:#f0883e22;color:#f0883e">Tools</span> errors · skill · MCP · core · dup · subagent
+<span class="change-tag" style="background:#d2992222;color:#d29922">Context</span> ctx>80% · compaction · cache miss · max_tokens
+<span class="change-tag" style="background:#f8514922;color:#f85149">Security</span> credential · sensitive · network · pkg install
+<span class="change-tag" style="background:#bc8cff22;color:#bc8cff">Cost</span> cost spike · high output
+</div>
+<div id="v5-filter-bar" style="display:flex;flex-wrap:wrap;gap:4px;padding:4px 16px;align-items:flex-start"></div>
+<div id="lane-wrap-v5" class="lane-section"></div>
+
+<div class="section-title">v6 — Session Weather Health (v5 + aggregate icon)</div>
+<div class="section-desc">
+Jenkins-style 天氣 icon 壓縮 session 健康度到一個符號 · 權重：error 40% · ctx>80% 30% · cache miss 20% · cost spike 10%<br>
+<span class="change-tag" style="background:#3fb95022;color:#3fb950">NEW</span> lane label 加天氣 icon + health score
+<span class="change-tag" style="background:#58a6ff22;color:#58a6ff">SAME</span> 4D bar + event track + Usage-style filter 不變
+</div>
+<div id="v6-filter-bar" style="display:flex;flex-wrap:wrap;gap:4px;padding:4px 16px;align-items:flex-start"></div>
+<div id="lane-wrap-v6" class="lane-section"></div>
+
+<div id="tt"></div>
+<div id="info">
+44px lane · <code>height∝cost</code> · <code>lightness=context%</code> · <code>cyan border=cache&lt;50%</code> · <code>pulse=ctx&gt;80%</code><br>
+Real log data (session 68134a99, 128 turns). Models: opus-4-6 + haiku-4-5. Hover for details.
+</div>
+<script>
+var DATA=[{"id":"2026-06-27T13-44-54-331","ts":1782539094332,"dur":"2.7","model":"claude-opus-4-6","cost":0.003835,"ctxUsed":677,"maxCtx":200000,"cacheRead":0,"cacheCreate":0,"input":677,"output":18,"isSub":false,"hasErr":false,"num":1},{"id":"2026-06-27T13-44-54-400","ts":1782539094400,"dur":"10.2","model":"claude-opus-4-6","cost":0.450365,"ctxUsed":70327,"maxCtx":200000,"cacheRead":0,"cacheCreate":70324,"input":3,"output":433,"isSub":false,"hasErr":false,"num":2},{"id":"2026-06-27T13-45-05-378","ts":1782539105378,"dur":"8.5","model":"claude-opus-4-6","cost":0.8206549999999999,"ctxUsed":130461,"maxCtx":200000,"cacheRead":0,"cacheCreate":130460,"input":1,"output":211,"isSub":false,"hasErr":false,"num":3},{"id":"2026-06-27T13-45-15-013","ts":1782539115014,"dur":"5.3","model":"claude-opus-4-6","cost":0.07701,"ctxUsed":131545,"maxCtx":200000,"cacheRead":130460,"cacheCreate":1084,"input":1,"output":200,"isSub":false,"hasErr":false,"num":4},{"id":"2026-06-27T13-45-21-610","ts":1782539121610,"dur":"12.9","model":"claude-opus-4-6","cost":0.07418324999999999,"ctxUsed":132466,"maxCtx":200000,"cacheRead":131544,"cacheCreate":921,"input":1,"output":106,"isSub":false,"hasErr":false,"num":5},{"id":"2026-06-27T13-45-35-931","ts":1782539135931,"dur":"7.4","model":"claude-opus-4-6","cost":0.07856874999999999,"ctxUsed":133779,"maxCtx":200000,"cacheRead":132465,"cacheCreate":1313,"input":1,"output":165,"isSub":false,"hasErr":false,"num":6},{"id":"2026-06-27T13-45-44-921","ts":1782539144921,"dur":"8.5","model":"claude-opus-4-6","cost":0.08030025,"ctxUsed":134400,"maxCtx":200000,"cacheRead":133778,"cacheCreate":621,"input":1,"output":381,"isSub":false,"hasErr":false,"num":7},{"id":"2026-06-27T13-45-56-101","ts":1782539156101,"dur":"7.9","model":"claude-opus-4-6","cost":0.07409199999999999,"ctxUsed":134854,"maxCtx":200000,"cacheRead":134399,"cacheCreate":454,"input":1,"output":162,"isSub":false,"hasErr":false,"num":8},{"id":"2026-06-27T13-46-05-894","ts":1782539165894,"dur":"5.1","model":"claude-opus-4-6","cost":0.07446275,"ctxUsed":135399,"maxCtx":200000,"cacheRead":134853,"cacheCreate":545,"input":1,"output":145,"isSub":false,"hasErr":false,"num":9},{"id":"2026-06-27T13-46-12-995","ts":1782539172995,"dur":"4.4","model":"claude-opus-4-6","cost":0.071904,"ctxUsed":135583,"maxCtx":200000,"cacheRead":135398,"cacheCreate":184,"input":1,"output":122,"isSub":false,"hasErr":true,"num":10},{"id":"2026-06-27T13-46-19-474","ts":1782539179474,"dur":"5.4","model":"claude-opus-4-6","cost":0.07242725,"ctxUsed":135776,"maxCtx":200000,"cacheRead":135582,"cacheCreate":193,"input":1,"output":137,"isSub":false,"hasErr":true,"num":11},{"id":"2026-06-27T13-46-27-083","ts":1782539187083,"dur":"5.5","model":"claude-opus-4-6","cost":0.07228,"ctxUsed":135966,"maxCtx":200000,"cacheRead":135775,"cacheCreate":190,"input":1,"output":128,"isSub":false,"hasErr":true,"num":12},{"id":"2026-06-27T13-46-34-822","ts":1782539194822,"dur":"5.0","model":"claude-opus-4-6","cost":0.0758625,"ctxUsed":136686,"maxCtx":200000,"cacheRead":135965,"cacheCreate":720,"input":1,"output":135,"isSub":false,"hasErr":true,"num":13},{"id":"2026-06-27T13-46-42-119","ts":1782539202119,"dur":"4.0","model":"claude-opus-4-6","cost":0.07386,"ctxUsed":137144,"maxCtx":200000,"cacheRead":136685,"cacheCreate":458,"input":1,"output":106,"isSub":false,"hasErr":true,"num":14},{"id":"2026-06-27T13-46-48-578","ts":1782539208578,"dur":"7.2","model":"claude-opus-4-6","cost":0.07940149999999999,"ctxUsed":137984,"maxCtx":200000,"cacheRead":137143,"cacheCreate":840,"input":1,"output":223,"isSub":false,"hasErr":true,"num":15},{"id":"2026-06-27T13-46-58-297","ts":1782539218297,"dur":"5.4","model":"claude-opus-4-6","cost":0.07399649999999999,"ctxUsed":138292,"maxCtx":200000,"cacheRead":137983,"cacheCreate":308,"input":1,"output":123,"isSub":false,"hasErr":true,"num":16},{"id":"2026-06-27T13-47-06-309","ts":1782539226309,"dur":"6.3","model":"claude-opus-4-6","cost":0.07495675,"ctxUsed":138493,"maxCtx":200000,"cacheRead":138291,"cacheCreate":201,"input":1,"output":182,"isSub":false,"hasErr":true,"num":17},{"id":"2026-06-27T13-47-15-315","ts":1782539235315,"dur":"4.9","model":"claude-opus-4-6","cost":0.074601,"ctxUsed":138725,"maxCtx":200000,"cacheRead":138492,"cacheCreate":232,"input":1,"output":156,"isSub":false,"hasErr":true,"num":18},{"id":"2026-06-27T13-47-23-307","ts":1782539243307,"dur":"3.2","model":"claude-opus-4-6","cost":0.071917,"ctxUsed":138901,"maxCtx":200000,"cacheRead":138724,"cacheCreate":176,"input":1,"output":58,"isSub":false,"hasErr":true,"num":19},{"id":"2026-06-27T13-47-29-446","ts":1782539249446,"dur":"14.4","model":"claude-opus-4-6","cost":0.08995249999999999,"ctxUsed":140585,"maxCtx":200000,"cacheRead":138900,"cacheCreate":1682,"input":3,"output":399,"isSub":false,"hasErr":true,"num":20},{"id":"2026-06-27T13-47-46-821","ts":1782539266821,"dur":"4.2","model":"claude-opus-4-6","cost":0.07635850000000001,"ctxUsed":141101,"maxCtx":200000,"cacheRead":140582,"cacheCreate":518,"input":1,"output":113,"isSub":false,"hasErr":true,"num":21},{"id":"2026-06-27T13-47-54-107","ts":1782539274107,"dur":"7.2","model":"claude-opus-4-6","cost":0.076205,"ctxUsed":141289,"maxCtx":200000,"cacheRead":141100,"cacheCreate":188,"input":1,"output":179,"isSub":false,"hasErr":true,"num":22},{"id":"2026-06-27T13-48-07-085","ts":1782539287085,"dur":"3.5","model":"claude-opus-4-6","cost":0.07334275,"ctxUsed":141488,"maxCtx":200000,"cacheRead":141288,"cacheCreate":199,"input":1,"output":58,"isSub":false,"hasErr":true,"num":23},{"id":"2026-06-27T13-48-13-952","ts":1782539293952,"dur":"6.7","model":"claude-opus-4-6","cost":0.08014225,"ctxUsed":142199,"maxCtx":200000,"cacheRead":141487,"cacheCreate":711,"input":1,"output":198,"isSub":false,"hasErr":true,"num":24},{"id":"2026-06-27T13-48-24-116","ts":1782539304116,"dur":"3.7","model":"claude-opus-4-6","cost":0.0739165,"ctxUsed":142417,"maxCtx":200000,"cacheRead":142198,"cacheCreate":218,"input":1,"output":58,"isSub":false,"hasErr":true,"num":25},{"id":"2026-06-27T13-48-31-410","ts":1782539311410,"dur":"8.4","model":"claude-opus-4-6","cost":0.0793255,"ctxUsed":142787,"maxCtx":200000,"cacheRead":142416,"cacheCreate":370,"input":1,"output":232,"isSub":false,"hasErr":true,"num":26},{"id":"2026-06-27T13-48-43-436","ts":1782539323436,"dur":"3.5","model":"claude-opus-4-6","cost":0.074423,"ctxUsed":143039,"maxCtx":200000,"cacheRead":142786,"cacheCreate":252,"input":1,"output":58,"isSub":false,"hasErr":true,"num":27},{"id":"2026-06-27T13-48-50-604","ts":1782539330604,"dur":"12.8","model":"claude-opus-4-6","cost":0.08540275,"ctxUsed":143512,"maxCtx":200000,"cacheRead":143038,"cacheCreate":471,"input":3,"output":437,"isSub":false,"hasErr":true,"num":28},{"id":"2026-06-27T13-49-07-228","ts":1782539347228,"dur":"5.5","model":"claude-opus-4-6","cost":0.0768595,"ctxUsed":143962,"maxCtx":200000,"cacheRead":143509,"cacheCreate":452,"input":1,"output":91,"isSub":false,"hasErr":true,"num":29},{"id":"2026-06-27T13-49-16-567","ts":1782539356567,"dur":"4.7","model":"claude-opus-4-6","cost":0.07574175,"ctxUsed":144251,"maxCtx":200000,"cacheRead":143961,"cacheCreate":289,"input":1,"output":78,"isSub":false,"hasErr":true,"num":30},{"id":"2026-06-27T13-49-25-229","ts":1782539365230,"dur":"4.8","model":"claude-opus-4-6","cost":0.0770925,"ctxUsed":144445,"maxCtx":200000,"cacheRead":144250,"cacheCreate":194,"input":1,"output":150,"isSub":false,"hasErr":true,"num":31},{"id":"2026-06-27T13-49-34-110","ts":1782539374110,"dur":"7.4","model":"claude-opus-4-6","cost":0.07858949999999999,"ctxUsed":144627,"maxCtx":200000,"cacheRead":144444,"cacheCreate":182,"input":1,"output":209,"isSub":false,"hasErr":true,"num":32},{"id":"2026-06-27T13-49-45-748","ts":1782539385748,"dur":"5.5","model":"claude-opus-4-6","cost":0.08617425000000001,"ctxUsed":146412,"maxCtx":200000,"cacheRead":144626,"cacheCreate":1785,"input":1,"output":108,"isSub":false,"hasErr":true,"num":33},{"id":"2026-06-27T13-49-55-624","ts":1782539395624,"dur":"5.0","model":"claude-opus-4-6","cost":0.08227925,"ctxUsed":147379,"maxCtx":200000,"cacheRead":146411,"cacheCreate":967,"input":1,"output":121,"isSub":false,"hasErr":true,"num":34},{"id":"2026-06-27T13-50-05-033","ts":1782539405033,"dur":"8.5","model":"claude-opus-4-6","cost":0.07805025,"ctxUsed":147644,"maxCtx":200000,"cacheRead":147378,"cacheCreate":265,"input":1,"output":108,"isSub":false,"hasErr":true,"num":35},{"id":"2026-06-27T13-50-18-050","ts":1782539418050,"dur":"6.8","model":"claude-opus-4-6","cost":0.08482025,"ctxUsed":148775,"maxCtx":200000,"cacheRead":147643,"cacheCreate":1131,"input":1,"output":157,"isSub":false,"hasErr":true,"num":36},{"id":"2026-06-27T13-50-29-375","ts":1782539429375,"dur":"5.3","model":"claude-opus-4-6","cost":0.080692,"ctxUsed":149251,"maxCtx":200000,"cacheRead":148774,"cacheCreate":476,"input":1,"output":133,"isSub":false,"hasErr":true,"num":37},{"id":"2026-06-27T13-50-39-334","ts":1782539439334,"dur":"13.3","model":"claude-opus-4-6","cost":0.09112375,"ctxUsed":150302,"maxCtx":200000,"cacheRead":149250,"cacheCreate":1051,"input":1,"output":397,"isSub":false,"hasErr":true,"num":38},{"id":"2026-06-27T13-50-57-455","ts":1782539457455,"dur":"4.5","model":"claude-opus-4-6","cost":0.08408674999999999,"ctxUsed":151307,"maxCtx":200000,"cacheRead":150301,"cacheCreate":1005,"input":1,"output":106,"isSub":false,"hasErr":true,"num":39},{"id":"2026-06-27T13-51-06-812","ts":1782539466812,"dur":"14.0","model":"claude-opus-4-6","cost":0.0882205,"ctxUsed":152769,"maxCtx":200000,"cacheRead":151306,"cacheCreate":1462,"input":1,"output":137,"isSub":false,"hasErr":true,"num":40},{"id":"2026-06-27T13-51-25-803","ts":1782539485803,"dur":"6.0","model":"claude-opus-4-6","cost":0.08872025,"ctxUsed":154314,"maxCtx":200000,"cacheRead":152768,"cacheCreate":1545,"input":1,"output":107,"isSub":false,"hasErr":true,"num":41},{"id":"2026-06-27T13-51-36-799","ts":1782539496800,"dur":"5.7","model":"claude-opus-4-6","cost":0.08765525,"ctxUsed":155445,"maxCtx":200000,"cacheRead":154313,"cacheCreate":1131,"input":1,"output":137,"isSub":false,"hasErr":true,"num":42},{"id":"2026-06-27T13-51-47-620","ts":1782539507620,"dur":"4.4","model":"claude-opus-4-6","cost":0.082002,"ctxUsed":155705,"maxCtx":200000,"cacheRead":155444,"cacheCreate":260,"input":1,"output":106,"isSub":false,"hasErr":true,"num":43},{"id":"2026-06-27T13-51-57-200","ts":1782539517200,"dur":"8.7","model":"claude-opus-4-6","cost":0.08452575000000001,"ctxUsed":155988,"maxCtx":200000,"cacheRead":155704,"cacheCreate":283,"input":1,"output":196,"isSub":false,"hasErr":true,"num":44},{"id":"2026-06-27T13-52-11-133","ts":1782539531133,"dur":"14.7","model":"claude-opus-4-6","cost":0.0996735,"ctxUsed":157432,"maxCtx":200000,"cacheRead":155987,"cacheCreate":1444,"input":1,"output":506,"isSub":false,"hasErr":true,"num":45},{"id":"2026-06-27T13-52-31-213","ts":1782539551213,"dur":"9.9","model":"claude-haiku-4-5-20251001","cost":0.11408499999999999,"ctxUsed":90206,"maxCtx":200000,"cacheRead":0,"cacheCreate":90196,"input":10,"output":266,"isSub":false,"hasErr":false,"num":46},{"id":"2026-06-27T13-52-31-240","ts":1782539551240,"dur":"4.3","model":"claude-opus-4-6","cost":0.08408299999999999,"ctxUsed":158186,"maxCtx":200000,"cacheRead":157431,"cacheCreate":754,"input":1,"output":26,"isSub":false,"hasErr":true,"num":47},{"id":"2026-06-27T13-52-41-776","ts":1782539561776,"dur":"2.7","model":"claude-haiku-4-5-20251001","cost":0.010531349999999998,"ctxUsed":90783,"maxCtx":200000,"cacheRead":90196,"cacheCreate":579,"input":8,"output":156,"isSub":false,"hasErr":false,"num":48},{"id":"2026-06-27T13-52-44-464","ts":1782539564464,"dur":"0.7","model":"claude-opus-4-6","cost":0,"ctxUsed":0,"maxCtx":200000,"cacheRead":0,"cacheCreate":0,"input":0,"output":0,"isSub":true,"hasErr":false,"num":49},{"id":"2026-06-27T13-52-45-210","ts":1782539565211,"dur":"14.6","model":"claude-haiku-4-5-20251001","cost":0.0455305,"ctxUsed":114851,"maxCtx":200000,"cacheRead":90775,"cacheCreate":24068,"input":8,"output":1272,"isSub":false,"hasErr":false,"num":50},{"id":"2026-06-27T13-52-55-815","ts":1782539575815,"dur":"3.2","model":"claude-haiku-4-5-20251001","cost":0.0339125,"ctxUsed":114999,"maxCtx":200000,"cacheRead":90775,"cacheCreate":164,"input":24060,"output":114,"isSub":false,"hasErr":false,"num":51},{"id":"2026-06-27T13-53-00-634","ts":1782539580634,"dur":"2.7","model":"claude-haiku-4-5-20251001","cost":0.01519105,"ctxUsed":117254,"maxCtx":200000,"cacheRead":114843,"cacheCreate":2403,"input":8,"output":139,"isSub":false,"hasErr":false,"num":52},{"id":"2026-06-27T13-53-04-196","ts":1782539584197,"dur":"3.4","model":"claude-haiku-4-5-20251001","cost":0.01529635,"ctxUsed":119413,"maxCtx":200000,"cacheRead":117246,"cacheCreate":2159,"input":8,"output":173,"isSub":false,"hasErr":false,"num":53},{"id":"2026-06-27T13-53-08-573","ts":1782539588573,"dur":"2.7","model":"claude-haiku-4-5-20251001","cost":0.013613499999999997,"ctxUsed":120181,"maxCtx":200000,"cacheRead":119405,"cacheCreate":768,"input":8,"output":141,"isSub":false,"hasErr":false,"num":54},{"id":"2026-06-27T13-53-12-434","ts":1782539592434,"dur":"2.5","model":"claude-haiku-4-5-20251001","cost":0.0133478,"ctxUsed":120747,"maxCtx":200000,"cacheRead":120173,"cacheCreate":566,"input":8,"output":123,"isSub":false,"hasErr":false,"num":55},{"id":"2026-06-27T13-53-16-180","ts":1782539596180,"dur":"2.0","model":"claude-haiku-4-5-20251001","cost":0.013099399999999999,"ctxUsed":121169,"maxCtx":200000,"cacheRead":120739,"cacheCreate":422,"input":8,"output":98,"isSub":false,"hasErr":false,"num":56},{"id":"2026-06-27T13-53-19-478","ts":1782539599478,"dur":"3.0","model":"claude-haiku-4-5-20251001","cost":0.0133491,"ctxUsed":121537,"maxCtx":200000,"cacheRead":121161,"cacheCreate":368,"input":8,"output":153,"isSub":false,"hasErr":false,"num":57},{"id":"2026-06-27T13-53-23-883","ts":1782539603883,"dur":"2.4","model":"claude-haiku-4-5-20251001","cost":0.0138909,"ctxUsed":122497,"maxCtx":200000,"cacheRead":121529,"cacheCreate":960,"input":8,"output":106,"isSub":false,"hasErr":false,"num":58},{"id":"2026-06-27T13-53-27-792","ts":1782539607792,"dur":"2.1","model":"claude-haiku-4-5-20251001","cost":0.013013149999999998,"ctxUsed":122646,"maxCtx":200000,"cacheRead":122489,"cacheCreate":149,"input":8,"output":114,"isSub":false,"hasErr":true,"num":59},{"id":"2026-06-27T13-53-29-058","ts":1782539609058,"dur":"30.7","model":"claude-haiku-4-5-20251001","cost":0.0257234,"ctxUsed":122810,"maxCtx":200000,"cacheRead":122489,"cacheCreate":114,"input":207,"output":2625,"isSub":false,"hasErr":true,"num":60},{"id":"2026-06-27T13-53-31-505","ts":1782539611505,"dur":"2.6","model":"claude-haiku-4-5-20251001","cost":0.013804299999999999,"ctxUsed":123244,"maxCtx":200000,"cacheRead":122638,"cacheCreate":598,"input":8,"output":157,"isSub":false,"hasErr":true,"num":61},{"id":"2026-06-27T13-53-35-807","ts":1782539615807,"dur":"3.0","model":"claude-haiku-4-5-20251001","cost":0.015464099999999998,"ctxUsed":125078,"maxCtx":200000,"cacheRead":123236,"cacheCreate":1834,"input":8,"output":168,"isSub":false,"hasErr":true,"num":62},{"id":"2026-06-27T13-53-40-533","ts":1782539620533,"dur":"2.8","model":"claude-haiku-4-5-20251001","cost":0.013543749999999997,"ctxUsed":125357,"maxCtx":200000,"cacheRead":125070,"cacheCreate":279,"input":8,"output":136,"isSub":false,"hasErr":true,"num":63},{"id":"2026-06-27T13-53-45-163","ts":1782539625163,"dur":"2.2","model":"claude-haiku-4-5-20251001","cost":0.013466649999999998,"ctxUsed":125564,"maxCtx":200000,"cacheRead":125349,"cacheCreate":207,"input":8,"output":133,"isSub":false,"hasErr":true,"num":64},{"id":"2026-06-27T13-53-49-298","ts":1782539629298,"dur":"33.1","model":"claude-haiku-4-5-20251001","cost":0.0279186,"ctxUsed":126268,"maxCtx":200000,"cacheRead":125556,"cacheCreate":704,"input":8,"output":2895,"isSub":false,"hasErr":true,"num":65},{"id":"2026-06-27T13-54-24-354","ts":1782539664354,"dur":"42.4","model":"claude-opus-4-6","cost":0.14099499999999998,"ctxUsed":161322,"maxCtx":200000,"cacheRead":158185,"cacheCreate":3134,"input":3,"output":1692,"isSub":false,"hasErr":true,"num":66},{"id":"2026-06-27T13-55-12-445","ts":1782539712445,"dur":"4.3","model":"claude-opus-4-6","cost":0.0931645,"ctxUsed":163168,"maxCtx":200000,"cacheRead":161319,"cacheCreate":1848,"input":1,"output":38,"isSub":false,"hasErr":true,"num":67},{"id":"2026-06-27T14-04-10-211","ts":1782540250211,"dur":"6.4","model":"claude-opus-4-6","cost":0.0862635,"ctxUsed":163300,"maxCtx":200000,"cacheRead":163167,"cacheCreate":132,"input":1,"output":154,"isSub":false,"hasErr":true,"num":68},{"id":"2026-06-27T14-04-22-420","ts":1782540262420,"dur":"2.4","model":"claude-opus-4-6","cost":0.00324,"ctxUsed":583,"maxCtx":200000,"cacheRead":0,"cacheCreate":0,"input":583,"output":13,"isSub":false,"hasErr":false,"num":69},{"id":"2026-06-27T14-04-22-441","ts":1782540262441,"dur":"6.4","model":"claude-opus-4-6","cost":0.09593575,"ctxUsed":164621,"maxCtx":200000,"cacheRead":163299,"cacheCreate":1321,"input":1,"output":241,"isSub":false,"hasErr":true,"num":70},{"id":"2026-06-27T14-04-35-251","ts":1782540275251,"dur":"5.0","model":"claude-opus-4-6","cost":0.08910875,"ctxUsed":165292,"maxCtx":200000,"cacheRead":164620,"cacheCreate":671,"input":1,"output":104,"isSub":false,"hasErr":true,"num":71},{"id":"2026-06-27T14-04-46-424","ts":1782540286424,"dur":"8.0","model":"claude-opus-4-6","cost":0.0966755,"ctxUsed":166596,"maxCtx":200000,"cacheRead":165291,"cacheCreate":1304,"input":1,"output":235,"isSub":false,"hasErr":true,"num":72},{"id":"2026-06-27T14-05-01-667","ts":1782540301668,"dur":"8.9","model":"claude-opus-4-6","cost":0.09579,"ctxUsed":166902,"maxCtx":200000,"cacheRead":166595,"cacheCreate":306,"input":1,"output":423,"isSub":false,"hasErr":true,"num":73},{"id":"2026-06-27T14-05-18-438","ts":1782540318438,"dur":"6.7","model":"claude-opus-4-6","cost":0.0906805,"ctxUsed":167478,"maxCtx":200000,"cacheRead":166901,"cacheCreate":576,"input":1,"output":145,"isSub":false,"hasErr":true,"num":74},{"id":"2026-06-27T14-05-32-102","ts":1782540332102,"dur":"5.7","model":"claude-opus-4-6","cost":0.09274974999999999,"ctxUsed":168339,"maxCtx":200000,"cacheRead":167477,"cacheCreate":861,"input":1,"output":145,"isSub":false,"hasErr":true,"num":75},{"id":"2026-06-27T14-05-44-618","ts":1782540344618,"dur":"33.8","model":"claude-opus-4-6","cost":0.13728025,"ctxUsed":168632,"maxCtx":200000,"cacheRead":168338,"cacheCreate":293,"input":1,"output":2051,"isSub":false,"hasErr":true,"num":76},{"id":"2026-06-27T14-06-25-346","ts":1782540385346,"dur":"6.0","model":"claude-opus-4-6","cost":0.10070175,"ctxUsed":170825,"maxCtx":200000,"cacheRead":168631,"cacheCreate":2193,"input":1,"output":107,"isSub":false,"hasErr":true,"num":77},{"id":"2026-06-27T14-06-38-354","ts":1782540398354,"dur":"5.0","model":"claude-opus-4-6","cost":0.0893295,"ctxUsed":171023,"maxCtx":200000,"cacheRead":170824,"cacheCreate":198,"input":1,"output":107,"isSub":false,"hasErr":true,"num":78},{"id":"2026-06-27T14-06-50-340","ts":1782540410340,"dur":"6.3","model":"claude-opus-4-6","cost":0.09218475000000001,"ctxUsed":171294,"maxCtx":200000,"cacheRead":171022,"cacheCreate":271,"input":1,"output":199,"isSub":false,"hasErr":true,"num":79},{"id":"2026-06-27T14-07-04-883","ts":1782540424883,"dur":"31.5","model":"claude-opus-4-6","cost":0.13658275,"ctxUsed":171547,"maxCtx":200000,"cacheRead":171293,"cacheCreate":253,"input":1,"output":1974,"isSub":false,"hasErr":true,"num":80},{"id":"2026-06-27T14-07-44-631","ts":1782540464631,"dur":"6.4","model":"claude-opus-4-6","cost":0.10287175,"ctxUsed":173674,"maxCtx":200000,"cacheRead":171546,"cacheCreate":2127,"input":1,"output":152,"isSub":false,"hasErr":true,"num":81},{"id":"2026-06-27T14-07-58-597","ts":1782540478597,"dur":"6.5","model":"claude-opus-4-6","cost":0.09366025,"ctxUsed":173965,"maxCtx":200000,"cacheRead":173673,"cacheCreate":291,"input":1,"output":200,"isSub":false,"hasErr":true,"num":82},{"id":"2026-06-27T14-08-12-693","ts":1782540492693,"dur":"7.4","model":"claude-opus-4-6","cost":0.09564325,"ctxUsed":174442,"maxCtx":200000,"cacheRead":173964,"cacheCreate":477,"input":1,"output":227,"isSub":false,"hasErr":true,"num":83},{"id":"2026-06-27T14-08-27-809","ts":1782540507809,"dur":"6.2","model":"claude-opus-4-6","cost":0.09778800000000001,"ctxUsed":175704,"maxCtx":200000,"cacheRead":174441,"cacheCreate":1262,"input":1,"output":107,"isSub":false,"hasErr":true,"num":84},{"id":"2026-06-27T14-08-41-777","ts":1782540521777,"dur":"4.9","model":"claude-opus-4-6","cost":0.093869,"ctxUsed":175878,"maxCtx":200000,"cacheRead":175703,"cacheCreate":174,"input":1,"output":197,"isSub":false,"hasErr":true,"num":85},{"id":"2026-06-27T14-08-55-588","ts":1782540535588,"dur":"7.2","model":"claude-opus-4-6","cost":0.09371225,"ctxUsed":176129,"maxCtx":200000,"cacheRead":175877,"cacheCreate":251,"input":1,"output":168,"isSub":false,"hasErr":true,"num":86},{"id":"2026-06-27T14-09-13-604","ts":1782540553604,"dur":"4.2","model":"claude-opus-4-6","cost":0.0913065,"ctxUsed":176415,"maxCtx":200000,"cacheRead":176128,"cacheCreate":286,"input":1,"output":58,"isSub":false,"hasErr":true,"num":87},{"id":"2026-06-27T14-09-25-957","ts":1782540565957,"dur":"9.7","model":"claude-opus-4-6","cost":0.10518449999999999,"ctxUsed":178099,"maxCtx":200000,"cacheRead":176414,"cacheCreate":1682,"input":3,"output":258,"isSub":false,"hasErr":true,"num":88},{"id":"2026-06-27T14-09-43-906","ts":1782540583906,"dur":"5.6","model":"claude-opus-4-6","cost":0.092253,"ctxUsed":178377,"maxCtx":200000,"cacheRead":178096,"cacheCreate":280,"input":1,"output":58,"isSub":false,"hasErr":true,"num":89},{"id":"2026-06-27T14-09-57-885","ts":1782540597885,"dur":"20.6","model":"claude-opus-4-6","cost":0.1162905,"ctxUsed":180061,"maxCtx":200000,"cacheRead":178376,"cacheCreate":1682,"input":3,"output":663,"isSub":false,"hasErr":true,"num":90},{"id":"2026-06-27T14-10-27-027","ts":1782540627027,"dur":"4.7","model":"claude-opus-4-6","cost":0.09576525,"ctxUsed":180744,"maxCtx":200000,"cacheRead":180058,"cacheCreate":685,"input":1,"output":58,"isSub":false,"hasErr":true,"num":91},{"id":"2026-06-27T14-10-40-244","ts":1782540640244,"dur":"8.5","model":"claude-opus-4-6","cost":0.09941399999999999,"ctxUsed":181114,"maxCtx":200000,"cacheRead":180743,"cacheCreate":370,"input":1,"output":269,"isSub":false,"hasErr":true,"num":92},{"id":"2026-06-27T14-10-57-328","ts":1782540657328,"dur":"4.9","model":"claude-opus-4-6","cost":0.09381774999999999,"ctxUsed":181403,"maxCtx":200000,"cacheRead":181113,"cacheCreate":289,"input":1,"output":58,"isSub":false,"hasErr":true,"num":93},{"id":"2026-06-27T14-11-10-750","ts":1782540670750,"dur":"10.8","model":"claude-opus-4-6","cost":0.10293475,"ctxUsed":181876,"maxCtx":200000,"cacheRead":181402,"cacheCreate":471,"input":3,"output":371,"isSub":false,"hasErr":true,"num":94},{"id":"2026-06-27T14-11-30-210","ts":1782540690210,"dur":"4.5","model":"claude-opus-4-6","cost":0.09484775000000001,"ctxUsed":182267,"maxCtx":200000,"cacheRead":181873,"cacheCreate":393,"input":1,"output":58,"isSub":false,"hasErr":true,"num":95},{"id":"2026-06-27T14-11-43-603","ts":1782540703603,"dur":"9.6","model":"claude-opus-4-6","cost":0.1010255,"ctxUsed":182637,"maxCtx":200000,"cacheRead":182266,"cacheCreate":370,"input":1,"output":303,"isSub":false,"hasErr":true,"num":96},{"id":"2026-06-27T14-12-02-215","ts":1782540722215,"dur":"5.1","model":"claude-opus-4-6","cost":0.09479175,"ctxUsed":182960,"maxCtx":200000,"cacheRead":182636,"cacheCreate":323,"input":1,"output":58,"isSub":false,"hasErr":true,"num":97},{"id":"2026-06-27T14-12-16-371","ts":1782540736371,"dur":"9.5","model":"claude-opus-4-6","cost":0.103147,"ctxUsed":183330,"maxCtx":200000,"cacheRead":182959,"cacheCreate":370,"input":1,"output":374,"isSub":false,"hasErr":true,"num":98},{"id":"2026-06-27T14-12-34-963","ts":1782540754963,"dur":"5.0","model":"claude-opus-4-6","cost":0.095582,"ctxUsed":183724,"maxCtx":200000,"cacheRead":183329,"cacheCreate":394,"input":1,"output":58,"isSub":false,"hasErr":true,"num":99},{"id":"2026-06-27T14-12-49-184","ts":1782540769185,"dur":"13.2","model":"claude-opus-4-6","cost":0.104904,"ctxUsed":184094,"maxCtx":200000,"cacheRead":183723,"cacheCreate":370,"input":1,"output":429,"isSub":false,"hasErr":true,"num":100},{"id":"2026-06-27T14-13-11-627","ts":1782540791627,"dur":"7.9","model":"claude-opus-4-6","cost":0.100914,"ctxUsed":184708,"maxCtx":200000,"cacheRead":184093,"cacheCreate":614,"input":1,"output":201,"isSub":false,"hasErr":true,"num":101},{"id":"2026-06-27T14-13-28-849","ts":1782540808849,"dur":"4.9","model":"claude-opus-4-6","cost":0.09518975,"ctxUsed":184929,"maxCtx":200000,"cacheRead":184707,"cacheCreate":221,"input":1,"output":58,"isSub":false,"hasErr":true,"num":102},{"id":"2026-06-27T14-13-43-227","ts":1782540823227,"dur":"22.1","model":"claude-opus-4-6","cost":0.1158065,"ctxUsed":185299,"maxCtx":200000,"cacheRead":184928,"cacheCreate":370,"input":1,"output":841,"isSub":false,"hasErr":true,"num":103},{"id":"2026-06-27T14-14-15-126","ts":1782540855126,"dur":"5.3","model":"claude-opus-4-6","cost":0.09948525,"ctxUsed":186160,"maxCtx":200000,"cacheRead":185298,"cacheCreate":861,"input":1,"output":58,"isSub":false,"hasErr":true,"num":104},{"id":"2026-06-27T14-14-30-288","ts":1782540870288,"dur":"10.2","model":"claude-opus-4-6","cost":0.10289699999999999,"ctxUsed":186530,"maxCtx":200000,"cacheRead":186159,"cacheCreate":370,"input":1,"output":300,"isSub":false,"hasErr":true,"num":105},{"id":"2026-06-27T14-14-50-488","ts":1782540890489,"dur":"4.7","model":"claude-opus-4-6","cost":0.0967195,"ctxUsed":186850,"maxCtx":200000,"cacheRead":186529,"cacheCreate":320,"input":1,"output":58,"isSub":false,"hasErr":true,"num":106},{"id":"2026-06-27T14-15-05-366","ts":1782540905366,"dur":"13.4","model":"claude-opus-4-6","cost":0.108167,"ctxUsed":187220,"maxCtx":200000,"cacheRead":186849,"cacheCreate":370,"input":1,"output":497,"isSub":false,"hasErr":true,"num":107},{"id":"2026-06-27T14-15-29-448","ts":1782540929452,"dur":"6.2","model":"claude-opus-4-6","cost":0.09908325,"ctxUsed":187863,"maxCtx":200000,"cacheRead":187219,"cacheCreate":643,"input":1,"output":58,"isSub":false,"hasErr":true,"num":108},{"id":"2026-06-27T14-15-48-215","ts":1782540948217,"dur":"11.5","model":"claude-opus-4-6","cost":0.1083985,"ctxUsed":188233,"maxCtx":200000,"cacheRead":187862,"cacheCreate":370,"input":1,"output":486,"isSub":false,"hasErr":true,"num":109},{"id":"2026-06-27T14-16-11-194","ts":1782540971194,"dur":"8.7","model":"claude-opus-4-6","cost":0.09879600000000001,"ctxUsed":188749,"maxCtx":200000,"cacheRead":188232,"cacheCreate":516,"input":1,"output":58,"isSub":false,"hasErr":true,"num":110},{"id":"2026-06-27T14-16-30-247","ts":1782540990247,"dur":"8.2","model":"claude-opus-4-6","cost":0.1034665,"ctxUsed":189119,"maxCtx":200000,"cacheRead":188748,"cacheCreate":370,"input":1,"output":271,"isSub":false,"hasErr":true,"num":111},{"id":"2026-06-27T14-16-48-761","ts":1782541008761,"dur":"4.8","model":"claude-opus-4-6","cost":0.100439,"ctxUsed":189635,"maxCtx":200000,"cacheRead":189118,"cacheCreate":516,"input":1,"output":106,"isSub":false,"hasErr":true,"num":112},{"id":"2026-06-27T14-17-03-995","ts":1782541023995,"dur":"29.7","model":"claude-opus-4-6","cost":0.10275324999999999,"ctxUsed":190076,"maxCtx":200000,"cacheRead":189634,"cacheCreate":441,"input":1,"output":207,"isSub":false,"hasErr":true,"num":113},{"id":"2026-06-27T14-17-44-129","ts":1782541064129,"dur":"7.1","model":"claude-opus-4-6","cost":0.1032925,"ctxUsed":190536,"maxCtx":200000,"cacheRead":190075,"cacheCreate":460,"input":1,"output":215,"isSub":false,"hasErr":true,"num":114},{"id":"2026-06-27T14-18-02-893","ts":1782541082893,"dur":"10.3","model":"claude-opus-4-6","cost":0.10560375000000001,"ctxUsed":190805,"maxCtx":200000,"cacheRead":190535,"cacheCreate":269,"input":1,"output":346,"isSub":false,"hasErr":true,"num":115},{"id":"2026-06-27T14-18-23-990","ts":1782541103990,"dur":"4.2","model":"claude-opus-4-6","cost":0.09991325,"ctxUsed":191294,"maxCtx":200000,"cacheRead":190804,"cacheCreate":489,"input":1,"output":58,"isSub":false,"hasErr":true,"num":116},{"id":"2026-06-27T14-18-39-026","ts":1782541119026,"dur":"14.3","model":"claude-opus-4-6","cost":0.108564,"ctxUsed":191664,"maxCtx":200000,"cacheRead":191293,"cacheCreate":370,"input":1,"output":424,"isSub":false,"hasErr":true,"num":117},{"id":"2026-06-27T14-19-04-242","ts":1782541144242,"dur":"5.3","model":"claude-opus-4-6","cost":0.10011775,"ctxUsed":192105,"maxCtx":200000,"cacheRead":191663,"cacheCreate":441,"input":1,"output":61,"isSub":false,"hasErr":true,"num":118},{"id":"2026-06-27T14-19-20-446","ts":1782541160446,"dur":"5.4","model":"claude-opus-4-6","cost":0.09991325,"ctxUsed":192478,"maxCtx":200000,"cacheRead":192104,"cacheCreate":373,"input":1,"output":61,"isSub":false,"hasErr":true,"num":119},{"id":"2026-06-27T14-19-36-933","ts":1782541176933,"dur":"22.0","model":"claude-opus-4-6","cost":0.11959975,"ctxUsed":192851,"maxCtx":200000,"cacheRead":192477,"cacheCreate":373,"input":1,"output":841,"isSub":false,"hasErr":true,"num":120},{"id":"2026-06-27T14-20-10-025","ts":1782541210025,"dur":"23.2","model":"claude-opus-4-6","cost":0.1283675,"ctxUsed":193721,"maxCtx":200000,"cacheRead":192850,"cacheCreate":870,"input":1,"output":1060,"isSub":false,"hasErr":true,"num":121},{"id":"2026-06-27T14-20-44-219","ts":1782541244219,"dur":"11.1","model":"claude-opus-4-6","cost":0.11538375000000001,"ctxUsed":194832,"maxCtx":200000,"cacheRead":193720,"cacheCreate":1111,"input":1,"output":463,"isSub":false,"hasErr":true,"num":122},{"id":"2026-06-27T14-21-06-487","ts":1782541266488,"dur":"26.5","model":"claude-opus-4-6","cost":0.1340955,"ctxUsed":195564,"maxCtx":200000,"cacheRead":194831,"cacheCreate":732,"input":1,"output":1284,"isSub":false,"hasErr":true,"num":123},{"id":"2026-06-27T14-21-44-241","ts":1782541304242,"dur":"10.8","model":"claude-opus-4-6","cost":0.116574,"ctxUsed":196890,"maxCtx":200000,"cacheRead":195563,"cacheCreate":1326,"input":1,"output":420,"isSub":false,"hasErr":true,"num":124},{"id":"2026-06-27T14-22-06-489","ts":1782541326489,"dur":"10.5","model":"claude-opus-4-6","cost":0.10268075,"ctxUsed":197323,"maxCtx":200000,"cacheRead":196889,"cacheCreate":433,"input":1,"output":61,"isSub":false,"hasErr":true,"num":125},{"id":"2026-06-27T14-22-28-681","ts":1782541348682,"dur":"7.7","model":"claude-opus-4-6","cost":0.1065285,"ctxUsed":198037,"maxCtx":200000,"cacheRead":197322,"cacheCreate":714,"input":1,"output":136,"isSub":false,"hasErr":true,"num":126},{"id":"2026-06-27T14-22-48-194","ts":1782541368194,"dur":"9.2","model":"claude-opus-4-6","cost":0.10870425,"ctxUsed":198826,"maxCtx":200000,"cacheRead":198036,"cacheCreate":789,"input":1,"output":190,"isSub":false,"hasErr":true,"num":127},{"id":"2026-06-27T14-23-09-211","ts":1782541389211,"dur":"5.5","model":"claude-opus-4-6","cost":0.1023925,"ctxUsed":199090,"maxCtx":200000,"cacheRead":198825,"cacheCreate":264,"input":1,"output":53,"isSub":false,"hasErr":true,"num":128}];
+var CC=[{p:0,c:[126,224,160]},{p:20,c:[63,185,80]},{p:39,c:[45,138,60]},{p:40,c:[232,197,71]},{p:60,c:[210,153,34]},{p:79,c:[166,120,24]},{p:80,c:[255,123,115]},{p:90,c:[248,81,73]},{p:100,c:[201,48,42]}];
+function cxc(p){p=Math.max(0,Math.min(100,p));for(var i=CC.length-1;i>=0;i--)if(p>=CC[i].p){var a=CC[i],b=CC[Math.min(i+1,CC.length-1)];if(a.p===b.p)return'rgb('+a.c+')';var t=(p-a.p)/(b.p-a.p);return'rgb('+Math.round(a.c[0]+(b.c[0]-a.c[0])*t)+','+Math.round(a.c[1]+(b.c[1]-a.c[1])*t)+','+Math.round(a.c[2]+(b.c[2]-a.c[2])*t)+')';}return'rgb(126,224,160)';}
+function shortModel(m){return(m||'?').replace('claude-','').replace(/-\d{8}$/,'');}
+
+function render(){
+  var wrap=document.getElementById('lane-wrap');
+  if(!DATA.length)return;
+  // Separate main vs subagent
+  var main=[],subs=[];
+  DATA.forEach(function(e){(e.isSub?subs:main).push(e);});
+  
+  var allT=DATA;
+  var tMin=Infinity,tMax=-Infinity;
+  allT.forEach(function(e){var ts=Number(e.ts)||0;if(ts<tMin)tMin=ts;var end=ts+(parseFloat(e.dur)||0)*1000;if(end>tMax)tMax=end;});
+  var tR=tMax-tMin||1;
+  
+  // Detect model switches
+  var switches=[];
+  for(var i=1;i<main.length;i++){if(main[i].model&&main[i-1].model&&main[i].model!==main[i-1].model)switches.push(main[i].ts);}
+  
+  var W=Math.max(wrap.clientWidth-32,allT.length*6);
+  var H=44;
+  
+  function renderLane(turns,label,isSub){
+    var maxC=0;turns.forEach(function(e){if(e.cost>maxC)maxC=e.cost;});if(!maxC)maxC=0.01;
+    // Detect dominant model
+    var mc={};turns.forEach(function(e){mc[e.model]=(mc[e.model]||0)+1;});
+    var dom=Object.entries(mc).sort(function(a,b){return b[1]-a[1];})[0];
+    var modelChip='<span class="model-chip" style="background:'+((dom[0]||'').indexOf('haiku')>=0?'#f0883e22;color:#f0883e':'#58a6ff22;color:#58a6ff')+'">'+shortModel(dom[0])+'</span>';
+    
+    var html='<div class="lane-label">▶ '+label+' · '+turns.length+' turns'+modelChip+'</div>';
+    html+='<div class="lane'+(isSub?' lane-sub':'')+'" style="width:'+W+'px">';
+    
+    // Model switch markers
+    if(!isSub){switches.forEach(function(ts){
+      var x=((ts-tMin)/tR)*W;
+      html+='<div style="position:absolute;left:'+x.toFixed(1)+'px;top:0;bottom:0;width:1px;background:var(--accent);opacity:0.3"></div>';
+    });}
+    
+    turns.forEach(function(e,idx){
+      var ts=Number(e.ts)||0,dur=(parseFloat(e.dur)||0)*1000;
+      var x=((ts-tMin)/tR)*W,bw=Math.max(2,(dur/tR)*W);
+      var h=Math.max(2,Math.round((e.cost/maxC)*H));
+      h=Math.min(h,Math.max(6,bw*8));
+      var cp=Math.min(100,e.ctxUsed/(e.maxCtx||200000)*100);
+      var col=cxc(cp);
+      var inT=e.input+e.cacheRead+e.cacheCreate;
+      var ch=inT>0?e.cacheRead/inT*100:100;
+      var cm=ch<50&&inT>1000,dng=cp>=80;
+      var cls='tb'+(cm?' cm':'')+(dng?' dng':'');
+      var lbl=(h>=20&&bw>=16)?'<span class="pl">'+Math.round(cp)+'%</span>':'';
+      html+='<div class="'+cls+'" style="left:'+x.toFixed(1)+'px;width:'+bw.toFixed(1)+'px;height:'+h+'px;background:'+col+'" data-i="'+DATA.indexOf(e)+'">'+lbl+'</div>';
+    });
+    html+='</div>';
+    return html;
+  }
+  
+  var html=renderLane(main,'main',false);
+  if(subs.length)html+=renderLane(subs,'subagent-'+shortModel(subs[0].model),true);
+  wrap.innerHTML=html;
+}
+
+// Tooltip
+var tt=document.getElementById('tt');
+document.getElementById('lane-wrap').addEventListener('mouseover',function(ev){
+  var b=ev.target.closest('.tb');if(!b){tt.style.display='none';return;}
+  var e=DATA[parseInt(b.dataset.i)];
+  var cp=Math.min(100,e.ctxUsed/(e.maxCtx||200000)*100);
+  var inT=e.input+e.cacheRead+e.cacheCreate;
+  var ch=inT>0?(e.cacheRead/inT*100).toFixed(1):'–';
+  var ctxCls=cp>=80?'danger':cp>=40?'warn':'good';
+  var cacheCls=parseFloat(ch)<50?'danger':'good';
+  tt.innerHTML='<div class="r"><span class="l">#'+e.num+'</span><span class="v">'+shortModel(e.model)+'</span></div><div class="r"><span class="l">Context</span><span class="v '+ctxCls+'">'+cp.toFixed(1)+'%</span></div><div class="r"><span class="l">Cache hit</span><span class="v '+cacheCls+'">'+ch+'%</span></div><div class="r"><span class="l">Cost</span><span class="v">$'+e.cost.toFixed(4)+'</span></div><div class="r"><span class="l">Duration</span><span class="v">'+(parseFloat(e.dur)||0).toFixed(1)+'s</span></div>'+(e.hasErr?'<div class="r"><span class="v danger">⚠ tool error</span></div>':'');
+  tt.style.display='block';
+});
+document.addEventListener('mousemove',function(ev){if(tt.style.display==='block'){tt.style.left=(ev.clientX+12)+'px';tt.style.top=(ev.clientY-10)+'px';}});
+document.getElementById('lane-wrap').addEventListener('mouseout',function(){tt.style.display='none';});
+render();
+
+// ── v2: Fixed design ──────────────────────────────────────────────────────
+var CC2=[
+  {p:0,c:[126,224,160]},{p:20,c:[63,185,80]},{p:39,c:[35,120,50]},       // green: wider range
+  {p:40,c:[232,197,71]},{p:60,c:[210,153,34]},{p:79,c:[166,120,24]},     // yellow: same
+  {p:80,c:[255,158,153]},{p:90,c:[248,81,73]},{p:100,c:[122,26,26]}      // red: #ff9e99→#7a1a1a (ΔL=51)
+];
+function cxc2(p){p=Math.max(0,Math.min(100,p));for(var i=CC2.length-1;i>=0;i--)if(p>=CC2[i].p){var a=CC2[i],b=CC2[Math.min(i+1,CC2.length-1)];if(a.p===b.p)return'rgb('+a.c+')';var t=(p-a.p)/(b.p-a.p);return'rgb('+Math.round(a.c[0]+(b.c[0]-a.c[0])*t)+','+Math.round(a.c[1]+(b.c[1]-a.c[1])*t)+','+Math.round(a.c[2]+(b.c[2]-a.c[2])*t)+')';}return'rgb(126,224,160)';}
+
+function renderV2(){
+  var wrap=document.getElementById('lane-wrap-v2');
+  if(!DATA.length)return;
+  var main=[],subs=[];
+  DATA.forEach(function(e){(e.isSub?subs:main).push(e);});
+  var tMin=Infinity,tMax=-Infinity;
+  DATA.forEach(function(e){var ts=Number(e.ts)||0;if(ts<tMin)tMin=ts;var end=ts+(parseFloat(e.dur)||0)*1000;if(end>tMax)tMax=end;});
+  var tR=tMax-tMin||1;
+  var switches=[];
+  for(var i=1;i<main.length;i++){if(main[i].model&&main[i-1].model&&main[i].model!==main[i-1].model)switches.push(main[i].ts);}
+  var W=Math.max(wrap.clientWidth-32,DATA.length*6);
+  var H=44;
+
+  function renderLaneV2(turns,label,isSub){
+    var maxC=0;turns.forEach(function(e){if(e.cost>maxC)maxC=e.cost;});if(!maxC)maxC=0.01;
+    var mc={};turns.forEach(function(e){mc[e.model]=(mc[e.model]||0)+1;});
+    var dom=Object.entries(mc).sort(function(a,b){return b[1]-a[1];})[0];
+    var modelChip='<span class="model-chip" style="background:'+((dom[0]||'').indexOf('haiku')>=0?'#f0883e22;color:#f0883e':'#58a6ff22;color:#58a6ff')+'">'+shortModel(dom[0])+'</span>';
+    var html='<div class="lane-label">▶ '+label+' · '+turns.length+' turns'+modelChip+'</div>';
+    html+='<div class="lane'+(isSub?' lane-sub':'')+'" style="width:'+W+'px">';
+    // Model switch: gray dashed lines
+    if(!isSub){switches.forEach(function(ts){
+      var x=((ts-tMin)/tR)*W;
+      html+='<div class="model-switch-v2" style="left:'+x.toFixed(1)+'px"></div>';
+    });}
+    turns.forEach(function(e,idx){
+      var ts=Number(e.ts)||0,dur=(parseFloat(e.dur)||0)*1000;
+      var x=((ts-tMin)/tR)*W,bw=Math.max(4,(dur/tR)*W); // min-width 4px
+      var h=Math.max(2,Math.round((e.cost/maxC)*H));
+      h=Math.min(h,Math.max(6,bw*8));
+      var cp=Math.min(100,e.ctxUsed/(e.maxCtx||200000)*100);
+      var col=cxc2(cp); // v2 color table
+      var inT=e.input+e.cacheRead+e.cacheCreate;
+      var ch=inT>0?e.cacheRead/inT*100:100;
+      var cm=ch<50&&inT>1000,dng=cp>=80;
+      var cls='tb2'+(cm?' cm2':'')+(dng?' dng2':'');
+      var lbl=(h>=20&&bw>=16)?'<span class="pl">'+Math.round(cp)+'%</span>':'';
+      html+='<div class="'+cls+'" style="left:'+x.toFixed(1)+'px;width:'+bw.toFixed(1)+'px;height:'+h+'px;background:'+col+'" data-i="'+DATA.indexOf(e)+'">'+lbl+'</div>';
+    });
+    html+='</div>';
+    return html;
+  }
+  var html=renderLaneV2(main,'main',false);
+  if(subs.length)html+=renderLaneV2(subs,'subagent-'+shortModel(subs[0].model),true);
+  wrap.innerHTML=html;
+}
+
+// v2 tooltip (reuse same #tt)
+document.getElementById('lane-wrap-v2').addEventListener('mouseover',function(ev){
+  var b=ev.target.closest('.tb2');if(!b){tt.style.display='none';return;}
+  var e=DATA[parseInt(b.dataset.i)];
+  var cp=Math.min(100,e.ctxUsed/(e.maxCtx||200000)*100);
+  var inT=e.input+e.cacheRead+e.cacheCreate;
+  var ch=inT>0?(e.cacheRead/inT*100).toFixed(1):'–';
+  var ctxCls=cp>=80?'danger':cp>=40?'warn':'good';
+  var cacheCls=parseFloat(ch)<50?'danger':'good';
+  tt.innerHTML='<div class="r"><span class="l">#'+e.num+'</span><span class="v">'+shortModel(e.model)+'</span></div><div class="r"><span class="l">Context</span><span class="v '+ctxCls+'">'+cp.toFixed(1)+'%</span></div><div class="r"><span class="l">Cache hit</span><span class="v '+cacheCls+'">'+ch+'%</span></div><div class="r"><span class="l">Cost</span><span class="v">$'+e.cost.toFixed(4)+'</span></div><div class="r"><span class="l">Duration</span><span class="v">'+(parseFloat(e.dur)||0).toFixed(1)+'s</span></div>'+(e.hasErr?'<div class="r"><span class="v danger">⚠ tool error</span></div>':'');
+  tt.style.display='block';
+});
+document.getElementById('lane-wrap-v2').addEventListener('mouseout',function(){tt.style.display='none';});
+renderV2();
+
+// ── v3: Final design (A + bright top + green left border) ─────────────────
+// Same color table as v2 (expanded red range)
+function renderV3(){
+  var wrap=document.getElementById('lane-wrap-v3');
+  if(!DATA.length)return;
+  var main=[],subs=[];
+  DATA.forEach(function(e){(e.isSub?subs:main).push(e);});
+  var tMin=Infinity,tMax=-Infinity;
+  DATA.forEach(function(e){var ts=Number(e.ts)||0;if(ts<tMin)tMin=ts;var end=ts+(parseFloat(e.dur)||0)*1000;if(end>tMax)tMax=end;});
+  var tR=tMax-tMin||1;
+  var switches=[];
+  for(var i=1;i<main.length;i++){if(main[i].model&&main[i-1].model&&main[i].model!==main[i-1].model)switches.push(main[i].ts);}
+  var W=Math.max(wrap.clientWidth-32,DATA.length*6);
+  var H=44;
+
+  function renderLaneV3(turns,label,isSub){
+    var maxC=0;turns.forEach(function(e){if(e.cost>maxC)maxC=e.cost;});if(!maxC)maxC=0.01;
+    var mc={};turns.forEach(function(e){mc[e.model]=(mc[e.model]||0)+1;});
+    var dom=Object.entries(mc).sort(function(a,b){return b[1]-a[1];})[0];
+    var modelChip='<span class="model-chip" style="background:'+((dom[0]||'').indexOf('haiku')>=0?'#f0883e22;color:#f0883e':'#58a6ff22;color:#58a6ff')+'">'+shortModel(dom[0])+'</span>';
+    var html='<div class="lane-label">▶ '+label+' · '+turns.length+' turns'+modelChip+'</div>';
+    html+='<div class="lane'+(isSub?' lane-sub':'')+'" style="width:'+W+'px">';
+    if(!isSub){switches.forEach(function(ts){
+      var x=((ts-tMin)/tR)*W;
+      html+='<div class="model-switch-v2" style="left:'+x.toFixed(1)+'px"></div>';
+    });}
+    turns.forEach(function(e){
+      var ts=Number(e.ts)||0,dur=(parseFloat(e.dur)||0)*1000;
+      var x=((ts-tMin)/tR)*W,bw=Math.max(4,(dur/tR)*W);
+      var h=Math.max(2,Math.round((e.cost/maxC)*H));
+      h=Math.min(h,Math.max(6,bw*8));
+      var cp=Math.min(100,e.ctxUsed/(e.maxCtx||200000)*100);
+      var col=cxc2(cp);
+      var inT=e.input+e.cacheRead+e.cacheCreate;
+      var ch=inT>0?e.cacheRead/inT*100:100;
+      var cm=ch<50&&inT>1000,dng=cp>=80;
+      var isGreen=cp<40;
+      var cls='tb3'+(cm?' cm3':'')+(dng?' dng3':'')+(isGreen?' zone-green':'');
+      var lbl=(h>=20&&bw>=16)?'<span class="pl">'+Math.round(cp)+'%</span>':'';
+      html+='<div class="'+cls+'" style="left:'+x.toFixed(1)+'px;width:'+bw.toFixed(1)+'px;height:'+h+'px;background:'+col+'" data-i="'+DATA.indexOf(e)+'">'+lbl+'</div>';
+    });
+    html+='</div>';
+    return html;
+  }
+  var html=renderLaneV3(main,'main',false);
+  if(subs.length)html+=renderLaneV3(subs,'subagent-'+shortModel(subs[0].model),true);
+  wrap.innerHTML=html;
+}
+// v3 tooltip
+document.getElementById('lane-wrap-v3').addEventListener('mouseover',function(ev){
+  var b=ev.target.closest('.tb3');if(!b){tt.style.display='none';return;}
+  var e=DATA[parseInt(b.dataset.i)];
+  var cp=Math.min(100,e.ctxUsed/(e.maxCtx||200000)*100);
+  var inT=e.input+e.cacheRead+e.cacheCreate;
+  var ch=inT>0?(e.cacheRead/inT*100).toFixed(1):'–';
+  var ctxCls=cp>=80?'danger':cp>=40?'warn':'good';
+  var cacheCls=parseFloat(ch)<50?'danger':'good';
+  tt.innerHTML='<div class="r"><span class="l">#'+e.num+'</span><span class="v">'+shortModel(e.model)+'</span></div><div class="r"><span class="l">Context</span><span class="v '+ctxCls+'">'+cp.toFixed(1)+'%</span></div><div class="r"><span class="l">Cache hit</span><span class="v '+cacheCls+'">'+ch+'%</span></div><div class="r"><span class="l">Cost</span><span class="v">$'+e.cost.toFixed(4)+'</span></div><div class="r"><span class="l">Duration</span><span class="v">'+(parseFloat(e.dur)||0).toFixed(1)+'s</span></div>'+(e.hasErr?'<div class="r"><span class="v danger">⚠ tool error</span></div>':'');
+  tt.style.display='block';
+});
+document.getElementById('lane-wrap-v3').addEventListener('mouseout',function(){tt.style.display='none';});
+renderV3();
+
+// ── v4: Event Track + Filter + Hover-expand ────────────────────────────────
+var v4Filters={error:true,cache:true,dup:true,cred:true,max:true};
+document.getElementById('v4-filters').addEventListener('click',function(ev){
+  var btn=ev.target.closest('.filter-btn');if(!btn)return;
+  var f=btn.dataset.filter;v4Filters[f]=!v4Filters[f];
+  btn.classList.toggle('active',v4Filters[f]);
+  renderV4();
+});
+
+function renderV4(){
+  var wrap=document.getElementById('lane-wrap-v4');
+  if(!DATA.length)return;
+  var main=[],subs=[];
+  DATA.forEach(function(e){(e.isSub?subs:main).push(e);});
+  var tMin=Infinity,tMax=-Infinity;
+  DATA.forEach(function(e){var ts=Number(e.ts)||0;if(ts<tMin)tMin=ts;var end=ts+(parseFloat(e.dur)||0)*1000;if(end>tMax)tMax=end;});
+  var tR=tMax-tMin||1;
+  var switches=[];
+  for(var i=1;i<main.length;i++){if(main[i].model&&main[i-1].model&&main[i].model!==main[i-1].model)switches.push(main[i].ts);}
+  var W=Math.max(wrap.clientWidth-32,DATA.length*6);
+  var H=44;
+
+  function detectEvents(e,prev){
+    var evts=[];
+    var inT=e.input+e.cacheRead+e.cacheCreate;
+    var ch=inT>0?e.cacheRead/inT*100:100;
+    if(e.hasErr)evts.push('error');
+    if(ch<50&&inT>1000)evts.push('cache');
+    if(e.cost>0.3)evts.push('cred'); // simulate credential as high-cost for demo
+    // Detect duplicate: same toolCalls pattern (simulated via consecutive similar cost)
+    if(prev&&Math.abs(e.cost-prev.cost)<0.001&&e.model===prev.model)evts.push('dup');
+    return evts;
+  }
+
+  function renderLaneV4(turns,label,isSub){
+    var maxC=0;turns.forEach(function(e){if(e.cost>maxC)maxC=e.cost;});if(!maxC)maxC=0.01;
+    var mc={};turns.forEach(function(e){mc[e.model]=(mc[e.model]||0)+1;});
+    var dom=Object.entries(mc).sort(function(a,b){return b[1]-a[1];})[0];
+    var modelChip='<span class="model-chip" style="background:'+((dom[0]||'').indexOf('haiku')>=0?'#f0883e22;color:#f0883e':'#58a6ff22;color:#58a6ff')+'">'+shortModel(dom[0])+'</span>';
+
+    var html='<div class="lane-label">▶ '+label+' · '+turns.length+' turns'+modelChip+'</div>';
+    // Main lane — pure 4D encoding (no event borders)
+    html+='<div class="lane'+(isSub?' lane-sub':'')+'" style="width:'+W+'px">';
+    if(!isSub){switches.forEach(function(ts){
+      var x=((ts-tMin)/tR)*W;
+      html+='<div class="model-switch-v2" style="left:'+x.toFixed(1)+'px"></div>';
+    });}
+    turns.forEach(function(e){
+      var ts=Number(e.ts)||0,dur=(parseFloat(e.dur)||0)*1000;
+      var x=((ts-tMin)/tR)*W,bw=Math.max(4,(dur/tR)*W);
+      var h=Math.max(2,Math.round((e.cost/maxC)*H));
+      h=Math.min(h,Math.max(6,bw*8));
+      var cp=Math.min(100,e.ctxUsed/(e.maxCtx||200000)*100);
+      var col=cxc2(cp);
+      var dng=cp>=80;
+      // v4: bar has NO event borders — only zone color + danger top border
+      var cls='tb4'+(dng?' dng4':'');
+      var style='left:'+x.toFixed(1)+'px;width:'+bw.toFixed(1)+'px;height:'+h+'px;background:'+col;
+      if(dng)style+=';border-top:3px solid #ff6b6b';
+      var lbl=(h>=20&&bw>=16)?'<span class="pl">'+Math.round(cp)+'%</span>':'';
+      html+='<div class="'+cls+'" style="'+style+'" data-i="'+DATA.indexOf(e)+'">'+lbl+'</div>';
+    });
+    html+='</div>';
+
+    // Event track (8px)
+    html+='<div class="event-track" style="width:'+W+'px">';
+    var evCounts={error:0,cache:0,dup:0,cred:0,max:0};
+    turns.forEach(function(e,idx){
+      var evts=detectEvents(e,idx>0?turns[idx-1]:null);
+      var ts=Number(e.ts)||0;
+      var x=((ts-tMin)/tR)*W;
+      evts.forEach(function(ev,ei){
+        evCounts[ev]=(evCounts[ev]||0)+1;
+        if(!v4Filters[ev])return; // filtered out
+        var cls='ev-dot ev-'+ev;
+        var ox=x+ei*5; // offset multiple dots
+        html+='<div class="'+cls+'" style="left:'+ox.toFixed(1)+'px" data-i="'+DATA.indexOf(e)+'" data-ev="'+ev+'"></div>';
+      });
+    });
+    html+='</div>';
+    return html;
+  }
+
+  var html=renderLaneV4(main,'main',false);
+  if(subs.length)html+=renderLaneV4(subs,'subagent-'+shortModel(subs[0].model),true);
+  wrap.innerHTML=html;
+}
+
+// v4 tooltip (bars + event dots)
+document.getElementById('lane-wrap-v4').addEventListener('mouseover',function(ev){
+  var b=ev.target.closest('.tb4')||ev.target.closest('.ev-dot');
+  if(!b){tt.style.display='none';return;}
+  var e=DATA[parseInt(b.dataset.i)];
+  var cp=Math.min(100,e.ctxUsed/(e.maxCtx||200000)*100);
+  var inT=e.input+e.cacheRead+e.cacheCreate;
+  var ch=inT>0?(e.cacheRead/inT*100).toFixed(1):'–';
+  var ctxCls=cp>=80?'danger':cp>=40?'warn':'good';
+  var cacheCls=parseFloat(ch)<50?'danger':'good';
+  var evLabel=b.dataset.ev?' <span class="v" style="color:var(--accent)">['+b.dataset.ev+']</span>':'';
+  tt.innerHTML='<div class="r"><span class="l">#'+e.num+'</span><span class="v">'+shortModel(e.model)+evLabel+'</span></div><div class="r"><span class="l">Context</span><span class="v '+ctxCls+'">'+cp.toFixed(1)+'%</span></div><div class="r"><span class="l">Cache hit</span><span class="v '+cacheCls+'">'+ch+'%</span></div><div class="r"><span class="l">Cost</span><span class="v">$'+e.cost.toFixed(4)+'</span></div><div class="r"><span class="l">Duration</span><span class="v">'+(parseFloat(e.dur)||0).toFixed(1)+'s</span></div>'+(e.hasErr?'<div class="r"><span class="v danger">⚠ tool error</span></div>':'');
+  tt.style.display='block';
+});
+document.getElementById('lane-wrap-v4').addEventListener('mouseout',function(){tt.style.display='none';});
+renderV4();
+
+// ── v5: Usage-style dropdown filter + event track ──────────────────────────
+var v5Filter = null; // null = all, 'tools:*' = all tools, 'tools:errors' = specific
+var V5_GROUPS = {
+  tools: { label:'Tools', color:'#f0883e', items:['errors','skill','MCP','core','dup','subagent'] },
+  context: { label:'Context', color:'#d29922', items:['ctx>80%','compaction','cache miss','max_tokens'] },
+  security: { label:'Security', color:'#f85149', items:['credential','sensitive','network','pkg install'] },
+  cost: { label:'Cost', color:'#bc8cff', items:['cost spike','high output'] }
+};
+
+function v5DetectEvents(e, prev, allTurns, idx) {
+  var evts = [];
+  var inT = e.input + e.cacheRead + e.cacheCreate;
+  var ch = inT > 0 ? e.cacheRead / inT * 100 : 100;
+  var cp = Math.min(100, e.ctxUsed / (e.maxCtx || 200000) * 100);
+  if (e.hasErr) evts.push('errors');
+  if (ch < 50 && inT > 1000) evts.push('cache miss');
+  if (cp >= 80) evts.push('ctx>80%');
+  if (prev && prev.ctxUsed > 0 && e.ctxUsed < prev.ctxUsed * 0.7) evts.push('compaction');
+  if (e.cost > 0.3) evts.push('cost spike');
+  if (e.output > 4000) evts.push('high output');
+  if (prev && Math.abs(e.cost - prev.cost) < 0.001 && e.model === prev.model) evts.push('dup');
+  return evts;
+}
+
+function v5EventGroup(evName) {
+  for (var g in V5_GROUPS) { if (V5_GROUPS[g].items.indexOf(evName) >= 0) return g; }
+  return null;
+}
+
+function v5IsVisible(evName) {
+  if (!v5Filter) return true;
+  var g = v5EventGroup(evName);
+  if (v5Filter === g + ':*') return true;
+  if (v5Filter === g + ':' + evName) return true;
+  return false;
+}
+
+var V5_DOT_STYLES = {
+  'errors': 'background:#f85149;border-radius:1px',
+  'skill': 'background:#bc8cff;border-radius:50%',
+  'MCP': 'background:#3fb950;border-radius:50%;border:1px solid #237832',
+  'dup': 'background:rgba(255,255,255,0.7);border-radius:1px;transform:rotate(45deg)',
+  'subagent': 'background:#bc8cff;border-radius:1px',
+  'ctx>80%': 'background:#ff6b6b;border-radius:50%',
+  'compaction': 'background:#d29922;width:0;height:0;border-left:3px solid transparent;border-right:3px solid transparent;border-top:4px solid #d29922;border-radius:0',
+  'cache miss': 'background:#4dd0e1;border-radius:50%',
+  'max_tokens': 'background:#f85149;border-radius:50%;width:3px;height:3px',
+  'credential': 'background:#d29922;border-radius:50%;box-shadow:0 0 4px #d29922',
+  'sensitive': 'background:#f85149;border-radius:50%;opacity:0.7',
+  'network': 'background:#58a6ff;border-radius:50%',
+  'pkg install': 'background:#f0883e;border-radius:1px',
+  'cost spike': 'background:#bc8cff;border-radius:1px;width:3px;height:3px',
+  'high output': 'background:#bc8cff;border-radius:50%;width:3px;height:3px'
+};
+
+function renderV5FilterBar() {
+  var bar = document.getElementById('v5-filter-bar');
+  var allActive = !v5Filter;
+  function btnStyle(active, color) {
+    return 'font-size:10px;padding:2px 8px;border:none;cursor:pointer;font-family:inherit;background:' + (active ? (color || 'var(--accent)') : 'var(--surface)') + ';color:' + (active ? '#000' : (color || 'var(--dim)'));
+  }
+  function arrowStyle(active, color) {
+    return 'font-size:10px;padding:2px 4px 2px 0;border:none;cursor:pointer;font-family:inherit;background:' + (active ? (color || 'var(--accent)') : 'var(--surface)') + ';color:' + (active ? '#000' : (color || 'var(--dim)'));
+  }
+
+  var html = '';
+  html += '<button class="v5-filter-btn" data-filter="" style="' + btnStyle(allActive, null) + ';border-radius:10px;border:1px solid ' + (allActive ? 'var(--accent)' : 'var(--border)') + '">All</button>';
+
+  for (var g in V5_GROUPS) {
+    var grp = V5_GROUPS[g];
+    var active = allActive || (v5Filter && v5Filter.startsWith(g + ':'));
+    var borderColor = active ? grp.color : 'var(--border)';
+    var label = grp.label;
+    if (v5Filter && v5Filter.startsWith(g + ':') && v5Filter !== g + ':*') {
+      label = v5Filter.split(':')[1];
+    }
+
+    html += '<span class="v5-provider-group" data-group="' + g + '" style="position:relative;display:inline-flex;border-radius:10px;border:1px solid ' + borderColor + '">';
+    html += '<button class="v5-filter-btn v5-group-btn" data-filter="' + g + ':*" style="' + btnStyle(active, grp.color) + ';border-radius:10px 0 0 10px;padding-left:8px">' + label + '</button>';
+    html += '<button class="v5-arrow-btn" data-group="' + g + '" style="' + arrowStyle(active, grp.color) + ';border-radius:0 10px 10px 0">▾</button>';
+
+    html += '<div class="v5-dropdown" data-group="' + g + '" style="display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:100;background:var(--surface);border:1px solid var(--border);border-radius:6px;min-width:150px;padding:4px 0;box-shadow:0 4px 12px rgba(0,0,0,0.3)">';
+    html += '<div class="v5-dropdown-item" data-filter="' + g + ':*" style="padding:4px 10px;font-size:10px;cursor:pointer;color:' + grp.color + '">All ' + grp.label + '</div>';
+    for (var si = 0; si < grp.items.length; si++) {
+      var item = grp.items[si];
+      var dotStyle = V5_DOT_STYLES[item] || 'background:var(--dim);border-radius:50%';
+      html += '<div class="v5-dropdown-item" data-filter="' + g + ':' + item + '" style="padding:4px 10px 4px 14px;font-size:10px;cursor:pointer;color:var(--text);display:flex;align-items:center;gap:6px">';
+      html += '<span style="width:5px;height:5px;flex-shrink:0;display:inline-block;' + dotStyle + '"></span>';
+      html += item + '</div>';
+    }
+    html += '</div></span>';
+  }
+  bar.innerHTML = html;
+}
+
+function renderV5() {
+  var wrap = document.getElementById('lane-wrap-v5');
+  if (!DATA.length) return;
+  var main = [], subs = [];
+  DATA.forEach(function(e) { (e.isSub ? subs : main).push(e); });
+  var tMin = Infinity, tMax = -Infinity;
+  DATA.forEach(function(e) { var ts = Number(e.ts) || 0; if (ts < tMin) tMin = ts; var end = ts + (parseFloat(e.dur) || 0) * 1000; if (end > tMax) tMax = end; });
+  var tR = tMax - tMin || 1;
+  var switches = [];
+  for (var i = 1; i < main.length; i++) { if (main[i].model && main[i - 1].model && main[i].model !== main[i - 1].model) switches.push(main[i].ts); }
+  var W = Math.max(wrap.clientWidth - 32, DATA.length * 6);
+  var H = 44;
+
+  function renderLaneV5(turns, label, isSub) {
+    var maxC = 0; turns.forEach(function(e) { if (e.cost > maxC) maxC = e.cost; }); if (!maxC) maxC = 0.01;
+    var mc = {}; turns.forEach(function(e) { mc[e.model] = (mc[e.model] || 0) + 1; });
+    var dom = Object.entries(mc).sort(function(a, b) { return b[1] - a[1]; })[0];
+    var modelChip = '<span class="model-chip" style="background:' + ((dom[0] || '').indexOf('haiku') >= 0 ? '#f0883e22;color:#f0883e' : '#58a6ff22;color:#58a6ff') + '">' + shortModel(dom[0]) + '</span>';
+
+    var html = '<div class="lane-label">▶ ' + label + ' · ' + turns.length + ' turns' + modelChip + '</div>';
+    html += '<div class="lane' + (isSub ? ' lane-sub' : '') + '" style="width:' + W + 'px">';
+    if (!isSub) { switches.forEach(function(ts) { var x = ((ts - tMin) / tR) * W; html += '<div class="model-switch-v2" style="left:' + x.toFixed(1) + 'px"></div>'; }); }
+
+    turns.forEach(function(e) {
+      var ts = Number(e.ts) || 0, dur = (parseFloat(e.dur) || 0) * 1000;
+      var x = ((ts - tMin) / tR) * W, bw = Math.max(4, (dur / tR) * W);
+      var h = Math.max(2, Math.round((e.cost / maxC) * H));
+      h = Math.min(h, Math.max(6, bw * 8));
+      var cp = Math.min(100, e.ctxUsed / (e.maxCtx || 200000) * 100);
+      var col = cxc2(cp);
+      var dng = cp >= 80;
+      var cls = 'tb4' + (dng ? ' dng4' : '');
+      var style = 'left:' + x.toFixed(1) + 'px;width:' + bw.toFixed(1) + 'px;height:' + h + 'px;background:' + col;
+      if (dng) style += ';border-top:3px solid #ff6b6b';
+      var lbl = (h >= 20 && bw >= 16) ? '<span class="pl">' + Math.round(cp) + '%</span>' : '';
+      html += '<div class="' + cls + '" style="' + style + '" data-i="' + DATA.indexOf(e) + '">' + lbl + '</div>';
+    });
+    html += '</div>';
+
+    // Event track
+    html += '<div class="event-track" style="width:' + W + 'px">';
+    turns.forEach(function(e, idx) {
+      var evts = v5DetectEvents(e, idx > 0 ? turns[idx - 1] : null, turns, idx);
+      var ts = Number(e.ts) || 0;
+      var x = ((ts - tMin) / tR) * W;
+      evts.forEach(function(ev, ei) {
+        var vis = v5IsVisible(ev);
+        var dotStyle = V5_DOT_STYLES[ev] || 'background:var(--dim);border-radius:50%';
+        var opacity = vis ? 1 : 0.1;
+        var ox = x + ei * 6;
+        html += '<div class="ev-dot" style="left:' + ox.toFixed(1) + 'px;width:4px;height:4px;position:absolute;bottom:2px;' + dotStyle + ';opacity:' + opacity + ';transition:opacity 0.15s" data-i="' + DATA.indexOf(e) + '" data-ev="' + ev + '"></div>';
+      });
+    });
+    html += '</div>';
+    return html;
+  }
+
+  var html = renderLaneV5(main, 'main', false);
+  if (subs.length) html += renderLaneV5(subs, 'subagent-' + shortModel(subs[0].model), true);
+  wrap.innerHTML = html;
+}
+
+// v5 filter bar interactions (Usage-style)
+(function() {
+  var bar = document.getElementById('v5-filter-bar');
+  renderV5FilterBar();
+
+  bar.addEventListener('click', function(e) {
+    // All button
+    var allBtn = e.target.closest('.v5-filter-btn:not(.v5-group-btn)');
+    if (allBtn && allBtn.dataset.filter === '') { v5Filter = null; renderV5FilterBar(); renderV5(); return; }
+    // Group button
+    var grpBtn = e.target.closest('.v5-group-btn');
+    if (grpBtn) { v5Filter = grpBtn.dataset.filter; renderV5FilterBar(); renderV5(); return; }
+    // Arrow button
+    var arrow = e.target.closest('.v5-arrow-btn');
+    if (arrow) {
+      e.stopPropagation();
+      var g = arrow.dataset.group;
+      var dd = bar.querySelector('.v5-dropdown[data-group="' + g + '"]');
+      var wasOpen = dd.style.display !== 'none';
+      bar.querySelectorAll('.v5-dropdown').forEach(function(d) { d.style.display = 'none'; });
+      if (!wasOpen) dd.style.display = '';
+      return;
+    }
+    // Dropdown item
+    var item = e.target.closest('.v5-dropdown-item');
+    if (item) {
+      bar.querySelectorAll('.v5-dropdown').forEach(function(d) { d.style.display = 'none'; });
+      v5Filter = item.dataset.filter;
+      renderV5FilterBar();
+      renderV5();
+      return;
+    }
+  });
+
+  // Close dropdown on outside click (delayed to avoid race with arrow click)
+  document.addEventListener('mousedown', function(e) {
+    if (!e.target.closest('.v5-provider-group')) {
+      bar.querySelectorAll('.v5-dropdown').forEach(function(d) { d.style.display = 'none'; });
+    }
+  });
+
+  // Hover highlight
+  bar.addEventListener('mouseover', function(e) {
+    var item = e.target.closest('.v5-dropdown-item');
+    if (item) item.style.background = 'var(--surface-hover)';
+  });
+  bar.addEventListener('mouseout', function(e) {
+    var item = e.target.closest('.v5-dropdown-item');
+    if (item) item.style.background = '';
+  });
+})();
+
+// v5 tooltip
+document.getElementById('lane-wrap-v5').addEventListener('mouseover', function(ev) {
+  var b = ev.target.closest('.tb4') || ev.target.closest('.ev-dot');
+  if (!b) { tt.style.display = 'none'; return; }
+  var e = DATA[parseInt(b.dataset.i)];
+  var cp = Math.min(100, e.ctxUsed / (e.maxCtx || 200000) * 100);
+  var inT = e.input + e.cacheRead + e.cacheCreate;
+  var ch = inT > 0 ? (e.cacheRead / inT * 100).toFixed(1) : '–';
+  var ctxCls = cp >= 80 ? 'danger' : cp >= 40 ? 'warn' : 'good';
+  var cacheCls = parseFloat(ch) < 50 ? 'danger' : 'good';
+  var evLabel = b.dataset.ev ? ' <span class="v" style="color:var(--accent)">[' + b.dataset.ev + ']</span>' : '';
+  tt.innerHTML = '<div class="r"><span class="l">#' + e.num + '</span><span class="v">' + shortModel(e.model) + evLabel + '</span></div><div class="r"><span class="l">Context</span><span class="v ' + ctxCls + '">' + cp.toFixed(1) + '%</span></div><div class="r"><span class="l">Cache hit</span><span class="v ' + cacheCls + '">' + ch + '%</span></div><div class="r"><span class="l">Cost</span><span class="v">$' + e.cost.toFixed(4) + '</span></div><div class="r"><span class="l">Duration</span><span class="v">' + (parseFloat(e.dur) || 0).toFixed(1) + 's</span></div>' + (e.hasErr ? '<div class="r"><span class="v danger">⚠ tool error</span></div>' : '');
+  tt.style.display = 'block';
+});
+document.getElementById('lane-wrap-v5').addEventListener('mouseout', function() { tt.style.display = 'none'; });
+
+renderV5();
+
+// ── v6: Session Weather Health ───────────────────────────────────────────
+var v6Filter = null;
+
+function computeHealth(turns) {
+  if (!turns.length) return { score: 100, icon: '☀️', label: 'Sunny' };
+  var n = turns.length;
+  var errRate = turns.filter(function(t){ return t.hasErr; }).length / n;
+  var ctxDanger = turns.filter(function(t){ return t.ctxUsed / (t.maxCtx || 200000) > 0.8; }).length / n;
+  var cacheMiss = turns.filter(function(t){
+    var inT = t.input + t.cacheRead + t.cacheCreate;
+    return inT > 1000 && t.cacheRead / inT < 0.5;
+  }).length / n;
+  var sorted = turns.slice().sort(function(a,b){ return a.cost - b.cost; });
+  var median = sorted[Math.floor(n / 2)].cost || 0.01;
+  var costSpike = turns.filter(function(t){ return t.cost > median * 2; }).length / n;
+  var score = 100 - (errRate * 40 + ctxDanger * 30 + cacheMiss * 20 + costSpike * 10) * 100;
+  score = Math.max(0, Math.min(100, Math.round(score)));
+  if (score >= 80) return { score: score, icon: '☀️', label: 'Sunny' };
+  if (score >= 60) return { score: score, icon: '⛅', label: 'Partly Cloudy' };
+  if (score >= 40) return { score: score, icon: '☁️', label: 'Overcast' };
+  if (score >= 20) return { score: score, icon: '🌧️', label: 'Rainy' };
+  return { score: score, icon: '⛈️', label: 'Stormy' };
+}
+
+function v6IsVisible(evName) {
+  if (!v6Filter) return true;
+  var g = v5EventGroup(evName);
+  if (v6Filter === g + ':*') return true;
+  if (v6Filter === g + ':' + evName) return true;
+  return false;
+}
+
+function renderV6FilterBar() {
+  var bar = document.getElementById('v6-filter-bar');
+  var allActive = !v6Filter;
+  function s(active, color) {
+    return 'font-size:10px;padding:2px 8px;border:none;cursor:pointer;font-family:inherit;background:' + (active ? (color || 'var(--accent)') : 'var(--surface)') + ';color:' + (active ? '#000' : (color || 'var(--dim)'));
+  }
+  var html = '<button class="v6-filter-btn" data-filter="" style="' + s(allActive, null) + ';border-radius:10px;border:1px solid ' + (allActive ? 'var(--accent)' : 'var(--border)') + '">All</button>';
+  for (var g in V5_GROUPS) {
+    var grp = V5_GROUPS[g];
+    var active = allActive || (v6Filter && v6Filter.startsWith(g + ':'));
+    var bc = active ? grp.color : 'var(--border)';
+    var label = grp.label;
+    if (v6Filter && v6Filter.startsWith(g + ':') && v6Filter !== g + ':*') label = v6Filter.split(':')[1];
+    html += '<span class="v6-provider-group" data-group="' + g + '" style="position:relative;display:inline-flex;border-radius:10px;border:1px solid ' + bc + '">';
+    html += '<button class="v6-filter-btn v6-group-btn" data-filter="' + g + ':*" style="' + s(active, grp.color) + ';border-radius:10px 0 0 10px;padding-left:8px">' + label + '</button>';
+    html += '<button class="v6-arrow-btn" data-group="' + g + '" style="' + s(active, grp.color) + ';border-radius:0 10px 10px 0;border-left:1px solid ' + (active ? 'rgba(0,0,0,0.2)' : 'var(--border)') + '">▾</button>';
+    html += '<div class="v6-dropdown" data-group="' + g + '" style="display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:100;background:var(--surface);border:1px solid var(--border);border-radius:6px;min-width:150px;padding:4px 0;box-shadow:0 4px 12px rgba(0,0,0,0.3)">';
+    html += '<div class="v6-dropdown-item" data-filter="' + g + ':*" style="padding:4px 10px;font-size:10px;cursor:pointer;color:' + grp.color + '">All ' + grp.label + '</div>';
+    for (var si = 0; si < grp.items.length; si++) {
+      var item = grp.items[si];
+      var ds = V5_DOT_STYLES[item] || 'background:var(--dim);border-radius:50%';
+      html += '<div class="v6-dropdown-item" data-filter="' + g + ':' + item + '" style="padding:4px 10px 4px 14px;font-size:10px;cursor:pointer;color:var(--text);display:flex;align-items:center;gap:6px"><span style="width:5px;height:5px;flex-shrink:0;display:inline-block;' + ds + '"></span>' + item + '</div>';
+    }
+    html += '</div></span>';
+  }
+  bar.innerHTML = html;
+}
+
+function renderV6() {
+  var wrap = document.getElementById('lane-wrap-v6');
+  if (!DATA.length) return;
+  var main = [], subs = [];
+  DATA.forEach(function(e) { (e.isSub ? subs : main).push(e); });
+  var tMin = Infinity, tMax = -Infinity;
+  DATA.forEach(function(e) { var ts = Number(e.ts) || 0; if (ts < tMin) tMin = ts; var end = ts + (parseFloat(e.dur) || 0) * 1000; if (end > tMax) tMax = end; });
+  var tR = tMax - tMin || 1;
+  var switches = [];
+  for (var i = 1; i < main.length; i++) { if (main[i].model && main[i - 1].model && main[i].model !== main[i - 1].model) switches.push(main[i].ts); }
+  var W = Math.max(wrap.clientWidth - 32, DATA.length * 6);
+  var H = 44;
+
+  function renderLaneV6(turns, label, isSub) {
+    var maxC = 0; turns.forEach(function(e) { if (e.cost > maxC) maxC = e.cost; }); if (!maxC) maxC = 0.01;
+    var mc = {}; turns.forEach(function(e) { mc[e.model] = (mc[e.model] || 0) + 1; });
+    var dom = Object.entries(mc).sort(function(a, b) { return b[1] - a[1]; })[0];
+    var modelChip = '<span class="model-chip" style="background:' + ((dom[0] || '').indexOf('haiku') >= 0 ? '#f0883e22;color:#f0883e' : '#58a6ff22;color:#58a6ff') + '">' + shortModel(dom[0]) + '</span>';
+
+    // ponytail: weather icon — the whole point of v6
+    var health = computeHealth(turns);
+    var healthChip = '<span style="margin-left:6px;font-size:12px" title="Health: ' + health.score + '/100 (' + health.label + ')">' + health.icon + '</span>';
+    var scoreChip = '<span style="font-size:9px;color:' + (health.score >= 60 ? 'var(--dim)' : '#f85149') + ';margin-left:2px">' + health.score + '</span>';
+
+    var html = '<div class="lane-label">▶ ' + label + ' · ' + turns.length + ' turns' + healthChip + scoreChip + modelChip + '</div>';
+    html += '<div class="lane' + (isSub ? ' lane-sub' : '') + '" style="width:' + W + 'px">';
+    if (!isSub) { switches.forEach(function(ts) { var x = ((ts - tMin) / tR) * W; html += '<div class="model-switch-v2" style="left:' + x.toFixed(1) + 'px"></div>'; }); }
+
+    turns.forEach(function(e) {
+      var ts = Number(e.ts) || 0, dur = (parseFloat(e.dur) || 0) * 1000;
+      var x = ((ts - tMin) / tR) * W, bw = Math.max(4, (dur / tR) * W);
+      var h = Math.max(2, Math.round((e.cost / maxC) * H));
+      h = Math.min(h, Math.max(6, bw * 8));
+      var cp = Math.min(100, e.ctxUsed / (e.maxCtx || 200000) * 100);
+      var col = cxc2(cp);
+      var dng = cp >= 80;
+      var cls = 'tb4' + (dng ? ' dng4' : '');
+      var style = 'left:' + x.toFixed(1) + 'px;width:' + bw.toFixed(1) + 'px;height:' + h + 'px;background:' + col;
+      if (dng) style += ';border-top:3px solid #ff6b6b';
+      var lbl = (h >= 20 && bw >= 16) ? '<span class="pl">' + Math.round(cp) + '%</span>' : '';
+      html += '<div class="' + cls + '" style="' + style + '" data-i="' + DATA.indexOf(e) + '">' + lbl + '</div>';
+    });
+    html += '</div>';
+
+    html += '<div class="event-track" style="width:' + W + 'px">';
+    turns.forEach(function(e, idx) {
+      var evts = v5DetectEvents(e, idx > 0 ? turns[idx - 1] : null, turns, idx);
+      var ts = Number(e.ts) || 0;
+      var x = ((ts - tMin) / tR) * W;
+      evts.forEach(function(ev, ei) {
+        var vis = v6IsVisible(ev);
+        var dotStyle = V5_DOT_STYLES[ev] || 'background:var(--dim);border-radius:50%';
+        var ox = x + ei * 6;
+        html += '<div class="ev-dot" style="left:' + ox.toFixed(1) + 'px;width:4px;height:4px;position:absolute;bottom:2px;' + dotStyle + ';opacity:' + (vis ? 1 : 0.1) + ';transition:opacity 0.15s" data-i="' + DATA.indexOf(e) + '" data-ev="' + ev + '"></div>';
+      });
+    });
+    html += '</div>';
+    return html;
+  }
+
+  var html = renderLaneV6(main, 'main', false);
+  if (subs.length) html += renderLaneV6(subs, 'subagent-' + shortModel(subs[0].model), true);
+  wrap.innerHTML = html;
+}
+
+// v6 filter bar (same pattern, with split button fix)
+(function() {
+  var bar = document.getElementById('v6-filter-bar');
+  renderV6FilterBar();
+  bar.addEventListener('click', function(e) {
+    var allBtn = e.target.closest('.v6-filter-btn:not(.v6-group-btn)');
+    if (allBtn && allBtn.dataset.filter === '') { v6Filter = null; renderV6FilterBar(); renderV6(); return; }
+    var grpBtn = e.target.closest('.v6-group-btn');
+    if (grpBtn) { v6Filter = grpBtn.dataset.filter; renderV6FilterBar(); renderV6(); return; }
+    var arrow = e.target.closest('.v6-arrow-btn');
+    if (arrow) { e.stopPropagation(); var g = arrow.dataset.group; var dd = bar.querySelector('.v6-dropdown[data-group="' + g + '"]'); var was = dd.style.display !== 'none'; bar.querySelectorAll('.v6-dropdown').forEach(function(d) { d.style.display = 'none'; }); if (!was) dd.style.display = ''; return; }
+    var item = e.target.closest('.v6-dropdown-item');
+    if (item) { bar.querySelectorAll('.v6-dropdown').forEach(function(d) { d.style.display = 'none'; }); v6Filter = item.dataset.filter; renderV6FilterBar(); renderV6(); return; }
+  });
+  document.addEventListener('mousedown', function(e) { if (!e.target.closest('.v6-provider-group')) bar.querySelectorAll('.v6-dropdown').forEach(function(d) { d.style.display = 'none'; }); });
+})();
+
+// v6 tooltip
+document.getElementById('lane-wrap-v6').addEventListener('mouseover', function(ev) {
+  var b = ev.target.closest('.tb4') || ev.target.closest('.ev-dot');
+  if (!b) { tt.style.display = 'none'; return; }
+  var e = DATA[parseInt(b.dataset.i)];
+  var cp = Math.min(100, e.ctxUsed / (e.maxCtx || 200000) * 100);
+  var inT = e.input + e.cacheRead + e.cacheCreate;
+  var ch = inT > 0 ? (e.cacheRead / inT * 100).toFixed(1) : '–';
+  var ctxCls = cp >= 80 ? 'danger' : cp >= 40 ? 'warn' : 'good';
+  var cacheCls = parseFloat(ch) < 50 ? 'danger' : 'good';
+  var evLabel = b.dataset.ev ? ' <span class="v" style="color:var(--accent)">[' + b.dataset.ev + ']</span>' : '';
+  tt.innerHTML = '<div class="r"><span class="l">#' + e.num + '</span><span class="v">' + shortModel(e.model) + evLabel + '</span></div><div class="r"><span class="l">Context</span><span class="v ' + ctxCls + '">' + cp.toFixed(1) + '%</span></div><div class="r"><span class="l">Cache hit</span><span class="v ' + cacheCls + '">' + ch + '%</span></div><div class="r"><span class="l">Cost</span><span class="v">$' + e.cost.toFixed(4) + '</span></div><div class="r"><span class="l">Duration</span><span class="v">' + (parseFloat(e.dur) || 0).toFixed(1) + 's</span></div>' + (e.hasErr ? '<div class="r"><span class="v danger">⚠ tool error</span></div>' : '');
+  tt.style.display = 'block';
+});
+document.getElementById('lane-wrap-v6').addEventListener('mouseout', function() { tt.style.display = 'none'; });
+
+renderV6();
+window.addEventListener('resize', function() { render(); renderV2(); renderV3(); renderV4(); renderV5(); renderV6(); });
+</script></body></html>
