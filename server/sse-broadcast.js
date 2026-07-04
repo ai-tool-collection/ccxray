@@ -36,6 +36,7 @@ function summarizeEntry(entry) {
     coreHash: entry.coreHash || null,
     agentKey: entry.agentKey || null,
     agentLabel: entry.agentLabel || null,
+    convId: entry.convId || null,
     toolsHash: entry.toolsHash || null,
     thinkingStripped: entry.thinkingStripped || false,
     parentSessionId: store.sessionMeta[entry.sessionId]?.parentSessionId || null,
