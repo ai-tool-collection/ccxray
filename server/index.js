@@ -24,6 +24,7 @@ const { readSettings } = require('./settings');
 const { broadcastSessionStatus, broadcastPendingRequest } = require('./sse-broadcast');
 const { dispatch, mintAutoOpenUrl, formatAutoOpenUrl } = require('./auth');
 const { findSharedPrefix } = require('./delta-helpers');
+const { extractPromptAgentType } = require('./system-prompt');
 const providers = require('./providers');
 const { handleWebSocketUpgrade, drainWebSocketProxy } = require('./ws-proxy');
 const { WIRE_PARSERS, getParser } = require('./wire-parsers');
@@ -284,6 +285,7 @@ const server = http.createServer((clientReq, clientRes) => {
     let sysHash = null;
     let toolsHash = null;
     let coreHash = null;
+    let agentKey = null, agentLabel = null;
     if (parsedBody) {
       sysHash = provider === 'openai'
         ? (parsedBody.instructions != null
@@ -315,6 +317,8 @@ const server = http.createServer((clientReq, clientRes) => {
             })).catch(e => console.error('Write OpenAI prompt metadata failed:', e.message));
           }
           coreHash = promptInfo?.coreHash || null;
+          agentKey = promptInfo?.agentKey || null;
+          agentLabel = promptInfo?.agentLabel || null;
         }
         if (toolsHash) config.storage.writeSharedIfAbsent(`openai_tools_${toolsHash}.json`, JSON.stringify(parsedBody.tools))
           .catch(e => console.error('Write OpenAI tools failed:', e.message));
@@ -390,7 +394,17 @@ const server = http.createServer((clientReq, clientRes) => {
     // Detect new cc_version for live requests; compute coreHash for all qualifying requests
     if (parsedBody && provider === 'anthropic') {
       const anthropicPromptInfo = getParser('anthropic')?.registerPromptVersion?.({ parsedBody, sysHash }) || null;
-      if (anthropicPromptInfo) coreHash = anthropicPromptInfo.coreHash;
+      if (anthropicPromptInfo) {
+        coreHash = anthropicPromptInfo.coreHash;
+        agentKey = anthropicPromptInfo.agentKey || null;
+        agentLabel = anthropicPromptInfo.agentLabel || null;
+      }
+    }
+    // Short-form prompts (subagents, title-gen) never reach registerPromptVersion
+    // — fall back to direct detection so every entry carries an agent identity.
+    if (!agentKey && parsedBody) {
+      const at = extractPromptAgentType(provider, parsedBody);
+      if (at && at.key !== 'unknown') { agentKey = at.key; agentLabel = at.label; }
     }
 
     // Cross-session parent linkage — MUST run before activeRequests increment,
@@ -424,7 +438,7 @@ const server = http.createServer((clientReq, clientRes) => {
 
     const ctx = {
       id, ts, startTime, parsedBody, rawBody, clientReq, clientRes, fwdHeaders,
-      reqSessionId, reqWritePromise, sysHash, toolsHash, coreHash, sessionInferred, upstream,
+      reqSessionId, reqWritePromise, sysHash, toolsHash, coreHash, agentKey, agentLabel, sessionInferred, upstream,
       beta1m,
       isSubagent: isSubagentHint,
     };

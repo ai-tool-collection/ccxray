@@ -725,6 +725,7 @@ function handleSSEResponse(ctx, proxyRes, clientRes) {
         provider: 'anthropic', transport: 'sse', parsedBody, events, usage,
         proxyRes, sessionId, sessionInferred: ctx.sessionInferred,
         sysHash: ctx.sysHash, toolsHash: ctx.toolsHash, coreHash: ctx.coreHash,
+        agentKey: ctx.agentKey || null, agentLabel: ctx.agentLabel || null,
         cwd: store.sessionMeta[sessionId]?.cwd || null,
         stopReason, title, thinkingDuration, thinkingStripped, beta1m: ctx.beta1m,
         isSubagent, toolFail: helpers.hasToolFail(parsedBody), startTime,
@@ -824,6 +825,7 @@ function handleOpenAISSE(ctx, proxyRes, clientRes) {
         provider: 'openai', transport: 'sse', parsedBody, events, proxyRes,
         sessionId: reqSessionId, sessionInferred: ctx.sessionInferred, isSubagent: ctx.isSubagent,
         sysHash: ctx.sysHash, toolsHash: ctx.toolsHash, coreHash: ctx.coreHash,
+        agentKey: ctx.agentKey || null, agentLabel: ctx.agentLabel || null,
         cwd: store.sessionMeta[reqSessionId]?.cwd || null,
       }),
     };
@@ -915,6 +917,7 @@ function handleNonSSEResponse(ctx, proxyRes, clientRes) {
           parsedBody, events: openAIEvents || [], response: openAIResponse || resData, proxyRes,
           sessionId, sessionInferred: ctx.sessionInferred, isSubagent: ctx.isSubagent,
           sysHash: ctx.sysHash, toolsHash: ctx.toolsHash, coreHash: ctx.coreHash,
+        agentKey: ctx.agentKey || null, agentLabel: ctx.agentLabel || null,
           cwd: store.sessionMeta[sessionId]?.cwd || null,
         }),
       };
@@ -945,6 +948,7 @@ function handleNonSSEResponse(ctx, proxyRes, clientRes) {
           usage: nonSSEUsage, proxyRes,
           sessionId, sessionInferred: ctx.sessionInferred,
           sysHash: ctx.sysHash, toolsHash: ctx.toolsHash, coreHash: ctx.coreHash,
+        agentKey: ctx.agentKey || null, agentLabel: ctx.agentLabel || null,
           cwd: store.sessionMeta[sessionId]?.cwd || null,
           stopReason, title, thinkingDuration: null, thinkingStripped, beta1m: ctx.beta1m,
           isSubagent, toolFail: helpers.hasToolFail(parsedBody), startTime,

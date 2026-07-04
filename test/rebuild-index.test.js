@@ -176,6 +176,8 @@ describe('rebuild-index', () => {
     assert.equal(anchor.sessionId, 'S1');
     assert.equal(anchor.sessionInferred, false);
     assert.equal(anchor.cwd, '/home/me/proj', 'cwd recovered from rehydrated system');
+    assert.equal(anchor.sysHash, SYS_HASH, 'sysHash preserved from stripped req');
+    assert.equal(anchor.agentKey, 'agent', 'agent identity recomputed from rehydrated system');
     assert.equal(anchor.stopReason, 'end_turn', 'stopReason from message_delta');
     assert.ok(anchor.usage && anchor.usage.input_tokens === 100, 'usage from _res via canonical projection');
     assert.equal(anchor.title, 'first question', 'title recovered from last user text');

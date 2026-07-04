@@ -68,6 +68,8 @@ function buildEntryFields(ctx) {
     sysHash: ctx.sysHash || null,
     toolsHash: ctx.toolsHash || null,
     coreHash: ctx.coreHash || null,
+    agentKey: ctx.agentKey || null,
+    agentLabel: ctx.agentLabel || null,
     thinkingStripped: ctx.thinkingStripped,
     sessionId: ctx.sessionId,
   };

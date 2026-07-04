@@ -215,6 +215,16 @@ async function restoreFromLogs() {
   const sysHashToAgentKey = await buildVersionIndex();
   console.timeEnd('restore:versions');
 
+  // Backfill agent identity for index lines written before agentKey landed —
+  // the shared sys_ file scan already detected the agent per sysHash.
+  if (sysHashToAgentKey) {
+    for (const entry of store.entries) {
+      if (entry.agentKey || !entry.sysHash) continue;
+      const at = sysHashToAgentKey.get(entry.sysHash);
+      if (at) { entry.agentKey = at.key; entry.agentLabel = at.label; }
+    }
+  }
+
   // 4. Replay title-generator entries onto sess.title using the existing `title` column.
   // Legacy entries (written before the title-gen JSON fix) stored verbatim user text —
   // heuristic filter skips them: JSON-shaped, multi-line, or over the cap.
@@ -222,7 +232,7 @@ async function restoreFromLogs() {
   if (sysHashToAgentKey && process.env.CCXRAY_DISABLE_TITLES !== '1') {
     for (const entry of store.entries) {
       if (!entry.sessionId || !entry.sysHash || !entry.title) continue;
-      if (sysHashToAgentKey.get(entry.sysHash) !== 'title-generator') continue;
+      if (sysHashToAgentKey.get(entry.sysHash)?.key !== 'title-generator') continue;
       const t = entry.title;
       if (t[0] === '{' || t.includes('\n') || t.length > 200) continue;
       store.setSessionTitle(entry.sessionId, t, entry.receivedAt || 0);
@@ -266,7 +276,7 @@ async function buildVersionIndex() {
       const { key: agentKey, label: agentLabel } = agentInfo || (isOpenAI
         ? extractPromptAgentType('openai', { instructions: b2 })
         : extractAgentType(sys));
-      if (sysHash && agentKey) sysHashToAgentKey.set(sysHash, agentKey);
+      if (sysHash && agentKey) sysHashToAgentKey.set(sysHash, { key: agentKey, label: agentLabel });
       if (b2.length >= (isOpenAI ? 1 : 500)) {
         const coreText = isOpenAI ? b2 : (splitB2IntoBlocks(b2).coreInstructions || '');
         const coreLen = coreText.length;

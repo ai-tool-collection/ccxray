@@ -1,6 +1,7 @@
 'use strict';
 
 const WebSocket = require('ws');
+const crypto = require('crypto');
 const config = require('./config');
 const store = require('./store');
 const helpers = require('./helpers');
@@ -272,6 +273,47 @@ async function recordWebSocketEntry(ctx, result, turn = null) {
     .catch(e => console.error('Write ws res.json failed:', e.message));
 
   const { getParser } = require('./wire-parsers');
+
+  // Prompt identity — mirror the HTTP openai path in server/index.js so WS
+  // entries (codex's normal transport) get agentKey/coreHash like SSE entries.
+  // Header agent_type (x-codex-turn-metadata → ctx.agentType) is merged into
+  // the detection body like preprocessBody does — explicit type wins over
+  // instructions-text matching.
+  let sysHash = null, toolsHash = null, coreHash = null, agentKey = null, agentLabel = null;
+  // Fill-if-absent like withCodexMetadata: explicit body metadata wins over header
+  const detectBody = cr && ctx.agentType && !(cr.metadata && cr.metadata.agent_type)
+    ? { ...cr, metadata: { ...(cr.metadata || {}), agent_type: ctx.agentType } }
+    : cr;
+  if (cr && cr.instructions != null) {
+    sysHash = crypto.createHash('sha256').update(JSON.stringify(cr.instructions)).digest('hex').slice(0, 12);
+    config.storage.writeSharedIfAbsent(`openai_instructions_${sysHash}.json`, JSON.stringify(cr.instructions))
+      .catch(e => console.error('Write OpenAI instructions failed:', e.message));
+    const promptInfo = getParser('openai')?.registerPromptVersion?.({
+      parsedBody: detectBody, sysHash, sharedFile: `openai_instructions_${sysHash}.json`,
+    }) || null;
+    if (promptInfo) {
+      config.storage.writeSharedIfAbsent(`openai_prompt_meta_${sysHash}.json`, JSON.stringify({
+        agentKey: promptInfo.agentKey,
+        agentLabel: promptInfo.agentLabel,
+      })).catch(e => console.error('Write OpenAI prompt metadata failed:', e.message));
+      coreHash = promptInfo.coreHash || null;
+      agentKey = promptInfo.agentKey || null;
+      agentLabel = promptInfo.agentLabel || null;
+    }
+  }
+  // Fallback parity with server/index.js: captured request without instructions
+  // (input/tools only) still classifies via explicit agent_type / codex-default
+  if (cr && !agentKey) {
+    const { extractPromptAgentType } = require('./system-prompt');
+    const at = extractPromptAgentType('openai', detectBody);
+    if (at && at.key !== 'unknown') { agentKey = at.key; agentLabel = at.label; }
+  }
+  if (cr && cr.tools) {
+    toolsHash = crypto.createHash('sha256').update(JSON.stringify(cr.tools)).digest('hex').slice(0, 12);
+    config.storage.writeSharedIfAbsent(`openai_tools_${toolsHash}.json`, JSON.stringify(cr.tools))
+      .catch(e => console.error('Write OpenAI tools failed:', e.message));
+  }
+
   const responseMetadata = {
     transport: 'websocket',
     capture: 'transport-only',
@@ -299,6 +341,7 @@ async function recordWebSocketEntry(ctx, result, turn = null) {
       parsedBody: cr || {}, responseEvents: events,
       responseMetadata, lastUsage, lastModel, lastResponseStatus,
       proxyRes: { statusCode: result.status },
+      sysHash, toolsHash, coreHash, agentKey, agentLabel,
       sessionId: ctx.sessionId, sessionInferred: ctx.sessionInferred,
       isSubagent: ctx.agentType === 'explorer' || ctx.agentType === 'worker',
       cwd: store.sessionMeta[ctx.sessionId]?.cwd || null,
