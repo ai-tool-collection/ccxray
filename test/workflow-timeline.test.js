@@ -144,6 +144,43 @@ describe('workflow-timeline data layer', () => {
     assert.equal(ctx.wfState.lanes[1].name, 'agent-explore');
   });
 
+  it('convId splits parallel same-agent instances into separate lanes (#117)', () => {
+    const ctx = loadWfModule();
+    var entries = [
+      mkEntry('t1', 's1', 'claude-fable-5', 1000, 5, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+      // two parallel Explore instances, interleaved turns
+      mkEntry('e1a', 's1', 'claude-sonnet-4-6', 2000, 3, { agentKey: 'explore', agentLabel: 'Explore', convId: 'aaaa1111' }),
+      mkEntry('e2a', 's1', 'claude-sonnet-4-6', 2100, 3, { agentKey: 'explore', agentLabel: 'Explore', convId: 'bbbb2222' }),
+      mkEntry('e1b', 's1', 'claude-sonnet-4-6', 6000, 2, { agentKey: 'explore', agentLabel: 'Explore', convId: 'aaaa1111' }),
+      // legacy entry without convId keeps the shared agent lane
+      mkEntry('e3', 's1', 'claude-sonnet-4-6', 7000, 2, { agentKey: 'explore', agentLabel: 'Explore' }),
+    ];
+    var lanes = ctx.wfInferLanes(entries, []);
+    assert.equal(lanes.length, 4);
+    var names = lanes.map(function(l) { return l.name; }).sort().join(',');
+    assert.equal(names, 'agent-explore,agent-explore:aaaa1111,agent-explore:bbbb2222,main');
+    var laneA = lanes.find(function(l) { return l.name === 'agent-explore:aaaa1111'; });
+    assert.equal(laneA.turns.length, 2);
+    assert.equal(laneA.convId, 'aaaa1111');
+  });
+
+  it('wfAddEntry routes by convId lane key', () => {
+    const ctx = loadWfModule();
+    ctx.allEntries = [
+      mkEntry('t1', 's1', 'claude-fable-5', 1000, 5, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+      mkEntry('e1a', 's1', 'claude-sonnet-4-6', 2000, 3, { agentKey: 'explore', agentLabel: 'Explore', convId: 'aaaa1111' }),
+    ];
+    ctx.wfState = ctx.wfBuildState('s1');
+    assert.equal(ctx.wfState.lanes.length, 2);
+    // same conv → same lane; new conv → new lane
+    ctx.wfAddEntry(mkEntry('e1b', 's1', 'claude-sonnet-4-6', 5000, 2, { agentKey: 'explore', agentLabel: 'Explore', convId: 'aaaa1111' }));
+    assert.equal(ctx.wfState.lanes.length, 2);
+    assert.equal(ctx.wfState.lanes[1].turns.length, 2);
+    ctx.wfAddEntry(mkEntry('e2a', 's1', 'claude-sonnet-4-6', 5100, 2, { agentKey: 'explore', agentLabel: 'Explore', convId: 'bbbb2222' }));
+    assert.equal(ctx.wfState.lanes.length, 3);
+    assert.equal(ctx.wfState.lanes[2].name, 'agent-explore:bbbb2222');
+  });
+
   it('wfBuildState computes time bounds', () => {
     const ctx = loadWfModule();
     ctx.allEntries = [

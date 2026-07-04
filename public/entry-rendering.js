@@ -382,6 +382,7 @@ function addEntry(e) {
     coreHash: e.coreHash || null,
     agentKey: e.agentKey || null,
     agentLabel: e.agentLabel || null,
+    convId: e.convId || null,
     toolsHash: e.toolsHash || null,
     thinkingStripped: e.thinkingStripped || false,
     provider: e.provider || 'anthropic',
