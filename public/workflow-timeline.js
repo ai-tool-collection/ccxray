@@ -805,6 +805,14 @@ function wfOverviewHeight(laneCount) {
   return Math.min(48, Math.max(28, laneCount * 7 + 6));
 }
 
+// slot = px per lane; when tight (<3px) the 1px gap compresses away so
+// every lane stays inside the canvas instead of clipping the last rows
+function wfOverviewBarGeom(MH, laneCount) {
+  var slot = (MH - 4) / laneCount;
+  var barH = Math.max(1, Math.min(8, slot - 1));
+  return { barH: barH, laneStep: Math.min(slot, barH + 1) };
+}
+
 function wfRenderOverview(canvas) {
   if (!wfState || !canvas) return;
   canvas.style.height = wfOverviewHeight(wfState.lanes.length) + 'px';
@@ -824,8 +832,8 @@ function wfRenderOverview(canvas) {
   ctx.fillRect(0, 0, MW, MH);
 
   var lanes = wfState.lanes;
-  var barH = Math.max(2, Math.min(8, (MH - 4) / lanes.length - 1));
-  var laneStep = barH + 1;
+  var geom = wfOverviewBarGeom(MH, lanes.length);
+  var barH = geom.barH, laneStep = geom.laneStep;
   var startY = Math.max(1, (MH - lanes.length * laneStep) / 2);
 
   for (var li = 0; li < lanes.length; li++) {
