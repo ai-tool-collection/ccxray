@@ -681,7 +681,7 @@ Overview, swimlane turn bars, and minimap fill all reference this one object.
 
 | Element | Direction | Selection marker | Additional signals |
 |---------|-----------|------------------|--------------------|
-| Overview | Horizontal, 2-8px micro blocks (canvas 28-48px by lane count) | Viewport rect + 1px selected-turn indicator line (#111) | Scale labels, duration badge |
+| Overview | Horizontal, 1-8px micro blocks (canvas 28-48px by lane count) | Viewport rect + 1px selected-turn indicator line (#111) | Scale labels, duration badge |
 | Swimlane turn bar | Horizontal, 44px × width∝duration, height∝ctx% (v8) | Semi-transparent accent position cursor rect | Threshold dashed lines, cost track, event tracks |
 | Minimap fill | **Vertical**, height∝tokens, 60-70px wide | Hover highlight | Zone threshold dashed lines, bottom size label, **inline step labels** |
 

@@ -800,7 +800,7 @@ function wfDeferRender() {
 // ── Overview Bar (Canvas) ─────────────────────────────────────────────────
 // Multi-agent legibility: canvas grows with lane count so 4-6 lanes get
 // ~6px bars instead of 2-3px slivers. Capped at 48px (#114) — beyond ~10
-// lanes bars floor at 2px again; per-lane analysis is the swimlane's job.
+// lanes bars shrink toward 1px; per-lane analysis is the swimlane's job.
 function wfOverviewHeight(laneCount) {
   return Math.min(48, Math.max(28, laneCount * 7 + 6));
 }
