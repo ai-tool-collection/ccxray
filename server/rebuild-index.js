@@ -24,17 +24,37 @@
 //
 // Recovers offline: model/usage/cost/maxContext/toolCalls (canonical), cwd (from
 // the rehydrated system prompt — shared sys_*.json files are never pruned),
-// title, thinkingDuration, stopReason, and session attribution. Honestly null
-// for runtime-only fields it cannot know (elapsed, receivedAt, coreHash).
+// title, thinkingDuration, stopReason, session attribution, and prompt identity
+// (sysHash/coreHash/agentKey — recomputed from the rehydrated system prompt).
+// Honestly null for runtime-only fields it cannot know (elapsed, receivedAt).
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const config = require('./config');
 const store = require('./store');
 const hub = require('./hub');
 const helpers = require('./helpers');
 const { getParser } = require('./wire-parsers');
 const { buildIndexLine } = require('./entry');
+const { extractAgentType, splitB2IntoBlocks } = require('./system-prompt');
+
+// Offline twin of registerPromptVersion's identity computation (no versionIndex
+// side effects): agent identity + coreHash from a rehydrated system array.
+function promptIdentity(system) {
+  const none = { coreHash: null, agentKey: null, agentLabel: null };
+  if (!Array.isArray(system) || system.length < 2) return none;
+  const at = extractAgentType(system);
+  const agentKey = at && at.key !== 'unknown' ? at.key : null;
+  const agentLabel = agentKey ? at.label : null;
+  let coreHash = null;
+  const b2 = (system[2]?.text || '');
+  if (b2.length >= 500) {
+    const coreText = splitB2IntoBlocks(b2).coreInstructions || '';
+    coreHash = crypto.createHash('md5').update(coreText).digest('hex').slice(0, 12);
+  }
+  return { coreHash, agentKey, agentLabel };
+}
 
 // "2026-05-01T11-47-17-808" → "11:47:17". The id IS a Taipei-local timestamp, so
 // ts (the live pipeline's wall-clock time-of-day) is exact, not a guess.
@@ -103,7 +123,7 @@ async function reconstructReq(id, storage, cache, seen = new Set()) {
   delete parsedBody.prevId;
   delete parsedBody.msgOffset;
 
-  const result = { provider: 'anthropic', parsedBody, prevId: stripped.prevId || null };
+  const result = { provider: 'anthropic', parsedBody, prevId: stripped.prevId || null, sysHash: stripped.sysHash || null, toolsHash: stripped.toolsHash || null };
   // ponytail: cache only what delta splicing needs (messages array). Full parsedBody
   // (system 50-100KB + tools 10-50KB per entry) is returned to caller but NOT retained.
   // Without this, 65K entries × 100KB = 4GB+ cache → OOM.
@@ -215,7 +235,7 @@ async function rebuildIndex({ apply = false, storage = config.storage, log = con
     // Canonical explicit-session read (handles metadata.session_id + the
     // user_id-embedded formats), same primitive the live pipeline uses.
     const explicitSid = store.extractSessionId(r.parsedBody);
-    recon.push({ id, parsedBody: r.parsedBody, explicitSid, prevId: r.prevId });
+    recon.push({ id, parsedBody: r.parsedBody, explicitSid, prevId: r.prevId, sysHash: r.sysHash, toolsHash: r.toolsHash });
     if (explicitSid) explicitTimeline.push({ id, sid: explicitSid, cwd: store.extractCwd(r.parsedBody) });
   }
 
@@ -234,7 +254,7 @@ async function rebuildIndex({ apply = false, storage = config.storage, log = con
 
   // ── 4. Pass 2: project each (Anthropic) orphan through the canonical pipeline. ──
   const recovered = []; // [{ id, line }]
-  for (const { id, parsedBody, explicitSid, prevId } of recon) {
+  for (const { id, parsedBody, explicitSid, prevId, sysHash, toolsHash } of recon) {
     const events = await readResEvents(storage, id);
 
     // Session attribution. Explicit metadata.session_id is authoritative (every
@@ -260,6 +280,7 @@ async function rebuildIndex({ apply = false, storage = config.storage, log = con
     const title = recoverTitle(parsedBody, events, isSubagent);
     const thinkingDuration = Array.isArray(events) ? helpers.computeThinkingDuration(events) : null;
 
+    const identity = promptIdentity(parsedBody.system);
     const fields = getParser('anthropic').buildEntryFields({
       provider: 'anthropic',
       transport: 'sse',
@@ -269,9 +290,11 @@ async function rebuildIndex({ apply = false, storage = config.storage, log = con
       sessionInferred,
       cwd,
       isSubagent,
-      sysHash: null,
-      toolsHash: null,
-      coreHash: null,
+      sysHash: sysHash || null,
+      toolsHash: toolsHash || null,
+      coreHash: identity.coreHash,
+      agentKey: identity.agentKey,
+      agentLabel: identity.agentLabel,
       stopReason,
       title,
       thinkingDuration,

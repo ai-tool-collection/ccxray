@@ -4,7 +4,7 @@ const INDEX_FIELDS = [
   'id','ts','sessionId','provider','agent','model','msgCount','toolCount','toolCalls','skillCalls',
   'isSubagent','sessionInferred','cwd','isSSE','usage','cost','maxContext','responseMetadata',
   'stopReason','title','thinkingDuration','toolFail','elapsed','status','receivedAt',
-  'sysHash','toolsHash','coreHash','thinkingStripped','hasCredential','toolSources',
+  'sysHash','toolsHash','coreHash','agentKey','agentLabel','thinkingStripped','hasCredential','toolSources',
   'edited','editSummary',
 ];
 

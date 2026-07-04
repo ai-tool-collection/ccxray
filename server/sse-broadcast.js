@@ -34,6 +34,8 @@ function summarizeEntry(entry) {
     toolFail: entry.toolFail || false,
     hasCredential: entry.hasCredential || undefined,
     coreHash: entry.coreHash || null,
+    agentKey: entry.agentKey || null,
+    agentLabel: entry.agentLabel || null,
     toolsHash: entry.toolsHash || null,
     thinkingStripped: entry.thinkingStripped || false,
     parentSessionId: store.sessionMeta[entry.sessionId]?.parentSessionId || null,
