@@ -206,6 +206,7 @@ All code, comments, and discussions use these names consistently.
 - **Viewport duration label**: blue pill badge at bottom-right of viewport rect
 - `+` / `−` / `⟲` buttons for zoom in / out / reset
 - Lane density bars proportional to turn activity
+- **Dynamic height** (multi-agent legibility, 2026-07-04): canvas height = `clamp(28, lanes×7+6, 48)` px. Single-lane sessions stay compact (28px); 4-6 lane sessions get ~6px per-lane bars instead of 2-3px slivers. Capped at 48px (#114) — beyond ~10 lanes bars floor at 2px again, accepted because per-lane analysis is the swimlane's job; the overview is global positioning. Rejected alternatives: aggregating sub-agents into one activity band (destroys the per-agent distribution the user needs); per-lane rows aligned to lane labels (duplicates the swimlane, P13-style responsibility overlap). Unselected-lane alpha 0.65 (was 0.5 — sank into the dark bg), min bar width 1px (was 0.5)
 
 **Overview interactions:**
 | State | Action | Result |
@@ -680,7 +681,7 @@ Overview, swimlane turn bars, and minimap fill all reference this one object.
 
 | Element | Direction | Selection marker | Additional signals |
 |---------|-----------|------------------|--------------------|
-| Overview | Horizontal, 2-6px micro blocks | Viewport rect + 1px selected-turn indicator line (#111) | Scale labels, duration badge |
+| Overview | Horizontal, 2-8px micro blocks (canvas 28-48px by lane count) | Viewport rect + 1px selected-turn indicator line (#111) | Scale labels, duration badge |
 | Swimlane turn bar | Horizontal, 44px × width∝duration, height∝ctx% (v8) | Semi-transparent accent position cursor rect | Threshold dashed lines, cost track, event tracks |
 | Minimap fill | **Vertical**, height∝tokens, 60-70px wide | Hover highlight | Zone threshold dashed lines, bottom size label, **inline step labels** |
 
