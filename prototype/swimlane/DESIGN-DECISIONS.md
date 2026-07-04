@@ -296,6 +296,8 @@ collapsed 64px · expanded 88px
 15. **Legend 放 axis row 的 label 空白區，不佔 overview 空間**：overview row 塞 flex legend 會擠壓 minimap 並和 zoom badge 相撞。time axis 的 x 0–240（lane label 欄正上方）本來就是空的，legend 畫進 SVG 零版面成本
 16. **Per-lane cursor guide + lock ghost 在 production 刪除**：prototype 沒有跨 lane 色帶，guide 是唯一位置指示器所以必要；production 已有 `#wf-cursor` 色帶（P15），hover 位置又有亮 bars 1..N 的右緣可讀，guide/ghost 變成第二、三重複。設計規則 10「guide 唯一」在 production 的正確實現是「不需要 guide」
 17. **色帶維持只框選中 turn，不拉成 1..N**：累積範圍已由 bar spotlight（亮 1..N vs 0.2）編碼，色帶拉寬會蓋掉 spotlight 對比與 event dots，且跨 lane 時間對位需要窄標記。分工：**bar 亮度 = 累積範圍（lane 內），色帶 = 時間位置（跨 lane）**
+18. **Cache read 從 `#58a6ff` 改 teal `#39c5cf`**（使用者 feedback）：原色與 `--accent` 完全同值，overview 的 viewport 匡線、`#wf-cursor` 色帶、lane 選取指示都是 accent 藍 → 資料填色和選取 chrome 無法區分。規則：**accent 藍保留給位置/選取 chrome，資料填色不得使用**
+19. **字級下限 9px**（使用者 feedback「看不清楚」）：SVG 內 7–8px 全面上調 — lane label 9→11px、axis ticks/legend/zoom badge/overview canvas 8→10px、40/80 閾值與 event track labels 7→9px。prototype 的 7px 在展示截圖可讀，實機瀏覽不可讀
 
 事件偵測對齊真實 SSE 欄位（error/rate-limit/retry/compaction/cache-miss/ctx80/file-write/credential）；設計表中偵測不到的 perm-denied、git-commit、danger-bash、perm-prompt、unsafe-blocked **明文 defer**，等 server 訊號，不用 heuristic 造假事件。ctx80 只在**穿越**時觸發（非每個 >80% turn 都打點），否則長時間高水位 session 的 Context 軌會被淹沒。
 

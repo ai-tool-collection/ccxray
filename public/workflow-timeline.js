@@ -24,7 +24,7 @@ const WF_AXIS_H = 18, WF_PAD = 4, WF_MIN_TURN_PX = 2;
 const WF_MONO = "'SF Mono','Cascadia Code','Fira Code',monospace";
 
 // v8 bar segment colors: 高=滿 · 色=區 · 位=勢 · 線=界 · 點=事 · 橘=貴
-const WF_V8_CACHE_READ = '#58a6ff', WF_V8_CACHE_WRITE = '#f0883e', WF_V8_INPUT = '#8b5cf6';
+const WF_V8_CACHE_READ = '#39c5cf', WF_V8_CACHE_WRITE = '#f0883e', WF_V8_INPUT = '#8b5cf6';
 const WF_V8_COST = '#484f58', WF_V8_COST_OUTLIER = '#f0883e';
 
 // v8 event tracks: fixed order, exclusive color family, max 4 types/track.
@@ -350,7 +350,7 @@ function wfRenderLaneSvg(lane, laneIdx, W, xFn) {
   // Label
   var prefix = isSel ? '▶ ' : '';
   var ctxK = Math.round((lane.ctxWindow || 0) / 1000);
-  svg += '<text x="8" y="7" fill="var(--text)" style="font-size:9px;font-family:' + WF_MONO + '"><title>' + wfEsc(lane.name + ' · ' + (lane.model || '?') + ' · ' + ctxK + 'K') + '</title>' + wfEsc(prefix + lane.name) + '</text>';
+  svg += '<text x="8" y="10" fill="var(--text)" style="font-size:11px;font-family:' + WF_MONO + '"><title>' + wfEsc(lane.name + ' · ' + (lane.model || '?') + ' · ' + ctxK + 'K') + '</title>' + wfEsc(prefix + lane.name) + '</text>';
 
   // Track backgrounds (subtle separation from bar area)
   svg += '<rect x="' + WF_LABEL_W + '" y="' + costY + '" width="' + (W - WF_LABEL_W) + '" height="' + WF_COST_TRACK_H + '" fill="var(--surface)" opacity="0.5"/>';
@@ -360,8 +360,8 @@ function wfRenderLaneSvg(lane, laneIdx, W, xFn) {
   var y40 = WF_BAR_H * 0.6 + 0.5, y80 = WF_BAR_H * 0.2 + 0.5;
   svg += '<line x1="' + WF_LABEL_W + '" x2="' + (W - 18) + '" y1="' + y40 + '" y2="' + y40 + '" stroke="#8b949e" stroke-opacity="0.35" stroke-dasharray="3 3" shape-rendering="crispEdges"/>';
   svg += '<line x1="' + WF_LABEL_W + '" x2="' + (W - 18) + '" y1="' + y80 + '" y2="' + y80 + '" stroke="#f85149" stroke-opacity="0.40" stroke-dasharray="3 3" shape-rendering="crispEdges"/>';
-  svg += '<text x="' + (W - 4) + '" y="' + (y40 + 2.5) + '" text-anchor="end" fill="#8b949e" opacity="0.7" style="font-size:7px;font-family:' + WF_MONO + '">40</text>';
-  svg += '<text x="' + (W - 4) + '" y="' + (y80 + 2.5) + '" text-anchor="end" fill="#f85149" opacity="0.7" style="font-size:7px;font-family:' + WF_MONO + '">80</text>';
+  svg += '<text x="' + (W - 4) + '" y="' + (y40 + 3) + '" text-anchor="end" fill="#8b949e" opacity="0.7" style="font-size:9px;font-family:' + WF_MONO + '">40</text>';
+  svg += '<text x="' + (W - 4) + '" y="' + (y80 + 3) + '" text-anchor="end" fill="#f85149" opacity="0.7" style="font-size:9px;font-family:' + WF_MONO + '">80</text>';
 
   // Cross-lane vertical lines on main lane: model switch (gray dashed) + subagent spawn (purple)
   if (laneIdx === 0) {
@@ -446,7 +446,7 @@ function wfRenderLaneSvg(lane, laneIdx, W, xFn) {
   }
   if (isSel) {
     for (var li2 = 0; li2 < WF_TRACKS.length; li2++) {
-      svg += '<text x="' + (WF_LABEL_W - 6) + '" y="' + (evY + li2 * WF_EV_H + 6) + '" text-anchor="end" fill="' + WF_TRACKS[li2].color + '" opacity="0.8" style="font-size:7px;font-family:' + WF_MONO + '">' + WF_TRACKS[li2].label + '</text>';
+      svg += '<text x="' + (WF_LABEL_W - 6) + '" y="' + (evY + li2 * WF_EV_H + 7) + '" text-anchor="end" fill="' + WF_TRACKS[li2].color + '" opacity="0.8" style="font-size:9px;font-family:' + WF_MONO + '">' + WF_TRACKS[li2].label + '</text>';
     }
   }
 
@@ -542,21 +542,21 @@ function _wfRenderSvgContent(mainSvg, subSvg, canvas) {
   var ms = '';
   // v8 bar legend in the axis row's empty label zone (x 0..240 has no ticks)
   var legendY = WF_PAD + 12;
-  [[WF_V8_CACHE_READ, 'read', 8], [WF_V8_CACHE_WRITE, 'write', 62], [WF_V8_INPUT, 'input', 122]].forEach(function(lg) {
-    ms += '<rect x="' + lg[2] + '" y="' + (legendY - 7) + '" width="7" height="7" rx="1" fill="' + lg[0] + '"/>';
-    ms += '<text x="' + (lg[2] + 10) + '" y="' + legendY + '" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '">' + lg[1] + '</text>';
+  [[WF_V8_CACHE_READ, 'read', 8], [WF_V8_CACHE_WRITE, 'write', 66], [WF_V8_INPUT, 'input', 132]].forEach(function(lg) {
+    ms += '<rect x="' + lg[2] + '" y="' + (legendY - 8) + '" width="8" height="8" rx="1" fill="' + lg[0] + '"/>';
+    ms += '<text x="' + (lg[2] + 12) + '" y="' + legendY + '" fill="var(--dim)" style="font-size:10px;font-family:' + WF_MONO + '">' + lg[1] + '</text>';
   });
   var nTicks = Math.max(2, Math.min(12, Math.ceil(tRange / 1000 / 5)));
   var tickStep = tRange / nTicks;
   for (var i = 0; i <= nTicks; i++) {
     var tt = wfState.viewT0 + i * tickStep;
-    ms += '<text x="' + xFn(tt) + '" y="' + (WF_PAD + 12) + '" text-anchor="middle" fill="var(--dim)" style="font-size:8px;font-family:' + WF_MONO + '">' + wfFmtMin(tt, wfState.tMin) + '</text>';
+    ms += '<text x="' + xFn(tt) + '" y="' + (WF_PAD + 12) + '" text-anchor="middle" fill="var(--dim)" style="font-size:10px;font-family:' + WF_MONO + '">' + wfFmtMin(tt, wfState.tMin) + '</text>';
   }
   // ponytail: zoom badge on time axis when zoomed
   var isZoomed = wfState.viewT0 > wfState.tMin + 100 || wfState.viewT1 < wfState.tMax - 100;
   if (isZoomed) {
     var fullRange = wfState.tMax - wfState.tMin;
-    ms += '<text x="' + (W - 6) + '" y="' + (WF_PAD + 12) + '" text-anchor="end" fill="var(--accent)" style="font-size:8px;font-family:' + WF_MONO + ';cursor:pointer" ondblclick="wfState.viewT0=wfState.tMin;wfState.viewT1=wfState.tMax;wfDeferRender()">' + wfFmtDur(tRange) + ' / ' + wfFmtDur(fullRange) + ' ⟲</text>';
+    ms += '<text x="' + (W - 6) + '" y="' + (WF_PAD + 12) + '" text-anchor="end" fill="var(--accent)" style="font-size:10px;font-family:' + WF_MONO + ';cursor:pointer" ondblclick="wfState.viewT0=wfState.tMin;wfState.viewT1=wfState.tMax;wfDeferRender()">' + wfFmtDur(tRange) + ' / ' + wfFmtDur(fullRange) + ' ⟲</text>';
   }
   // Locked state: dim non-focused lanes (v8 cross-lane dim)
   var lockedLi = -1;
@@ -759,7 +759,7 @@ function wfRenderOverview(canvas) {
   ctx.globalAlpha = 1;
 
   // Scale labels
-  ctx.font = '8px SF Mono,Menlo,monospace';
+  ctx.font = '10px SF Mono,Menlo,monospace';
   ctx.fillStyle = dimColor;
   ctx.globalAlpha = 0.7;
   ctx.fillText('0', 2, MH - 2);
@@ -777,7 +777,7 @@ function wfRenderOverview(canvas) {
     ctx.strokeRect(vx + 0.5, 0.5, vw, MH - 1);
     // Duration badge
     var vpLabel = wfFmtDur(wfState.viewT1 - wfState.viewT0);
-    ctx.font = '8px SF Mono,Menlo,monospace';
+    ctx.font = '10px SF Mono,Menlo,monospace';
     var lw = ctx.measureText(vpLabel).width;
     var lx = vx + vw - lw - 1, lly = MH - 10;
     ctx.fillStyle = accentColor; ctx.globalAlpha = 0.85;

@@ -262,7 +262,7 @@ Design iteration history and rationale live in `prototype/swimlane/DESIGN-DECISI
 
 | Track | Height | Encoding |
 |-------|--------|----------|
-| ctx% bars | 44px | Bar height = context window %. Stacked fill: cache read `#58a6ff` (bottom) / cache write `#f0883e` / input `#8b5cf6` (top). 40% gray + 80% red dashed threshold lines with right-edge labels |
+| ctx% bars | 44px | Bar height = context window %. Stacked fill: cache read `#39c5cf` (bottom) / cache write `#f0883e` / input `#8b5cf6` (top). 40% gray + 80% red dashed threshold lines with right-edge labels. Cache read is teal, not accent blue `#58a6ff` — the accent is reserved for position/selection chrome (viewport border, `#wf-cursor` band, lane indicator) so data fill never masquerades as selection |
 | cost | 8px | Mini bars ∝ $ within lane; gray `#484f58`, orange `#f0883e` when > 3× lane median (outlier = the only preattentive cost signal — no cost event dot) |
 | events | 8px collapsed / 4×8px expanded | 4 fixed-order tracks × exclusive color family, max 4 types each: Faults (red) / Context (purple) / Mutations (green) / Safety (amber). Collapsed shows **Faults + Safety only** — a healthy session's collapsed track looks empty |
 
@@ -294,6 +294,8 @@ Deferred until server signals exist: perm-denied, git-commit, danger-bash, perm-
 Position marking is carried by the bar-highlight boundary (hover edge) plus the pre-existing `#wf-cursor` band (lock position). The prototype's per-lane cursor guide and lock-ghost line were **dropped in production** — they compensated for the prototype's lack of a cross-lane band (see DESIGN-DECISIONS.md dashboard-integration lessons). The band stays selected-turn-only: cumulative extent is the bar spotlight's job (within lane), the band's job is cross-lane time alignment.
 
 Legend (read/write/input) renders inside the main SVG's axis row label zone (x 0–240, otherwise empty) — zero layout cost, no competition with the overview minimap.
+
+Type scale (post-legibility pass, 2026-07-04): lane label 11px; axis ticks / legend / zoom badge / overview canvas 10px; threshold `40`/`80` and event-track labels 9px. Nothing in the SVG below 9px — 7–8px was unreadable on the user's display.
 
 ### v1.10 — Context-Zone Turn Coloring (superseded by v8 above; kept for minimap/overview/step-list rationale)
 
