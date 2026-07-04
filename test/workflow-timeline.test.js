@@ -224,6 +224,15 @@ describe('workflow-timeline data layer', () => {
     assert.equal(ctx.wfLaneCostMedian(lane), 0.09);
   });
 
+  it('wfOverviewHeight scales with lane count, clamped 28-48', () => {
+    const ctx = loadWfModule();
+    assert.equal(ctx.wfOverviewHeight(1), 28);   // floor: single lane
+    assert.equal(ctx.wfOverviewHeight(3), 28);   // 3*7+6=27 → floor
+    assert.equal(ctx.wfOverviewHeight(4), 34);
+    assert.equal(ctx.wfOverviewHeight(6), 48);   // 6*7+6=48 → exactly cap
+    assert.equal(ctx.wfOverviewHeight(18), 48);  // cap: many lanes
+  });
+
   it('lanes sorted by first turn receivedAt', () => {
     const ctx = loadWfModule();
     var entries = [
