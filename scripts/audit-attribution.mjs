@@ -78,20 +78,22 @@ if (deep) {
       // Longest single line: survives the line-number prefixes that Read tool
       // results carry inside the parent's stored history (whole-block substring
       // matching false-negatives on those).
-      // Delta-format siblings are not a blind spot: each stores only its NEW
-      // message suffix, so every message of a spliced conversation appears
-      // verbatim in exactly one file of the chain — scanning all raw siblings
-      // collectively covers the full history. The one gap is a pruned chain
-      // anchor, which surfaces as `unreadable`, not a false SUSPECT (codex R1).
+      // Delta-format siblings are mostly covered: each stores its NEW message
+      // suffix, so appended history appears verbatim in some file of the chain
+      // (snapshot anchors and forced-full turns duplicate content — that only
+      // helps the scan). The real gap is missing files: a pruned sibling could
+      // have held the needle, so an unmatched entry with unreadable siblings
+      // counts as unreadable, not SUSPECT (codex R1/R2).
       const line = blocks.join('\n').split('\n').sort((a, b) => b.length - a.length)[0]?.trim().slice(0, 120);
       if (!line || line.length < 20) { unreadable++; continue; }
       const needle = JSON.stringify(line).slice(1, -1);
-      let found = false;
+      let found = false, sibMissing = false;
       for (const sib of bySess.get(sid) || []) {
         if (sib.id === e.id) continue;
-        try { if (fs.readFileSync(path.join(logsDir, `${sib.id}_req.json`), 'utf8').includes(needle)) { found = true; break; } } catch {}
+        try { if (fs.readFileSync(path.join(logsDir, `${sib.id}_req.json`), 'utf8').includes(needle)) { found = true; break; } } catch { sibMissing = true; }
       }
       if (found) ok++;
+      else if (sibMissing) unreadable++;
       else { suspect++; console.log(`  SUSPECT ${e.id} → ${sid.slice(0, 8)} ${JSON.stringify(line.slice(0, 60))}`); }
     }
   }
