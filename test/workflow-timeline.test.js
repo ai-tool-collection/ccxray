@@ -438,6 +438,22 @@ describe('workflow-timeline incremental child-session filing (#137)', () => {
     assert.equal(ctx.wfState.childSids.has('cs2'), true); // childSids kept live
   });
 
+  it('live childSids refresh only adds direct children (grandchild / unrelated excluded)', () => {
+    const ctx = loadWfModule();
+    ctx.sessionsMap = new Map([['s1', { parentSessionId: null }]]);
+    ctx.allEntries = [mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 5, {})];
+    ctx.wfState = ctx.wfBuildState('s1');
+    // a grandchild (parent is a child of s1, not s1 itself) and an unrelated session
+    ctx.sessionsMap.set('cs2', { parentSessionId: 's1' });   // real child
+    ctx.sessionsMap.set('gc3', { parentSessionId: 'cs2' });  // grandchild
+    ctx.sessionsMap.set('other', { parentSessionId: 'zzz' }); // unrelated
+    ctx.wfAddEntry(mkEntry('g1', 'gc3', 'claude-opus-4-6', 3000, 2, {}));
+    ctx.wfAddEntry(mkEntry('o1', 'other', 'claude-opus-4-6', 4000, 2, {}));
+    assert.equal(ctx.wfState.childSids.has('gc3'), false); // parent != viewed session
+    assert.equal(ctx.wfState.childSids.has('other'), false);
+    assert.equal(ctx.wfState.lanes.find((l) => l.childSessionId === 'gc3'), undefined);
+  });
+
   it('incremental child filing matches a full rebuild (no lane jump on re-select)', () => {
     const ctx = loadWfModule();
     withChild(ctx);
