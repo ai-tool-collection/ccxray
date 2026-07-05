@@ -33,6 +33,14 @@ let currentSessionId = null;
 let lastMsgCount = 0;
 let sessionCounter = 0;
 
+// ── Socket→session affinity (#129) ─────────────────────────────────
+// All requests of one Claude Code process arrive over that process's
+// keep-alive connection pool. Remember which session last spoke on each
+// client socket; orphans reuse those sockets, so the mapping is stronger
+// evidence than temporal inference. WeakMap entries die with the socket,
+// and a hub restart clears map and sockets together — no staleness path.
+const socketSessions = new WeakMap();
+
 // ── Session metadata (cwd per session) ──────────────────────────────
 const sessionMeta = {}; // { sessionId: { cwd, lastSeenAt } }
 const activeRequests = {}; // sessionId → in-flight count
@@ -199,13 +207,14 @@ function linkParentSession(sessionId, parsedBody, isSubagentHint) {
   return null;
 }
 
-function detectSession(req) {
+function detectSession(req, socket) {
   const realId = extractSessionId(req);
 
   // Explicit session_id → authoritative.
   // isNewSession reflects "first time we have ever seen this sid",
   // not "different from the last sid" — switching A→B→A only banners A once.
   if (realId) {
+    if (socket) socketSessions.set(socket, realId);
     const meta = sessionMeta[realId] || (sessionMeta[realId] = {});
     const isNew = !meta.bannerPrinted;
     if (isNew) {
@@ -218,8 +227,16 @@ function detectSession(req) {
     return { sessionId: currentSessionId, isNewSession: isNew };
   }
 
+  // Socket affinity beats temporal inference for every orphan branch below:
+  // the orphan arrived on a socket some session's own traffic used, so it
+  // belongs to that session's process regardless of which session is hottest.
+  const bySocket = socket ? socketSessions.get(socket) : null;
+
   // Likely subagent → infer parent, never pollute global state
   if (isLikelySubagent(req)) {
+    if (bySocket && sessionMeta[bySocket]) {
+      return { sessionId: bySocket, isNewSession: false, inferred: true };
+    }
     const parent = inferParentSession();
     if (parent) return { sessionId: parent, isNewSession: false, inferred: true };
     // No recent session → fall back to currentSessionId only if it was active
@@ -234,6 +251,9 @@ function detectSession(req) {
   // Non-subagent without session_id: try parent attribution before creating a phantom
   // session. Title-gen and other internal requests that don't pass isLikelySubagent
   // (e.g. due to message count) still belong to an existing session when one is active.
+  if (bySocket && sessionMeta[bySocket]) {
+    return { sessionId: bySocket, isNewSession: false, inferred: true };
+  }
   const parent = inferParentSession();
   if (parent) return { sessionId: parent, isNewSession: false, inferred: true };
 

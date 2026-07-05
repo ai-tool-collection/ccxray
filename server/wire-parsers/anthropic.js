@@ -36,9 +36,11 @@ function extractUsage(resData) {
 }
 
 // ── detectSession ───────────────────────────────────────────
-// Anthropic path: session_id from parsedBody.metadata, delegate to store.detectSession
-function detectSession(_req, _headers, parsedBody) {
-  return store.detectSession(parsedBody);
+// Anthropic path: session_id from parsedBody.metadata, delegate to
+// store.detectSession. The client socket rides along for orphan
+// attribution by socket affinity (#129).
+function detectSession(req, _headers, parsedBody) {
+  return store.detectSession(parsedBody, req?.socket);
 }
 
 // Conversation identity: hash of the first message's text. All turns of one
