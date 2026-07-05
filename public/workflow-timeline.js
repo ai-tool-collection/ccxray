@@ -659,7 +659,7 @@ function _wfRenderSvgContent(mainSvg, subSvg, canvas) {
     ms += '<text x="' + xFn(tt) + '" y="' + (WF_PAD + 12) + '" text-anchor="middle" fill="var(--dim)" style="font-size:10px;font-family:' + WF_MONO + '">' + wfFmtMin(tt, wfState.tMin) + '</text>';
   }
   // ponytail: zoom badge on time axis when zoomed
-  var isZoomed = wfState.viewT0 > wfState.tMin + 100 || wfState.viewT1 < wfState.tMax - 100;
+  var isZoomed = wfIsZoomed();
   if (isZoomed) {
     var fullRange = wfState.tMax - wfState.tMin;
     ms += '<text x="' + (W - 6) + '" y="' + (WF_PAD + 12) + '" text-anchor="end" fill="var(--accent)" style="font-size:10px;font-family:' + WF_MONO + ';cursor:pointer" ondblclick="wfState.viewT0=wfState.tMin;wfState.viewT1=wfState.tMax;wfDeferRender()">' + wfFmtDur(tRange) + ' / ' + wfFmtDur(fullRange) + ' ⟲</text>';
@@ -714,6 +714,12 @@ var _wfHover = { lane: -1, tidx: -1 };
 
 function _wfLaneG(li) {
   return document.querySelector('#wf-timeline g.wf-lane[data-lane="' + li + '"]');
+}
+
+// Single source of truth for "is the timeline zoomed in from the full range?"
+// (100ms slop absorbs float drift). Replaces 5 inline duplicates.
+function wfIsZoomed() {
+  return wfState.viewT0 > wfState.tMin + 100 || wfState.viewT1 < wfState.tMax - 100;
 }
 
 function _wfLockInfo() {
@@ -897,7 +903,7 @@ function wfRenderOverview(canvas) {
   ctx.globalAlpha = 1;
 
   // Viewport rect when zoomed
-  var isZoomed = wfState.viewT0 > wfState.tMin + 100 || wfState.viewT1 < wfState.tMax - 100;
+  var isZoomed = wfIsZoomed();
   if (isZoomed) {
     var vx = x(wfState.viewT0), vw = Math.max(2, x(wfState.viewT1) - vx);
     // ponytail: no dimming overlay — viewport border alone signals the range
@@ -941,7 +947,7 @@ function _wfSetupMinimapInteractions(canvas, MW, MH, totalRange, x, isZoomed) {
     var rect = canvas.getBoundingClientRect();
     var pxToTime = function(cx) { return wfState.tMin + ((cx - rect.left) / rect.width) * totalRange; };
     var clickTime = pxToTime(e.clientX);
-    var zoomedNow = wfState.viewT0 > wfState.tMin + 100 || wfState.viewT1 < wfState.tMax - 100;
+    var zoomedNow = wfIsZoomed();
 
     if (zoomedNow) {
       var vx = x(wfState.viewT0), vw = x(wfState.viewT1) - vx;
@@ -987,7 +993,7 @@ function _wfSetupMinimapInteractions(canvas, MW, MH, totalRange, x, isZoomed) {
       window.removeEventListener('mousemove', onMoveB);
       window.removeEventListener('mouseup', onUpB);
       var t0 = Math.min(brushStart, brushEnd), t1 = Math.max(brushStart, brushEnd);
-      if (t1 - t0 > 1000) { wfState.viewT0 = t0; wfState.viewT1 = t1; wfDeferRender(); return; }
+      if (t1 - t0 >= 2000) { wfState.viewT0 = t0; wfState.viewT1 = t1; wfDeferRender(); return; }
       // ponytail: small brush = click → hit-test nearest turn
       var bestD = Infinity, bestTid = null, bestLane = null;
       for (var li = 0; li < wfState.lanes.length; li++) {
@@ -1570,7 +1576,7 @@ function wfRenderSteps(scrollToId) {
 
 function _wfSyncStepsHighlight(container) {
   if (!wfState) return;
-  var isZoomed = wfState.viewT0 > wfState.tMin + 100 || wfState.viewT1 < wfState.tMax - 100;
+  var isZoomed = wfIsZoomed();
   container.querySelectorAll('.wf-step-row').forEach(function(row) {
     var tid = row.getAttribute('data-tid');
     var inView = false;
@@ -1630,7 +1636,7 @@ function wfKeyHandler(key, e) {
       wfDeferRender();
       return true;
     }
-    var isZoomed = wfState.viewT0 > wfState.tMin + 100 || wfState.viewT1 < wfState.tMax - 100;
+    var isZoomed = wfIsZoomed();
     if (isZoomed) {
       wfState.viewT0 = wfState.tMin; wfState.viewT1 = wfState.tMax;
       wfDeferRender();

@@ -539,3 +539,17 @@ describe('workflow-timeline lock-turn convergence (#140)', () => {
     assert.equal(ctx.wfState.selectedTurnId, null);
   });
 });
+
+describe('workflow-timeline zoom predicate (#138)', () => {
+  it('wfIsZoomed reflects viewport vs full range (single source of truth)', () => {
+    const ctx = loadWfModule();
+    ctx.wfState = { tMin: 0, tMax: 100000, viewT0: 0, viewT1: 100000 };
+    assert.equal(ctx.wfIsZoomed(), false); // full range → not zoomed
+    ctx.wfState.viewT0 = 5000;
+    assert.equal(ctx.wfIsZoomed(), true); // zoomed from the left
+    ctx.wfState.viewT0 = 0; ctx.wfState.viewT1 = 90000;
+    assert.equal(ctx.wfIsZoomed(), true); // zoomed from the right
+    ctx.wfState.viewT0 = 50; ctx.wfState.viewT1 = 99950; // within the 100ms slop
+    assert.equal(ctx.wfIsZoomed(), false);
+  });
+});
