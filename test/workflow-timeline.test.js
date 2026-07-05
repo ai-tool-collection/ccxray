@@ -25,6 +25,8 @@ function loadWfModule() {
     isHttpStatusOk: (s) => s === 101 || (s >= 200 && s < 300),
     selectedSessionId: null,
     console,
+    Set,
+    Map,
   };
   vm.createContext(ctx);
   vm.runInContext(src, ctx);
@@ -381,5 +383,53 @@ describe('workflow-timeline section state sync (#136)', () => {
     ctx.wfState.selectedSection = 'cost-efficiency';
     ctx.wfRenderCurrentSection(); // lane summary branch, no turn locked
     assert.equal(ctx.selectedSection, 'cost-efficiency'); // RED before fix: stays 'timeline'
+  });
+});
+
+describe('workflow-timeline incremental child-session filing (#137)', () => {
+  function withChild(ctx) {
+    ctx.sessionsMap = new Map([
+      ['s1', { parentSessionId: null }],
+      ['cs2', { parentSessionId: 's1' }], // genuine child session of the parent we view
+    ]);
+    ctx.allEntries = [ mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 5, {}) ];
+    ctx.wfState = ctx.wfBuildState('s1');
+  }
+
+  it('wfBuildState exposes childSids so the incremental path can see child sessions', () => {
+    const ctx = loadWfModule();
+    withChild(ctx);
+    assert.ok(ctx.wfState.childSids instanceof Set); // RED before fix: undefined
+    assert.ok(ctx.wfState.childSids.has('cs2'));
+  });
+
+  it('wfAddEntry files a live same-model child-session turn into a child lane, not main', () => {
+    const ctx = loadWfModule();
+    withChild(ctx);
+    assert.equal(ctx.wfState.lanes.length, 1); // only main before the child streams
+
+    // Live child turn, SAME model as main → today (no child awareness) it is
+    // misfiled straight into the main lane; a full rebuild would give it a lane.
+    ctx.wfAddEntry(mkEntry('c1', 'cs2', 'claude-opus-4-6', 3000, 2, {}));
+
+    assert.equal(ctx.wfState.lanes[0].turns.length, 1); // main not polluted (RED: 2)
+    const child = ctx.wfState.lanes.find((l) => l.childSessionId === 'cs2');
+    assert.ok(child, 'dedicated child lane created'); // RED: undefined
+    assert.equal(child.turns.length, 1);
+    assert.equal(ctx.wfState.lanes.length, 2);
+    // turnIndex must point the new turn at its child lane, not main
+    assert.equal(ctx.wfState.turnIndex.get('c1').laneIdx, ctx.wfState.lanes.indexOf(child));
+  });
+
+  it('incremental child filing matches a full rebuild (no lane jump on re-select)', () => {
+    const ctx = loadWfModule();
+    withChild(ctx);
+    ctx.wfAddEntry(mkEntry('c1', 'cs2', 'claude-opus-4-6', 3000, 2, {}));
+
+    ctx.allEntries.push(mkEntry('c1', 'cs2', 'claude-opus-4-6', 3000, 2, {}));
+    const rebuilt = ctx.wfBuildState('s1');
+    assert.equal(rebuilt.lanes.length, ctx.wfState.lanes.length); // RED: 2 vs 1
+    const rc = rebuilt.lanes.find((l) => l.childSessionId === 'cs2');
+    assert.ok(rc && rc.turns.length === 1);
   });
 });

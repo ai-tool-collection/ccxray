@@ -290,6 +290,7 @@ function wfBuildState(sessionId) {
 
   return {
     lanes: lanes,
+    childSids: childSids,
     turnIndex: turnIndex,
     tMin: tMin, tMax: tMax,
     viewT0: tMin, viewT1: tMax,
@@ -308,6 +309,24 @@ function wfAddEntry(entry) {
   var end = ts + (parseFloat(entry.elapsed) || 0) * 1000;
   if (ts && ts < wfState.tMin) wfState.tMin = ts;
   if (end > wfState.tMax) wfState.tMax = end;
+
+  // Child-session turns get their own child-<sid> lane, mirroring wfInferLanes.
+  // Match/create by childSessionId (not .name — child .name is a display label).
+  if (wfState.childSids && wfState.childSids.has(entry.sessionId)) {
+    var csid = entry.sessionId;
+    var clane = wfState.lanes.find(function(l) { return l.childSessionId === csid; });
+    if (!clane) {
+      var clabel = csid.slice(0, 8);
+      if (entry.model) clabel = wfShortModel(entry.model) + ' ' + clabel;
+      clane = { name: clabel, turns: [], model: entry.model, ctxWindow: entry.maxContext || 0, spawnParent: null, childSessionId: csid };
+      wfState.lanes.push(clane);
+    }
+    clane.turns.push(entry);
+    clane._costMedian = null;
+    if (wfState.turnIndex) wfState.turnIndex.set(entry.id, { turn: entry, laneIdx: wfState.lanes.indexOf(clane) });
+    if (wfState.viewT1 >= wfState.tMax - 1000) wfState.viewT1 = wfState.tMax;
+    return { lanesChanged: wfState.lanes.length !== prevCount };
+  }
 
   var needsSub, key;
   if (entry.agentKey) {
