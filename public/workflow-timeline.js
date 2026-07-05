@@ -300,6 +300,25 @@ function wfBuildState(sessionId) {
   };
 }
 
+// tail-follow slop, aligned with wfIsZoomed's 100ms so a following-but-unzoomed
+// view is never misclassified as zoomed (closes the old ~900ms band).
+const WF_FOLLOW_SLOP = 100;
+
+// If the view was tracking the old tail, keep the newest turn in view. Slide a
+// fixed-span window (tail -f) rather than growing it, so recent bars keep their
+// width instead of compressing to the min-pixel floor. Degenerate fit-all
+// (span >= full range) just keeps viewT1 pinned to the tail.
+function _wfFollowTail(oldTMax) {
+  if (wfState.viewT1 < oldTMax - WF_FOLLOW_SLOP) return; // user scrolled back → leave it
+  var span = wfState.viewT1 - wfState.viewT0;
+  if (span < wfState.tMax - wfState.tMin) {
+    wfState.viewT1 = wfState.tMax;
+    wfState.viewT0 = Math.max(wfState.tMin, wfState.tMax - span);
+  } else {
+    wfState.viewT1 = wfState.tMax;
+  }
+}
+
 // ── Incremental Update ────────────────────────────────────────────────────
 function wfAddEntry(entry) {
   if (!wfState) return { lanesChanged: false };
@@ -307,6 +326,7 @@ function wfAddEntry(entry) {
 
   var ts = Number(entry.receivedAt) || 0;
   var end = ts + (parseFloat(entry.elapsed) || 0) * 1000;
+  var oldTMax = wfState.tMax;
   if (ts && ts < wfState.tMin) wfState.tMin = ts;
   if (end > wfState.tMax) wfState.tMax = end;
 
@@ -324,7 +344,7 @@ function wfAddEntry(entry) {
     clane.turns.push(entry);
     clane._costMedian = null;
     if (wfState.turnIndex) wfState.turnIndex.set(entry.id, { turn: entry, laneIdx: wfState.lanes.indexOf(clane) });
-    if (wfState.viewT1 >= wfState.tMax - 1000) wfState.viewT1 = wfState.tMax;
+    _wfFollowTail(oldTMax);
     return { lanesChanged: wfState.lanes.length !== prevCount };
   }
 
@@ -353,7 +373,7 @@ function wfAddEntry(entry) {
     if (wfState.turnIndex) wfState.turnIndex.set(entry.id, { turn: entry, laneIdx: 0 });
   }
 
-  if (wfState.viewT1 >= wfState.tMax - 1000) wfState.viewT1 = wfState.tMax;
+  _wfFollowTail(oldTMax);
   return { lanesChanged: wfState.lanes.length !== prevCount };
 }
 

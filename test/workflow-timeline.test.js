@@ -553,3 +553,38 @@ describe('workflow-timeline zoom predicate (#138)', () => {
     assert.equal(ctx.wfIsZoomed(), false);
   });
 });
+
+describe('workflow-timeline tail-follow sliding window (#138 Fix B)', () => {
+  it('slides a fixed-span window instead of expanding while following the tail', () => {
+    const ctx = loadWfModule();
+    ctx.allEntries = [mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 10, {})]; // ends at 11000
+    ctx.wfState = ctx.wfBuildState('s1'); // tMin=1000, tMax=11000, view=[1000,11000] (at tail)
+    ctx.wfAddEntry(mkEntry('t2', 's1', 'claude-opus-4-6', 21000, 10, {})); // tMax→31000
+    assert.equal(ctx.wfState.viewT1, ctx.wfState.tMax); // tracks the tail (31000)
+    assert.equal(ctx.wfState.viewT1 - ctx.wfState.viewT0, 10000); // span frozen (RED: 30000)
+    assert.equal(ctx.wfState.viewT0, 21000); // slid to tMax - span (RED: 1000)
+  });
+
+  it('does not yank a scrolled-back (non-following) view', () => {
+    const ctx = loadWfModule();
+    ctx.allEntries = [mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 10, {})];
+    ctx.wfState = ctx.wfBuildState('s1'); // tMax=11000
+    ctx.wfState.viewT0 = 1000; ctx.wfState.viewT1 = 4000; // user zoomed to an early window
+    ctx.wfAddEntry(mkEntry('t2', 's1', 'claude-opus-4-6', 21000, 10, {})); // tMax→31000
+    assert.equal(ctx.wfState.viewT0, 1000);
+    assert.equal(ctx.wfState.viewT1, 4000); // untouched — not at the tail
+  });
+
+  it('child-lane live turns also tail-follow with a fixed span', () => {
+    const ctx = loadWfModule();
+    ctx.sessionsMap = new Map([
+      ['s1', { parentSessionId: null }],
+      ['cs2', { parentSessionId: 's1' }],
+    ]);
+    ctx.allEntries = [mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 10, {})];
+    ctx.wfState = ctx.wfBuildState('s1'); // tMax=11000, view=[1000,11000]
+    ctx.wfAddEntry(mkEntry('c1', 'cs2', 'claude-opus-4-6', 21000, 10, {})); // child turn, tMax→31000
+    assert.equal(ctx.wfState.viewT1, ctx.wfState.tMax); // RED: stays 11000 (old guard false)
+    assert.equal(ctx.wfState.viewT1 - ctx.wfState.viewT0, 10000); // fixed span
+  });
+});
