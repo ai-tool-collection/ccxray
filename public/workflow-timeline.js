@@ -144,7 +144,7 @@ function _wfBarSpan(t) {
 var WF_MAIN_AGENT_KEYS = { 'orchestrator': 1, 'sdk-agent': 1, 'default': 1 };
 
 function _wfPushToSubLane(laneMap, key, entry) {
-  if (!laneMap.has(key)) laneMap.set(key, { name: key, turns: [], model: entry.model, ctxWindow: entry.maxContext || 0, spawnParent: null, agentKey: entry.agentKey || null, agentLabel: entry.agentLabel || null, convId: entry.convId || null });
+  if (!laneMap.has(key)) laneMap.set(key, { name: key, key: key, turns: [], model: entry.model, ctxWindow: entry.maxContext || 0, spawnParent: null, agentKey: entry.agentKey || null, agentLabel: entry.agentLabel || null, convId: entry.convId || null });
   laneMap.get(key).turns.push(entry);
 }
 
@@ -159,7 +159,7 @@ function wfInferLanes(entries, childEntries) {
   if (!entries.length && !childEntries.length) return [];
 
   var laneMap = new Map();
-  var mainLane = { name: 'main', turns: [], model: null, ctxWindow: 0, spawnParent: null };
+  var mainLane = { name: 'main', key: 'main', turns: [], model: null, ctxWindow: 0, spawnParent: null };
   laneMap.set('main', mainLane);
   var orchCtx = 0;
 
@@ -209,7 +209,7 @@ function wfInferLanes(entries, childEntries) {
       var label = sid.slice(0, 8);
       var m = turns[0]?.model;
       if (m) label = wfShortModel(m) + ' ' + label;
-      laneMap.set('child-' + sid, { name: label, turns: turns, model: m, ctxWindow: turns[0]?.maxContext || 0, spawnParent: null, childSessionId: sid });
+      laneMap.set('child-' + sid, { name: label, key: 'child-' + sid, turns: turns, model: m, ctxWindow: turns[0]?.maxContext || 0, spawnParent: null, childSessionId: sid });
     });
   }
 
@@ -318,7 +318,7 @@ function wfAddEntry(entry) {
     if (!clane) {
       var clabel = csid.slice(0, 8);
       if (entry.model) clabel = wfShortModel(entry.model) + ' ' + clabel;
-      clane = { name: clabel, turns: [], model: entry.model, ctxWindow: entry.maxContext || 0, spawnParent: null, childSessionId: csid };
+      clane = { name: clabel, key: 'child-' + csid, turns: [], model: entry.model, ctxWindow: entry.maxContext || 0, spawnParent: null, childSessionId: csid };
       wfState.lanes.push(clane);
     }
     clane.turns.push(entry);
@@ -338,9 +338,9 @@ function wfAddEntry(entry) {
     key = _wfSubLaneKey('subagent-' + wfShortModel(entry.model), entry);
   }
   if (needsSub) {
-    var lane = wfState.lanes.find(function(l) { return l.name === key; });
+    var lane = wfState.lanes.find(function(l) { return l.key === key; });
     if (!lane) {
-      lane = { name: key, turns: [], model: entry.model, ctxWindow: entry.maxContext || 0, spawnParent: null, agentKey: entry.agentKey || null, agentLabel: entry.agentLabel || null, convId: entry.convId || null };
+      lane = { name: key, key: key, turns: [], model: entry.model, ctxWindow: entry.maxContext || 0, spawnParent: null, agentKey: entry.agentKey || null, agentLabel: entry.agentLabel || null, convId: entry.convId || null };
       wfState.lanes.push(lane);
     }
     lane.turns.push(entry);
@@ -380,7 +380,7 @@ function wfLaneSummary(lane) {
 // ── Lane Height Helpers ───────────────────────────────────────────────────
 function _wfLaneHeight(laneIdx) {
   if (!wfState || laneIdx >= wfState.lanes.length) return WF_LANE_H;
-  return wfState.selectedLane?.name === wfState.lanes[laneIdx].name ? WF_LANE_H_SEL : WF_LANE_H;
+  return wfState.selectedLane?.key === wfState.lanes[laneIdx].key ? WF_LANE_H_SEL : WF_LANE_H;
 }
 function _wfTotalLanesHeight() {
   if (!wfState) return 0;
@@ -401,7 +401,7 @@ function wfDotSvg(shape, color, x, y, tidx) {
 }
 
 function wfRenderLaneSvg(lane, laneIdx, W, xFn) {
-  var isSel = wfState.selectedLane?.name === lane.name;
+  var isSel = wfState.selectedLane?.key === lane.key;
   var laneH = isSel ? WF_LANE_H_SEL : WF_LANE_H;
   var boxH = laneH - WF_LANE_GAP;
   var costY = WF_BAR_H, evY = WF_BAR_H + WF_COST_TRACK_H;
@@ -874,7 +874,7 @@ function wfRenderOverview(canvas) {
 
   for (var li = 0; li < lanes.length; li++) {
     var ly = startY + li * laneStep;
-    var isSel = wfState.selectedLane?.name === lanes[li].name;
+    var isSel = wfState.selectedLane?.key === lanes[li].key;
     for (var ti = 0; ti < lanes[li].turns.length; ti++) {
       var t = lanes[li].turns[ti];
       var ts = Number(t.receivedAt) || 0;

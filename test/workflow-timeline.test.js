@@ -433,3 +433,65 @@ describe('workflow-timeline incremental child-session filing (#137)', () => {
     assert.ok(rc && rc.turns.length === 1);
   });
 });
+
+describe('workflow-timeline stable lane .key (#139)', () => {
+  it('every lane carries a stable .key = its map key, distinct from display .name', () => {
+    const ctx = loadWfModule();
+    var lanes = ctx.wfInferLanes(
+      [mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 5, {})],
+      [mkEntry('c1', 'sid-aaaa', 'claude-haiku-4-5', 2000, 2, {})]
+    );
+    var main = lanes.find((l) => l.name === 'main');
+    assert.equal(main.key, 'main'); // RED before fix: undefined
+    var child = lanes.find((l) => l.childSessionId === 'sid-aaaa');
+    assert.equal(child.key, 'child-sid-aaaa'); // stable map key
+    assert.notEqual(child.key, child.name); // .name is the display label
+  });
+
+  it('sub-lane .key equals its map key (the string wfAddEntry find relies on)', () => {
+    const ctx = loadWfModule();
+    var lanes = ctx.wfInferLanes([
+      mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 5, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+      mkEntry('e1', 's1', 'claude-sonnet-4-6', 2000, 3, { agentKey: 'explore', agentLabel: 'Explore' }),
+    ], []);
+    var sub = lanes.find((l) => l.agentKey === 'explore');
+    assert.equal(sub.key, 'agent-explore'); // RED before fix: undefined
+    assert.equal(sub.key, sub.name); // today they coincide — the fragile coupling
+  });
+
+  it('colliding child display labels stay distinct by .key (no multi-lane selection)', () => {
+    const ctx = loadWfModule();
+    // two child sessions, same model + same first-8 hex → identical display .name
+    var lanes = ctx.wfInferLanes(
+      [mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 5, {})],
+      [
+        mkEntry('c1', 'abcd1234-one', 'claude-haiku-4-5', 2000, 2, {}),
+        mkEntry('c2', 'abcd1234-two', 'claude-haiku-4-5', 3000, 2, {}),
+      ]
+    );
+    var a = lanes.find((l) => l.childSessionId === 'abcd1234-one');
+    var b = lanes.find((l) => l.childSessionId === 'abcd1234-two');
+    assert.equal(a.name, b.name); // labels collide (same model + first-8 hex)
+    assert.notEqual(a.key, b.key); // RED before fix: undefined === undefined
+    // the render-time selection predicate (selectedLane.key === lane.key) must
+    // match exactly one lane, not two.
+    var selected = lanes.filter((l) => a.key === l.key);
+    assert.equal(selected.length, 1); // RED before fix: 3 (all keys undefined)
+  });
+
+  it('wfAddEntry appends to the right sub-lane even if .name later becomes a label', () => {
+    const ctx = loadWfModule();
+    ctx.allEntries = [
+      mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 5, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+      mkEntry('e1', 's1', 'claude-sonnet-4-6', 2000, 3, { agentKey: 'explore', agentLabel: 'Explore', convId: 'aaaa1111' }),
+    ];
+    ctx.wfState = ctx.wfBuildState('s1');
+    var sub = ctx.wfState.lanes.find((l) => l.agentKey === 'explore');
+    // simulate a future world where sub .name is a display label ≠ its key
+    sub.name = 'Explore #1';
+    ctx.wfAddEntry(mkEntry('e2', 's1', 'claude-sonnet-4-6', 5000, 2, { agentKey: 'explore', agentLabel: 'Explore', convId: 'aaaa1111' }));
+    // find-by-key must still hit the existing lane → no duplicate
+    assert.equal(ctx.wfState.lanes.length, 2); // RED before fix: 3 (find-by-name missed)
+    assert.equal(sub.turns.length, 2);
+  });
+});
