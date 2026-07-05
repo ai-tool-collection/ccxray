@@ -178,6 +178,14 @@ function linkParentSession(sessionId, parsedBody, isSubagentHint) {
   const meta = sessionMeta[sessionId];
   if (!meta) return null;
   if (meta.parentSessionId) return meta.parentSessionId;
+  // A session that has ever shown a cwd is an established top-level session —
+  // never re-parent it. Anthropic subagent kickoffs carry the PARENT's own
+  // session_id (no cwd, ≤2 msgs), so without this guard every spawn re-qualifies
+  // the parent itself for linking and inferParentSession may pick another
+  // project's inflight session (real incident: d1997e5f → 3e419704). An explicit
+  // wire-level hint (Codex subagent header) still overrides — those child
+  // sessions never carry a cwd of their own.
+  if (!isSubagentHint && meta.cwd) return null;
   // Unlike isLikelySubagent (which screens orphan requests without session_id),
   // this handles sessions WITH their own session_id. Tools and metadata guards
   // are intentionally absent because Codex subagents may carry both.
@@ -214,8 +222,13 @@ function detectSession(req) {
   if (isLikelySubagent(req)) {
     const parent = inferParentSession();
     if (parent) return { sessionId: parent, isNewSession: false, inferred: true };
-    // No recent session → keep as-is, don't create spurious session
-    return { sessionId: currentSessionId || 'direct-api', isNewSession: false, inferred: true };
+    // No recent session → fall back to currentSessionId only if it was active
+    // within the inference window. An unbounded fallback silently glued orphans
+    // arriving hours later onto a dead session (cross-project when the user had
+    // switched). Stale → direct-api sentinel, don't create a spurious session.
+    const curMeta = currentSessionId ? sessionMeta[currentSessionId] : null;
+    const curFresh = curMeta?.lastSeenAt && Date.now() - curMeta.lastSeenAt <= 30000;
+    return { sessionId: curFresh ? currentSessionId : 'direct-api', isNewSession: false, inferred: true };
   }
 
   // Non-subagent without session_id: try parent attribution before creating a phantom

@@ -41,6 +41,19 @@ function detectSession(_req, _headers, parsedBody) {
   return store.detectSession(parsedBody);
 }
 
+// Conversation identity: hash of the first message's text. All turns of one
+// subagent instance share messages[0] verbatim (history only appends), while
+// parallel instances of the same agent type differ in their task prompt —
+// this is what lets the swimlane split N concurrent Explore agents into N
+// lanes (#117). Null when messages[0] has no text (never key lanes on md5('')).
+function computeConvId(parsedBody) {
+  const c = parsedBody?.messages?.[0]?.content;
+  const txt = typeof c === 'string' ? c
+    : Array.isArray(c) ? c.filter(b => b?.type === 'text' && typeof b.text === 'string').map(b => b.text).join('\n') : '';
+  if (!txt) return null;
+  return crypto.createHash('md5').update(txt).digest('hex').slice(0, 8);
+}
+
 function buildEntryFields(ctx) {
   const { parsedBody } = ctx;
   const usage = ctx.usage || extractUsage(ctx.events) || null;
@@ -70,6 +83,7 @@ function buildEntryFields(ctx) {
     coreHash: ctx.coreHash || null,
     agentKey: ctx.agentKey || null,
     agentLabel: ctx.agentLabel || null,
+    convId: computeConvId(parsedBody),
     thinkingStripped: ctx.thinkingStripped,
     sessionId: ctx.sessionId,
   };

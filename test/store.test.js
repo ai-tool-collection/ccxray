@@ -242,6 +242,22 @@ describe('store', () => {
       assert.equal(r.sessionId, 'aaa-111');
     });
 
+    it('orphan does not stick to a stale currentSessionId (falls back to direct-api)', () => {
+      // currentSessionId had no time bound: an orphan arriving hours after the
+      // last session activity was silently attributed to that dead session —
+      // across projects if the user had switched. Stale fallback must go to
+      // the direct-api sentinel instead.
+      const store = require('../server/store');
+      resetSessionState(store);
+
+      store.detectSession(mainReq('dead-0a1b', 3));
+      Object.assign(store.sessionMeta['dead-0a1b'], { cwd: '/old', lastSeenAt: Date.now() - 3600000 });
+      store.activeRequests['dead-0a1b'] = 0;
+
+      const r = store.detectSession({ messages: [{ role: 'user', content: 'task' }] });
+      assert.equal(r.sessionId, 'direct-api');
+    });
+
     it('never pollutes currentSessionId from subagent path', () => {
       const store = require('../server/store');
       resetSessionState(store);
@@ -367,6 +383,31 @@ describe('store', () => {
       const parent = store.linkParentSession('normal-ddd', normalBody, false);
       assert.equal(parent, null);
       assert.equal(store.sessionMeta['normal-ddd'].parentSessionId, undefined);
+    });
+
+    it('never re-parents an established top-level session (meta.cwd set)', () => {
+      // Real incident (d1997e5f → 3e419704): a long-running project session's own
+      // subagent kickoffs carry the SAME session_id with no cwd and 1 message.
+      // After a hub restart wiped parentSessionId, one such kickoff re-qualified
+      // the whole session for linking and inferParentSession picked another
+      // project's inflight session. A session that has ever shown a cwd is
+      // top-level — it must never be re-parented.
+      const store = require('../server/store');
+      resetSessionState(store);
+
+      // Another project's session, currently inflight
+      store.detectSession(mainReq('bbb2-feed', 3));
+      store.activeRequests['bbb2-feed'] = 1;
+      Object.assign(store.sessionMeta['bbb2-feed'], { cwd: '/proj-b', lastSeenAt: Date.now() });
+
+      // Established session: cwd known (e.g. restored from index after hub restart)
+      store.sessionMeta['aaa1-feed'] = { cwd: '/proj-a', lastSeenAt: Date.now() - 10000, bannerPrinted: true };
+
+      // Its own subagent kickoff: same session_id, no cwd, 1 message
+      const kick = { metadata: { session_id: 'aaa1-feed' }, messages: [{ role: 'user', content: 'task' }] };
+      const parent = store.linkParentSession('aaa1-feed', kick, undefined);
+      assert.equal(parent, null);
+      assert.equal(store.sessionMeta['aaa1-feed'].parentSessionId, undefined);
     });
 
     it('does not link when no parent session is active', () => {

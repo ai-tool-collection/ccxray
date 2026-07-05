@@ -144,8 +144,15 @@ function _wfBarSpan(t) {
 var WF_MAIN_AGENT_KEYS = { 'orchestrator': 1, 'sdk-agent': 1, 'default': 1 };
 
 function _wfPushToSubLane(laneMap, key, entry) {
-  if (!laneMap.has(key)) laneMap.set(key, { name: key, turns: [], model: entry.model, ctxWindow: entry.maxContext || 0, spawnParent: null, agentKey: entry.agentKey || null, agentLabel: entry.agentLabel || null });
+  if (!laneMap.has(key)) laneMap.set(key, { name: key, turns: [], model: entry.model, ctxWindow: entry.maxContext || 0, spawnParent: null, agentKey: entry.agentKey || null, agentLabel: entry.agentLabel || null, convId: entry.convId || null });
   laneMap.get(key).turns.push(entry);
+}
+
+// Sub-lane key: one lane per conversation. convId (hash of messages[0], set by
+// the server) separates N parallel instances of the same agent type (#117);
+// without it, same-key entries collapse into one shared lane (legacy data).
+function _wfSubLaneKey(base, entry) {
+  return entry.convId ? base + ':' + entry.convId : base;
 }
 
 function wfInferLanes(entries, childEntries) {
@@ -164,13 +171,13 @@ function wfInferLanes(entries, childEntries) {
       // Agent-identity classification (server-detected, authoritative):
       // main-agent keys → main lane regardless of model or isSubagent flag
       if (!WF_MAIN_AGENT_KEYS[e.agentKey]) {
-        _wfPushToSubLane(laneMap, 'agent-' + e.agentKey, e);
+        _wfPushToSubLane(laneMap, _wfSubLaneKey('agent-' + e.agentKey, e), e);
         sub = true;
       }
     } else {
       // Fallback heuristics for entries without agent identity (old data,
       // requests without a system prompt)
-      var subKey = 'subagent-' + wfShortModel(e.model);
+      var subKey = _wfSubLaneKey('subagent-' + wfShortModel(e.model), e);
       if (e.isSubagent || (mainLane.model && e.model !== mainLane.model)) {
         _wfPushToSubLane(laneMap, subKey, e);
         sub = true;
@@ -305,16 +312,16 @@ function wfAddEntry(entry) {
   var needsSub, key;
   if (entry.agentKey) {
     needsSub = !WF_MAIN_AGENT_KEYS[entry.agentKey];
-    key = 'agent-' + entry.agentKey;
+    key = _wfSubLaneKey('agent-' + entry.agentKey, entry);
   } else {
     var mainModel = wfState.lanes[0]?.model;
     needsSub = entry.isSubagent || (mainModel && entry.model !== mainModel);
-    key = 'subagent-' + wfShortModel(entry.model);
+    key = _wfSubLaneKey('subagent-' + wfShortModel(entry.model), entry);
   }
   if (needsSub) {
     var lane = wfState.lanes.find(function(l) { return l.name === key; });
     if (!lane) {
-      lane = { name: key, turns: [], model: entry.model, ctxWindow: entry.maxContext || 0, spawnParent: null, agentKey: entry.agentKey || null, agentLabel: entry.agentLabel || null };
+      lane = { name: key, turns: [], model: entry.model, ctxWindow: entry.maxContext || 0, spawnParent: null, agentKey: entry.agentKey || null, agentLabel: entry.agentLabel || null, convId: entry.convId || null };
       wfState.lanes.push(lane);
     }
     lane.turns.push(entry);
@@ -395,7 +402,7 @@ function wfRenderLaneSvg(lane, laneIdx, W, xFn) {
   var ctxK = Math.round((lane.ctxWindow || 0) / 1000);
   var dispName = lane.childSessionId
     ? (lane.agentLabel || wfShortModel(lane.model)) + ' ' + lane.childSessionId.slice(0, 8)
-    : (laneIdx === 0 ? lane.name : (lane.agentLabel || lane.name));
+    : (laneIdx === 0 ? lane.name : (lane.agentLabel || lane.name) + (lane.convId ? ' ' + lane.convId.slice(0, 4) : ''));
   var fullTitle = wfEsc(lane.name + ' · ' + (lane.agentLabel || '?') + ' · ' + (lane.model || '?') + ' · ' + ctxK + 'K');
   svg += '<text x="8" y="12" fill="var(--text)" style="font-size:11px;font-family:' + WF_MONO + '"><title>' + fullTitle + '</title>' + wfEsc(prefix + dispName) + '</text>';
   svg += '<text x="8" y="26" fill="var(--dim)" style="font-size:10px;font-family:' + WF_MONO + '">' + wfEsc(wfShortModel(lane.model) + ' · ' + ctxK + 'K') + '</text>';

@@ -110,6 +110,25 @@ test('anthropic Skill message → buildEntryFields → buildIndexLine persists c
   assert.deepEqual(back.skillCalls, { 'code-review': 1 });
 });
 
+test('anthropic convId: stable across turns of one conversation, distinct across instances, null for no text', () => {
+  const base = { provider: 'anthropic', transport: 'sse', proxyRes: { statusCode: 200 }, usage: { input_tokens: 1, output_tokens: 1 }, sessionId: 's1' };
+  const mk = (messages) => getParser('anthropic').buildEntryFields({ ...base, parsedBody: { model: 'claude-sonnet-4-6', messages } });
+  const kick = [{ role: 'user', content: [{ type: 'text', text: 'shared reminder' }, { type: 'text', text: 'task A' }] }];
+  const turn2 = [...kick, { role: 'assistant', content: [{ type: 'text', text: 'ok' }] }, { role: 'user', content: 'go on' }];
+  const otherKick = [{ role: 'user', content: [{ type: 'text', text: 'shared reminder' }, { type: 'text', text: 'task B' }] }];
+  const a1 = mk(kick), a2 = mk(turn2), b1 = mk(otherKick);
+  assert.ok(a1.convId && /^[0-9a-f]{8}$/.test(a1.convId));
+  assert.equal(a1.convId, a2.convId, 'same conversation keeps its convId as history grows');
+  assert.notEqual(a1.convId, b1.convId, 'different task prompts → different convId');
+  // no text in messages[0] → null (never md5(''))
+  assert.equal(mk([{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x' }] }]).convId, null);
+  assert.equal(mk([]).convId, null);
+  // survives the INDEX_FIELDS projection
+  assert.ok(INDEX_FIELDS.includes('convId'));
+  const back = JSON.parse(buildIndexLine({ id: 'X', ts: 't', status: 200, isSSE: true, receivedAt: 1, ...a1 }));
+  assert.equal(back.convId, a1.convId);
+});
+
 test('T9: anthropic.registerPromptVersion returns coreHash', () => {
   const longB2 = 'You are Claude Code, Anthropic\'s official CLI for Claude. ' + 'x'.repeat(600);
   const parsedBody = {
