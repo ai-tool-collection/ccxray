@@ -554,6 +554,33 @@ describe('workflow-timeline zoom predicate (#138)', () => {
   });
 });
 
+describe('workflow-timeline focus dim follows selectedLane', () => {
+  function twoLanes(ctx) {
+    ctx.allEntries = [
+      mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 5, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+      mkEntry('e1', 's1', 'claude-sonnet-4-6', 2000, 3, { agentKey: 'explore', agentLabel: 'Explore' }),
+    ];
+    ctx.wfState = ctx.wfBuildState('s1');
+  }
+
+  // The cross-lane dim must key off selectedLane, not selectedTurnId — so
+  // selecting a lane (even with no turn locked) recedes the others consistently.
+  it('_wfFocusLaneIdx tracks selectedLane regardless of lock', () => {
+    const ctx = loadWfModule();
+    twoLanes(ctx);
+    // default: main (lanes[0]) selected, no turn locked
+    assert.equal(ctx.wfState.selectedTurnId, null);
+    assert.equal(ctx._wfFocusLaneIdx(), 0);
+    // select the subagent lane WITHOUT locking a turn — focus must follow it
+    ctx.wfState.selectedLane = ctx.wfState.lanes[1];
+    ctx.wfState.selectedTurnId = null;
+    assert.equal(ctx._wfFocusLaneIdx(), 1); // RED before fix: helper undefined
+    // no selection → no focus
+    ctx.wfState.selectedLane = null;
+    assert.equal(ctx._wfFocusLaneIdx(), -1);
+  });
+});
+
 describe('workflow-timeline tail-follow sliding window (#138 Fix B)', () => {
   it('slides a fixed-span window instead of expanding while following the tail', () => {
     const ctx = loadWfModule();

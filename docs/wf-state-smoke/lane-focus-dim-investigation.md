@@ -1,6 +1,6 @@
 # Investigation — "selecting a subagent loses the contrast"
 
-**Date:** 2026-07-05 · **Status:** diagnosed, fix decided (not yet implemented)
+**Date:** 2026-07-05 · **Status:** diagnosed → fixed & verified
 **Area:** `public/workflow-timeline.js` swimlane focus/dim · related to the workflow-ux state audit (#136–140)
 
 ## Symptom (user report)
@@ -93,7 +93,19 @@ heavy for a browsing selection. The `:hover` un-dim (currently `0.7`) stays.
 - ⚠️ Plain browsing-selection now dims the rest too; 0.55 (vs 0.35) keeps unfocused lanes legible
   so the view doesn't feel over-suppressed.
 
-## Status
+## Implemented
 
-Diagnosed and decided; **not implemented**. Candidate for a follow-up `workflow-ux` commit/issue
-alongside the audit branch `fix/wf-state-audit`.
+Both changes landed on `fix/wf-state-audit`:
+- `workflow-timeline.js`: new `_wfFocusLaneIdx()` (single source of truth); the render-time
+  `laneCls` and the hover-clear `_wfClearSpotlight` both dim by focus lane instead of locked turn.
+  The dead `lockedLi` computation is removed.
+- `style.css`: `.wf-lane.dim` opacity `0.35 → 0.55`.
+
+Verified in-browser: clicking a subagent lane's empty chart area (no turn locked) now sets
+`_wfFocusLaneIdx()` to that lane, the selected lane is undimmed, and every other lane carries
+`.dim` at computed `opacity: 0.55`:
+
+![subagent selected, others dimmed at 0.55, no lock](DIM-subagent-selected-no-lock.png)
+
+Compare with `SEL-2-subagent-clicked.png` above (pre-fix), where selecting a subagent left all
+lanes at full opacity and the contrast vanished.

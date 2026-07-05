@@ -684,13 +684,10 @@ function _wfRenderSvgContent(mainSvg, subSvg, canvas) {
     var fullRange = wfState.tMax - wfState.tMin;
     ms += '<text x="' + (W - 6) + '" y="' + (WF_PAD + 12) + '" text-anchor="end" fill="var(--accent)" style="font-size:10px;font-family:' + WF_MONO + ';cursor:pointer" ondblclick="wfState.viewT0=wfState.tMin;wfState.viewT1=wfState.tMax;wfDeferRender()">' + wfFmtDur(tRange) + ' / ' + wfFmtDur(fullRange) + ' ⟲</text>';
   }
-  // Locked state: dim non-focused lanes (v8 cross-lane dim)
-  var lockedLi = -1;
-  if (wfState.selectedTurnId && wfState.turnIndex) {
-    var lockHit = wfState.turnIndex.get(wfState.selectedTurnId);
-    if (lockHit) lockedLi = lockHit.laneIdx;
-  }
-  var laneCls = function(li) { return 'wf-lane' + (lockedLi >= 0 && lockedLi !== li ? ' dim' : ''); };
+  // Cross-lane dim recedes every lane except the focused (selected) one, so a
+  // plain lane-select dims the others just like a locked turn does.
+  var focusLi = _wfFocusLaneIdx();
+  var laneCls = function(li) { return 'wf-lane' + (focusLi >= 0 && focusLi !== li ? ' dim' : ''); };
 
   var mainLaneY = WF_PAD + WF_AXIS_H;
   ms += '<g class="' + laneCls(0) + '" data-lane="0" transform="translate(0,' + mainLaneY + ')">' + wfRenderLaneSvg(lanes[0], 0, W, xFn) + '</g>';
@@ -742,6 +739,14 @@ function wfIsZoomed() {
   return wfState.viewT0 > wfState.tMin + 100 || wfState.viewT1 < wfState.tMax - 100;
 }
 
+// Focused lane index = the selected lane. Cross-lane dim keys off this (not the
+// locked turn) so selecting any lane — the default main or a clicked subagent —
+// consistently recedes the others.
+function _wfFocusLaneIdx() {
+  if (!wfState || !wfState.selectedLane) return -1;
+  return wfState.lanes.indexOf(wfState.selectedLane);
+}
+
 function _wfLockInfo() {
   if (!wfState || !wfState.selectedTurnId || !wfState.turnIndex) return null;
   var hit = wfState.turnIndex.get(wfState.selectedTurnId);
@@ -769,10 +774,10 @@ function _wfApplySpotlight(laneG, lane, tidx) {
 function _wfClearSpotlight(laneG) {
   laneG.classList.remove('wf-spot');
   laneG.querySelectorAll('.hl').forEach(function(el) { el.classList.remove('hl'); });
-  // Restore cross-lane dim if a lock is active on another lane
-  var lock = _wfLockInfo();
+  // Restore cross-lane dim for non-focused lanes when the hover ends
+  var focusLi = _wfFocusLaneIdx();
   var li = parseInt(laneG.getAttribute('data-lane'));
-  laneG.classList.toggle('dim', !!(lock && lock.li !== li));
+  laneG.classList.toggle('dim', focusLi >= 0 && focusLi !== li);
 }
 
 // Locked turn keeps a persistent spotlight across hovers and re-renders
