@@ -495,3 +495,47 @@ describe('workflow-timeline stable lane .key (#139)', () => {
     assert.equal(sub.turns.length, 2);
   });
 });
+
+describe('workflow-timeline lock-turn convergence (#140)', () => {
+  function twoLanes(ctx) {
+    ctx.allEntries = [
+      mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 5, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+      mkEntry('e1', 's1', 'claude-sonnet-4-6', 2000, 3, { agentKey: 'explore', agentLabel: 'Explore' }),
+    ];
+    ctx.wfState = ctx.wfBuildState('s1');
+  }
+
+  // Invariant A==B: the expanded lane (selectedLane) must equal the lane that
+  // holds the locked turn (selectedTurnId). Two of the 13 setters set turnId
+  // without lane; converge them on a single helper that derives lane from
+  // turnIndex.laneIdx.
+  it('wfLockTurn sets selectedLane to the locked turn\'s lane (A==B)', () => {
+    const ctx = loadWfModule();
+    twoLanes(ctx);
+    const exploreLane = ctx.wfState.lanes.find((l) => l.agentKey === 'explore');
+    assert.notEqual(ctx.wfState.selectedLane, exploreLane); // precondition: A(main) ≠ B(explore)
+    ctx.wfLockTurn('e1'); // RED before fix: wfLockTurn is undefined
+    assert.equal(ctx.wfState.selectedTurnId, 'e1');
+    assert.equal(ctx.wfState.selectedLane, exploreLane); // expanded lane == locked-turn lane
+  });
+
+  it('wfLockTurn bridges to selectTurn so the detail pane syncs', () => {
+    const ctx = loadWfModule();
+    let picked = -1;
+    ctx.selectTurn = (i) => { picked = i; };
+    twoLanes(ctx);
+    ctx.wfLockTurn('e1');
+    assert.equal(picked, 1); // selectTurn called with allEntries index of e1
+  });
+
+  it('wfLockTurn is a no-op when the turn id is unknown (no phantom lock)', () => {
+    const ctx = loadWfModule();
+    twoLanes(ctx);
+    const before = ctx.wfState.selectedLane;
+    ctx.wfLockTurn('nope');
+    // unknown id: leave both fields untouched rather than pointing the lock at a
+    // turn that lives in no lane (the #8 soft-desync gap).
+    assert.equal(ctx.wfState.selectedLane, before);
+    assert.equal(ctx.wfState.selectedTurnId, null);
+  });
+});

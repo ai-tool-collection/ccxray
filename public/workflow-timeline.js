@@ -1421,7 +1421,7 @@ function _wfRenderLaneSummary(lane, section) {
       var t = lane.turns[i], u = t.usage || {}, inTok = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
       var allTok = inTok + (u.output_tokens || 0), cache = u.cache_read_input_tokens || 0;
       var pct = inTok > 0 ? (cache / inTok * 100).toFixed(0) + '%' : '-';
-      html += '<tr style="cursor:pointer;border-top:1px solid var(--border)" onclick="wfState.selectedTurnId=\'' + t.id + '\';wfSelectSection(\'cost-efficiency\')">';
+      html += '<tr style="cursor:pointer;border-top:1px solid var(--border)" onclick="wfLockTurn(\'' + t.id + '\');wfSelectSection(\'cost-efficiency\')">';
       html += '<td style="padding:4px 8px;color:var(--dim)">' + (i + 1) + '</td>';
       html += '<td style="padding:4px 8px">' + wfEsc(wfShortModel(t.model)) + '</td>';
       html += '<td style="padding:4px 8px;text-align:right">$' + (t.cost || 0).toFixed(4) + '</td>';
@@ -1437,6 +1437,22 @@ function _wfRenderLaneSummary(lane, section) {
   }
   html += '</div>';
   el.innerHTML = html;
+}
+
+// Lock a turn AND its lane atomically, deriving the lane from turnIndex
+// (the collision-free laneIdx) so the A==B invariant — expanded lane ==
+// locked-turn lane — holds structurally for every caller. Bridges to
+// selectTurn (detail pane) and refreshes swimlane visuals via wfDeferRender.
+function wfLockTurn(turnId) {
+  if (!wfState || !turnId) return;
+  var hit = wfState.turnIndex && wfState.turnIndex.get(turnId);
+  if (!hit) return; // unknown turn → no phantom lock (leave selection untouched)
+  wfState.selectedTurnId = turnId;
+  wfState.selectedLane = wfState.lanes[hit.laneIdx];
+  wfDeferRender();
+  for (var k = 0; k < allEntries.length; k++) {
+    if (allEntries[k].id === turnId) { selectTurn(k); break; }
+  }
 }
 
 // ── Section Navigation ───────────────────────────────────────────────────
@@ -1537,11 +1553,7 @@ function wfRenderSteps(scrollToId) {
   el.querySelectorAll('.wf-step-row').forEach(function(row) {
     row.onclick = function() {
       var tid = row.getAttribute('data-tid');
-      wfState.selectedTurnId = tid;
-      // Find allEntries index and selectTurn
-      for (var i = 0; i < allEntries.length; i++) {
-        if (allEntries[i].id === tid) { selectTurn(i); break; }
-      }
+      wfLockTurn(tid);
       wfRenderSteps(tid);
     };
   });
