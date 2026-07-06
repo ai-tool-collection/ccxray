@@ -28,7 +28,7 @@
 2. **隔離**：獨立 git worktree ＋ branch `fix/NNN-slug`。**絕不在 main 上直接改**（本機自動 sync 會立刻推出去）。
 3. **開發 subagent**：issue body 即規格。硬規則寫進派工 prompt：不順手重構、不碰無關檔案；遇 A/B 設計題**停下標 blocked-on-owner，不猜**。
 4. **驗證（fresh subagent，不共開發者 context）**：按 `docs/verification-principles.md` 的「改動類型→驗證方式」表執行（本機若有 `verifying-improvements` skill 可載入輔助，沒有不影響——所需工具都在 repo 內）：
-   - bug 類（#150/#151/#164/#169）：`scripts/diff-check.sh <base-ref> <test-file...> -- <test-cmd...>` 產出 old-fail/new-pass 證明（exit 0=成立、1=新碼沒過、2=測試分辨不出新舊）；腳本不可用時照 `docs/verification-principles.md` 末段的 worktree fallback 手動執行
+   - bug 類（#150/#151/#164/#169）：`scripts/diff-check.sh <base-ref> <test-file...> -- <test-cmd...>` 產出 old-fail/new-pass 證明（exit 0=成立、1=新碼沒過、2=測試分辨不出新舊、3=用法/設定錯誤——不具證據語意，修正呼叫後重跑）；腳本不可用時照 `docs/verification-principles.md` 末段的 worktree fallback 手動執行
    - 重構類（#156/#158/#159/#160）：rg 結構指標＋確認沒有 fail-on-old 測試混入
    - 效能類（#166/#167）：同條件 before/after ≥5 次中位數
 5. **Orchestrator 親自重跑**：只採信自己重跑的 exit code 與數字，不採信任何 subagent 的文字轉述。
