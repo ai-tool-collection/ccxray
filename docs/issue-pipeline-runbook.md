@@ -10,6 +10,8 @@
 
 ## 批次順序（批內序列執行，不平行——同檔互撞）
 
+**相依分支規則**：有前置相依的 issue（例：#156 依 #150 的 escapeHtml 搬家）必須等前置 PR **merge 進 main 後**、從最新 main 開分支才動工；**絕不 stack PR**（不以另一個未 merge 的 branch 為 base）。等待前置 merge 期間，可以先做同批內無相依的下一張。
+
 **Batch 0 — 安全快修（獨立小張）**：#163（ws CVE + CI audit gate；WS smoke 需真實 codex 流量，做不到就標註邊界升級給人）→ #164 → #150 → #151 → #165（⚠️ merge 影響已發佈產物，PR 必附 `npm pack --dry-run` 清單）→ #169 第一步（client 補 autoMemory，先寫一致性測試看它紅）。
 
 **Batch 2 — quick win**（Batch 1 收 wf-color 分支已於 2026-07-06 完成）：#156（吸收 #150 的 escapeHtml 搬家，若其已先修則只搬）→ #166 → #167 → #168 → #170。
@@ -22,11 +24,11 @@
 
 ## 每張 issue 的標準流程
 
-1. **重驗**：Explore subagent 重驗 issue 內 file:line 證據（都是快照，repo 變動快）。證據失效 → 更新 issue body 再動工；問題已不存在 → 留證據關閉。
+1. **重驗**：Explore subagent 重驗 issue 內 file:line 證據（都是快照，repo 變動快）。證據失效 → **留 corrective comment**（新舊 file:line 對照）再動工，issue body 非經 owner 同意不改；問題已不存在 → 留證據 comment 並升級給 owner 決定關閉。
 2. **隔離**：獨立 git worktree ＋ branch `fix/NNN-slug`。**絕不在 main 上直接改**（本機自動 sync 會立刻推出去）。
 3. **開發 subagent**：issue body 即規格。硬規則寫進派工 prompt：不順手重構、不碰無關檔案；遇 A/B 設計題**停下標 blocked-on-owner，不猜**。
-4. **驗證（fresh subagent，不共開發者 context）**：載入 `verifying-improvements` skill，按 `docs/verification-principles.md` 的「改動類型→驗證方式」表執行：
-   - bug 類（#150/#151/#164/#169）：`diff-check.sh` old-fail/new-pass
+4. **驗證（fresh subagent，不共開發者 context）**：按 `docs/verification-principles.md` 的「改動類型→驗證方式」表執行（本機若有 `verifying-improvements` skill 可載入輔助，沒有不影響——所需工具都在 repo 內）：
+   - bug 類（#150/#151/#164/#169）：`scripts/diff-check.sh <base-ref> <test-file...> -- <test-cmd...>` 產出 old-fail/new-pass 證明（exit 0=成立、1=新碼沒過、2=測試分辨不出新舊）；腳本不可用時照 `docs/verification-principles.md` 末段的 worktree fallback 手動執行
    - 重構類（#156/#158/#159/#160）：rg 結構指標＋確認沒有 fail-on-old 測試混入
    - 效能類（#166/#167）：同條件 before/after ≥5 次中位數
 5. **Orchestrator 親自重跑**：只採信自己重跑的 exit code 與數字，不採信任何 subagent 的文字轉述。
