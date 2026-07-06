@@ -1678,7 +1678,7 @@ function selectProject(name) {
 
 function escapeHtml(s) {
   if (typeof s !== 'string') s = JSON.stringify(s, null, 2);
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 function fmt(n) { return n != null ? n.toLocaleString() : '—'; }
