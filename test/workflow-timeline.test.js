@@ -756,34 +756,33 @@ describe('#149 wfLaneShape — per-agent identity glyph', () => {
 
   it('combined (color, glyph): >palette-size concurrent lanes each unique pair', () => {
     const ctx = loadWfModule();
-    // 8 hashed lanes = well beyond color palette size (5)
+    // 10 hashed lanes = well beyond color palette size (7)
     const lanes = [{ key: 'main', name: 'main' }];
-    for (let i = 0; i < 8; i++) lanes.push({ key: 'agent-x:' + i });
+    for (let i = 0; i < 10; i++) lanes.push({ key: 'agent-x:' + i });
     const map = ctx.wfComputeLaneStyles(lanes);
     const pairs = new Set();
     for (const [, v] of map) pairs.add(v.color + ':' + v.glyph);
-    assert.equal(pairs.size, lanes.length, 'all 9 lanes have distinct (color,glyph) pairs');
+    assert.equal(pairs.size, lanes.length, 'all 11 lanes have distinct (color,glyph) pairs');
   });
 
-  it('adversarial: 13 same-hash-bucket lanes still get distinct pairs', () => {
+  it('adversarial: 20 same-hash-bucket lanes still get distinct pairs', () => {
     const ctx = loadWfModule();
-    // keys that cluster on the same color slot via FNV-1a % 5
     const lanes = [{ key: 'main', name: 'main' }];
-    for (let i = 0; i < 13; i++) lanes.push({ key: 'agent-x:' + i });
+    for (let i = 0; i < 20; i++) lanes.push({ key: 'agent-x:' + i });
     const map = ctx.wfComputeLaneStyles(lanes);
     const pairs = new Set();
     for (const [, v] of map) pairs.add(v.color + ':' + v.glyph);
-    assert.equal(pairs.size, lanes.length, 'all 14 lanes have distinct (color,glyph) pairs');
+    assert.equal(pairs.size, lanes.length, 'all 21 lanes have distinct (color,glyph) pairs');
   });
 
-  it('40-lane capacity: 5 colors × 8 glyphs = 40 unique pairs', () => {
+  it('49-lane capacity: 7 colors × 7 shapes = 49 unique hashed pairs', () => {
     const ctx = loadWfModule();
     const lanes = [{ key: 'main', name: 'main' }];
-    for (let i = 0; i < 39; i++) lanes.push({ key: 'lane-' + i });
+    for (let i = 0; i < 49; i++) lanes.push({ key: 'lane-' + i });
     const map = ctx.wfComputeLaneStyles(lanes);
     const pairs = new Set();
     for (const [, v] of map) pairs.add(v.color + ':' + v.glyph);
-    assert.equal(pairs.size, 40, 'full Cartesian capacity reached');
+    assert.equal(pairs.size, 50, 'full Cartesian capacity: 49 hashed + 1 main = 50');
   });
 
   it('lane and card resolve the same glyph (single resolver)', () => {

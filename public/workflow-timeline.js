@@ -15,10 +15,10 @@ const WF_MODEL_COLORS = {
   'claude-opus-4-6':'#58a6ff','claude-opus-4-8':'#7ee787','claude-fable-5':'#d2a8ff',
   'claude-sonnet-4-6':'#ffa657','claude-haiku-4-5':'#f0883e','claude-haiku-4-5-20251001':'#f0883e',
 };
-// #144 option B: per-agent identity palette (docs/wf-color-identity/DESIGN.md).
-// `main` is pinned; the rest are hashed off lane.key. Palette = "relaxed" set:
-// avoids status red/yellow/green; dark-legible, CVD-clean (min ΔE00 ~12).
-const WF_LANE_COLORS = { main: '#42a3fd', hashed: ['#ffdbaa', '#dc7d96', '#a1a716', '#45f8ef', '#d1d843'] };
+// #144/#149: per-agent identity palette (docs/wf-color-identity/DESIGN.md).
+// `main` pinned; hashed off lane.key. 7 hues × 7 shapes = 50 combos.
+// CVD-verified: magenta (#d742a5) + indigo (#4242d7) clear all 9 reserved.
+const WF_LANE_COLORS = { main: '#42a3fd', hashed: ['#ffdbaa', '#dc7d96', '#a1a716', '#45f8ef', '#d1d843', '#d742a5', '#4242d7'] };
 const WF_LABEL_W = 240, WF_LANE_GAP = 4;
 // v8 ctx-split (#121): 44px ctx% bars + 8px cost track + event tracks (8px collapsed / 4×8px expanded)
 const WF_BAR_H = 44, WF_COST_TRACK_H = 8, WF_EV_H = 8, WF_EV_H_SEL = 32;
@@ -88,21 +88,21 @@ function _wfFnv1a(s) {
   for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
   return h >>> 0;
 }
-// #149: shape/glyph second channel — SVG primitives legible at ~10px on #0d1117.
-// main=circle (pinned); 8 hashed glyphs × 5 colors = 40 unique pairs before repeat.
-var WF_LANE_GLYPHS = { main: 'circle', hashed: ['square', 'triangleUp', 'diamond', 'plus', 'hollowCircle', 'hollowSquare', 'triangleDown', 'star'] };
+// #149: shape/glyph second channel — all-filled SVG primitives at ~10px on #0d1117.
+// main=circle (pinned); 7 hashed shapes × 7 hashed colors = 49+1 = 50 unique combos.
+// Autoresearch design: 無意義>辨識度>一致性, scored 8.8/10 (combined 9/10).
+var WF_LANE_GLYPHS = { main: 'circle', hashed: ['square', 'triangleUp', 'diamond', 'plus', 'semicircle', 'trapezoid', 'parallelogram'] };
 function wfGlyphSvg(glyph, cx, cy, s, fill) {
-  var r = s / 2;
+  var r = s / 2, hw = s * 0.15;
   switch (glyph) {
     case 'circle': return '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="'+fill+'"/>';
     case 'square': return '<rect x="'+(cx-r)+'" y="'+(cy-r)+'" width="'+s+'" height="'+s+'" fill="'+fill+'"/>';
     case 'triangleUp': return '<polygon points="'+cx+','+(cy-r)+' '+(cx-r)+','+(cy+r)+' '+(cx+r)+','+(cy+r)+'" fill="'+fill+'"/>';
     case 'diamond': return '<polygon points="'+cx+','+(cy-r)+' '+(cx+r)+','+cy+' '+cx+','+(cy+r)+' '+(cx-r)+','+cy+'" fill="'+fill+'"/>';
-    case 'plus': return '<path d="M'+(cx-r)+' '+cy+'H'+(cx+r)+'M'+cx+' '+(cy-r)+'V'+(cy+r)+'" stroke="'+fill+'" stroke-width="2" fill="none"/>';
-    case 'hollowCircle': return '<circle cx="'+cx+'" cy="'+cy+'" r="'+(r-1)+'" fill="none" stroke="'+fill+'" stroke-width="1.5"/>';
-    case 'hollowSquare': return '<rect x="'+(cx-r+1)+'" y="'+(cy-r+1)+'" width="'+(s-2)+'" height="'+(s-2)+'" fill="none" stroke="'+fill+'" stroke-width="1.5"/>';
-    case 'triangleDown': return '<polygon points="'+(cx-r)+','+(cy-r)+' '+(cx+r)+','+(cy-r)+' '+cx+','+(cy+r)+'" fill="'+fill+'"/>';
-    case 'star': var ir=r*0.4,p=''; for(var si=0;si<5;si++){var a=Math.PI/2+si*Math.PI*2/5;var b=a+Math.PI/5;p+=cx+Math.cos(-a)*r+','+( cy+Math.sin(-a)*r)+' '+cx+Math.cos(-b)*ir+','+(cy+Math.sin(-b)*ir)+' ';}return '<polygon points="'+p.trim()+'" fill="'+fill+'"/>';
+    case 'plus': return '<polygon points="'+(cx-hw)+','+(cy-r)+' '+(cx+hw)+','+(cy-r)+' '+(cx+hw)+','+(cy-hw)+' '+(cx+r)+','+(cy-hw)+' '+(cx+r)+','+(cy+hw)+' '+(cx+hw)+','+(cy+hw)+' '+(cx+hw)+','+(cy+r)+' '+(cx-hw)+','+(cy+r)+' '+(cx-hw)+','+(cy+hw)+' '+(cx-r)+','+(cy+hw)+' '+(cx-r)+','+(cy-hw)+' '+(cx-hw)+','+(cy-hw)+'" fill="'+fill+'"/>';
+    case 'semicircle': return '<path d="M'+(cx-r)+' '+cy+'A'+r+' '+r+' 0 1 1 '+(cx+r)+' '+cy+'Z" fill="'+fill+'"/>';
+    case 'trapezoid': return '<polygon points="'+(cx-r*0.5)+','+(cy-r)+' '+(cx+r*0.5)+','+(cy-r)+' '+(cx+r)+','+(cy+r)+' '+(cx-r)+','+(cy+r)+'" fill="'+fill+'"/>';
+    case 'parallelogram': return '<polygon points="'+(cx-r+r*0.35)+','+(cy-r)+' '+(cx+r)+','+(cy-r)+' '+(cx+r-r*0.35)+','+(cy+r)+' '+(cx-r)+','+(cy+r)+'" fill="'+fill+'"/>';
     default: return '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="'+fill+'"/>';
   }
 }
@@ -112,7 +112,7 @@ function wfGlyphHtml(glyph, size, fill) {
 }
 // Per-render assignment: main pinned, hashed lanes placed by hash with live-set
 // open-addressing on color; glyph hashed independently, bumped to keep
-// (color,glyph) pairs jointly unique (5 colors × 8 glyphs = 40 combos).
+// (color,glyph) pairs jointly unique (7 colors × 7 glyphs = 49 combos).
 function wfComputeLaneStyles(lanes) {
   var map = new Map(), cPool = WF_LANE_COLORS.hashed, gPool = WF_LANE_GLYPHS.hashed;
   var usedColors = new Set(), usedPairs = new Set();
@@ -128,7 +128,7 @@ function wfComputeLaneStyles(lanes) {
     usedColors.add(cSlot);
     var ci = cSlot, gi = (h >>> 16) % gPool.length;
     var pair = cPool[ci] + ':' + gPool[gi];
-    // ponytail: two-level probe — glyph first, bump color on glyph wrap, covers full 5×8 Cartesian
+    // ponytail: two-level probe — glyph first, bump color on glyph wrap, covers full 7×7 Cartesian
     var giStart = gi, maxProbes = cPool.length * gPool.length;
     for (var p = 0; p < maxProbes && usedPairs.has(pair); p++) {
       gi = (gi + 1) % gPool.length;
