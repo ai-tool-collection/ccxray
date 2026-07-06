@@ -16,6 +16,8 @@ skills-lock.json
 videos/
 # root-level dogfood screenshots (design assets belong in docs/ or prototype/*/assets/)
 /*.png
+# raw dogfood originals kept for reference/re-crop, never committed
+.dogfood-backup/
 docs/src/
 .tmp/
 handoff.md
