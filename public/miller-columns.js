@@ -1558,10 +1558,11 @@ function renderProjectsCol() {
   ];
   for (const [name, proj] of projectsMap) {
     const statusClass = getProjectStatusClass(proj);
-    const starred = isStarredOrDerived('project', name) ? '1' : '0';
+    const starCount = String(countDescendantStars('project', name));
+    const directStar = isStarredAt('project', name) ? '1' : '0';
     const idleBucket = proj.lastSeenAt ? String(Math.floor((Date.now() - proj.lastSeenAt) / 60000)) : '';
     sigParts.push(name, String(proj.totalCost), String(proj.sessionIds.size),
-      proj.firstId || '', proj.lastId || '', statusClass, starred, idleBucket);
+      proj.firstId || '', proj.lastId || '', statusClass, directStar, starCount, idleBucket);
   }
   const sig = sigParts.join('\x00');
   if (sig === _lastProjectsSignature) return;
