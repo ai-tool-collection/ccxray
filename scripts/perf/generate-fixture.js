@@ -8,6 +8,12 @@
  *   node scripts/perf/generate-fixture.js [--entries 5000] [--output /tmp/perf-home]
  *
  * Prints the output directory path on success.
+ *
+ * Fixture shapes derived from live module analysis (2026-07-07):
+ *   Index entry fields: server/store.js buildEntryFields() + server/forward.js:726-743
+ *   Delta _req.json:    server/restore.js:41-62 (prevId, msgOffset format)
+ *   SSE _res.json:      server/sse-broadcast.js:7-48 (content_block_delta events)
+ *   Field distributions: server/config.js MAX_ENTRIES=5000, typical session 20-50 turns
  */
 
 const fsp = require('fs').promises;
@@ -234,7 +240,7 @@ async function generate({ entries: numEntries = DEFAULT_ENTRIES, output } = {}) 
 
   await fsp.writeFile(path.join(logsDir, 'index.ndjson'), indexLines.join('\n') + '\n');
 
-  return { outputDir, logsDir, entryCount: allEntries.length, deltaChainIds: deltaIds };
+  return { outputDir, logsDir, entryCount: allEntries.length, deltaChainIds: deltaIds, provenance: 'module-analysis-2026-07-07' };
 }
 
 // ── CLI entry point ─────────────────────────────────────────────────

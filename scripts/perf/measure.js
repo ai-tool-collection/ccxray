@@ -24,6 +24,7 @@ const path = require('path');
 const fsp = require('fs').promises;
 
 const { generate } = require('./generate-fixture');
+const { simulateSseLoad } = require('./sse-load');
 
 const TIMEOUT_MS = 120_000;
 const SERVER_START_TIMEOUT_MS = 40_000;
@@ -145,6 +146,84 @@ async function measureDeltaExpand(logsDir, deltaChainIds, runs) {
   }
 }
 
+// ── Delta chain discovery (for real --home copies) ───────────────────
+//
+// When --home points to a real ~/.ccxray copy the first-8 assumption from
+// generate-fixture.js does not hold. This function samples recent _req.json
+// files, follows prevId links, and returns the longest delta chain found.
+// Falls back to the first 8 index entries if no chains are found.
+
+async function discoverDeltaChain(logsDir, indexLines) {
+  const SAMPLE_SIZE = 200;
+  const HEADER_BYTES = 500;
+
+  const sample = indexLines.length > SAMPLE_SIZE
+    ? indexLines.slice(-SAMPLE_SIZE)
+    : indexLines;
+
+  const ids = [];
+  for (const l of sample) {
+    try { ids.push(JSON.parse(l).id); } catch { /* malformed line — skip */ }
+  }
+
+  // Read only the first HEADER_BYTES of each _req.json to locate prevId cheaply
+  const prevIdMap = new Map(); // id → prevId (only for delta entries)
+  await Promise.all(ids.map(async id => {
+    try {
+      const reqPath = path.join(logsDir, id + '_req.json');
+      const fd = await fsp.open(reqPath, 'r');
+      const buf = Buffer.alloc(HEADER_BYTES);
+      const { bytesRead } = await fd.read(buf, 0, HEADER_BYTES, 0);
+      await fd.close();
+      const header = buf.slice(0, bytesRead).toString('utf8');
+      const m = header.match(/"prevId"\s*:\s*"([^"]+)"/);
+      if (m) prevIdMap.set(id, m[1]);
+    } catch { /* missing file or permission error — skip */ }
+  }));
+
+  if (prevIdMap.size === 0) {
+    // No delta entries in sample — fall back to first 8 index entries
+    const fallback = indexLines.slice(0, 8)
+      .map(l => { try { return JSON.parse(l).id; } catch { return null; } })
+      .filter(Boolean);
+    return { deltaChainIds: fallback, chainLength: fallback.length };
+  }
+
+  // Build a forward map: parentId → childId (one child per parent in a chain)
+  const childMap = new Map(); // prevId → id
+  for (const [id, prevId] of prevIdMap) {
+    childMap.set(prevId, id);
+  }
+
+  // Anchors: prevId targets that are NOT themselves delta entries in our sample
+  const deltaIds = new Set(prevIdMap.keys());
+  const anchors = new Set();
+  for (const prevId of prevIdMap.values()) {
+    if (!deltaIds.has(prevId)) anchors.add(prevId);
+  }
+
+  // Follow each chain forward from its anchor; keep the longest
+  let longest = [];
+  for (const anchor of anchors) {
+    const chain = [anchor];
+    let cur = childMap.get(anchor);
+    while (cur) {
+      chain.push(cur);
+      cur = childMap.get(cur);
+    }
+    if (chain.length > longest.length) longest = chain;
+  }
+
+  if (longest.length === 0) {
+    const fallback = indexLines.slice(0, 8)
+      .map(l => { try { return JSON.parse(l).id; } catch { return null; } })
+      .filter(Boolean);
+    return { deltaChainIds: fallback, chainLength: fallback.length };
+  }
+
+  return { deltaChainIds: longest, chainLength: longest.length };
+}
+
 // ── Main ─────────────────────────────────────────────────────────────
 
 async function run({ homeDir, runs }) {
@@ -163,13 +242,14 @@ async function run({ homeDir, runs }) {
 
   if (homeDir) {
     logsDir = path.join(homeDir, 'logs');
-    // Read index.ndjson to find delta chain IDs (first DELTA_CHAIN_LENGTH entries)
-    // and total entry count
     const raw = await fsp.readFile(path.join(logsDir, 'index.ndjson'), 'utf8');
     const lines = raw.split('\n').filter(Boolean);
     entryCount = lines.length;
-    // Delta chain entries are the first 8 by convention from generate-fixture.js
-    deltaChainIds = lines.slice(0, 8).map(l => JSON.parse(l).id);
+    // For real --home copies, scan recent entries for prevId chains rather than
+    // assuming the first 8 lines are the delta chain (only true for fixtures).
+    const discovered = await discoverDeltaChain(logsDir, lines);
+    deltaChainIds = discovered.deltaChainIds;
+    process.stderr.write(`[perf] Delta chain: ${discovered.chainLength} hops (discovered)\n`);
   } else {
     process.stderr.write('[perf] No --home given, generating fixture...\n');
     const result = await generate();
@@ -231,6 +311,11 @@ async function run({ homeDir, runs }) {
     const bLatencies = await measureDeltaExpand(logsDir, deltaChainIds, runs);
     const deltaMedian = median(bLatencies);
 
+    // SSE load generator: exercises the broadcast/serialization path
+    process.stderr.write('[perf] SSE load: injecting 100 synthetic entries via broadcast path...\n');
+    const sseEntriesInjected = simulateSseLoad(100);
+    process.stderr.write(`[perf] SSE load: ${sseEntriesInjected} entries injected.\n`);
+
     const cpuAfter = os.loadavg();
 
     const result = {
@@ -243,7 +328,8 @@ async function run({ homeDir, runs }) {
         api_entries_p95_ms: Math.round(apiP95 * 100) / 100,
         api_entries_p99_ms: Math.round(apiP99 * 100) / 100,
         delta_expand_median_ms: Math.round(deltaMedian * 100) / 100,
-        rebuild_per_100_sse: null,
+        rebuild_per_100_sse: null, // ponytail: activates when #167 adds renderProjectsCol counter hook
+        sse_entries_injected: sseEntriesInjected,
       },
       cpu_load_before: cpuBefore,
       cpu_load_after: cpuAfter,
