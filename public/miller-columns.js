@@ -1540,7 +1540,43 @@ function renderSessionItem(sess, sid) {
     '</div>';
 }
 
+const _raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : fn => fn();
+let _projectsRafPending = false;
+let _lastProjectsSignature = '';
+let _projectsRenderCount = 0;
+if (typeof window !== 'undefined') {
+  if (!window.__ccxrayDebug) window.__ccxrayDebug = {};
+  window.__ccxrayDebug.projectsRenderCount = 0;
+}
+
 function renderProjectsCol() {
+  const sigParts = [
+    projectFilterMode,
+    selectedProjectName || '',
+    window._entriesLoading ? '1' : '0',
+    window._entriesLoadingText || '',
+  ];
+  for (const [name, proj] of projectsMap) {
+    const statusClass = getProjectStatusClass(proj);
+    const starred = isStarredOrDerived('project', name) ? '1' : '0';
+    sigParts.push(name, String(proj.totalCost), String(proj.sessionIds.size),
+      proj.firstId || '', proj.lastId || '', statusClass, starred);
+  }
+  const sig = sigParts.join('\x00');
+  if (sig === _lastProjectsSignature) return;
+  _lastProjectsSignature = sig;
+
+  if (_projectsRafPending) return;
+  _projectsRafPending = true;
+  _raf(() => {
+    _projectsRafPending = false;
+    _projectsRenderCount++;
+    if (typeof window !== 'undefined' && window.__ccxrayDebug) window.__ccxrayDebug.projectsRenderCount = _projectsRenderCount;
+    _renderProjectsColInner();
+  });
+}
+
+function _renderProjectsColInner() {
   let html = '<div class="col-title" style="display:flex;align-items:center;gap:6px">Projects' +
     '<select id="proj-filter-select" onchange="setProjectFilter(this.value)" style="background:var(--surface);color:var(--dim);border:1px solid var(--border);border-radius:3px;font-size:10px;padding:1px 4px;cursor:pointer">' +
     '<option value="streaming"' + (projectFilterMode === 'streaming' ? ' selected' : '') + ' title="Only projects with in-flight API calls">Streaming</option>' +
