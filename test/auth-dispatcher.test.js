@@ -150,6 +150,34 @@ describe('verifyDashboard — Phase 2.3 enforcement (cookie / Bearer / X-Ccxray-
     assert.equal(res.statusCode, 401);
   });
 
+  it('AUTH_TOKEN set, different-length Bearer token → 401, no throw (timing-safe path)', () => {
+    // compareSecret hashes both sides to sha256 fixed-width before timingSafeEqual,
+    // so a length-mismatched token must not throw and must be rejected.
+    const auth = loadAuthWith('sec1');
+    const { req, res } = mockReqRes({ authorization: 'Bearer averylongtokenthatdoesnotmatch', host: 'localhost' }, '/_api/entries');
+    assert.doesNotThrow(() => auth.verifyDashboard(req, res));
+    assert.equal(auth.verifyDashboard(req, res), false);
+    assert.equal(res.statusCode, 401);
+  });
+
+  it('AUTH_TOKEN set, malformed header without "Bearer " prefix → 401', () => {
+    // Old === check: `'sec1' === 'Bearer sec1'` → false (same outcome).
+    // New code: startsWith('Bearer ') guard rejects before compareSecret.
+    // Behavior is identical, but the guard is now explicit; test documents the boundary.
+    const auth = loadAuthWith('sec1');
+    const { req, res } = mockReqRes({ authorization: 'sec1', host: 'localhost' }, '/_api/entries');
+    assert.equal(auth.verifyDashboard(req, res), false);
+    assert.equal(res.statusCode, 401);
+  });
+
+  it('AUTH_TOKEN set, "Bearertoken" (no space) → 401', () => {
+    // Ensures the prefix check requires the space: 'Bearer' followed by a space.
+    const auth = loadAuthWith('sec1');
+    const { req, res } = mockReqRes({ authorization: 'Bearersec1', host: 'localhost' }, '/_api/entries');
+    assert.equal(auth.verifyDashboard(req, res), false);
+    assert.equal(res.statusCode, 401);
+  });
+
   it('AUTH_TOKEN set, valid X-Ccxray-Auth → true (programmatic dashboard access) (4.1)', () => {
     const auth = loadAuthWith('sec1');
     const { req, res } = mockReqRes({ 'x-ccxray-auth': upstreamTokenFor(auth) }, '/_api/entries');
