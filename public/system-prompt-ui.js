@@ -100,6 +100,60 @@ function updateSysPromptBadge() {
   }).catch(() => {});
 }
 
+function renderSyspromptSkeletons() {
+  // Agent list skeleton
+  const agentList = document.getElementById('sp-agent-list');
+  if (agentList) {
+    let html = '<div class="sp-version-list-title">Agents</div>';
+    html += '<div class="agent-group-header">── Claude Code ──</div>';
+    for (let i = 0; i < 5; i++) {
+      const w = [90, 70, 110, 60, 80][i];
+      html += '<div class="sp-agent-item" style="pointer-events:none">' +
+        '<div class="sp-agent-label"><span class="skeleton skeleton-text" style="width:' + w + 'px"></span></div>' +
+        '<div class="sp-agent-meta"><span class="skeleton skeleton-text" style="width:50px;height:9px"></span></div>' +
+      '</div>';
+    }
+    agentList.innerHTML = html;
+  }
+
+  // Version list skeleton
+  const versionList = document.getElementById('sp-version-list');
+  if (versionList) {
+    let html = '<div class="sp-version-list-title">Versions</div>';
+    for (let i = 0; i < 8; i++) {
+      html += '<div class="sp-version-item" style="pointer-events:none">' +
+        '<span class="skeleton skeleton-text" style="width:32px;height:11px"></span>' +
+        '<span class="skeleton skeleton-text" style="width:' + (80 + (i % 3) * 20) + 'px;height:11px"></span>' +
+        '<span class="skeleton skeleton-text sp-size-col" style="width:28px;height:11px"></span>' +
+        '<span class="skeleton skeleton-text sp-delta-col" style="width:32px;height:11px"></span>' +
+      '</div>';
+    }
+    versionList.innerHTML = html;
+  }
+
+  // Content area skeleton
+  const panel = document.getElementById('diff-text-panel');
+  if (panel) {
+    let html = '<div style="padding:4px 0">';
+    for (let i = 0; i < 12; i++) {
+      const w = [100, 85, 95, 60, 90, 75, 100, 80, 70, 95, 55, 88][i];
+      html += '<div class="skeleton skeleton-block" style="width:' + w + '%;height:12px;margin-bottom:6px"></div>';
+    }
+    html += '</div>';
+    panel.innerHTML = html;
+  }
+}
+
+function _spContentSkeleton() {
+  const widths = [100, 85, 95, 60, 90, 75, 100, 80];
+  let html = '<div style="padding:4px 0">';
+  for (let i = 0; i < widths.length; i++) {
+    html += '<div class="skeleton skeleton-block" style="width:' + widths[i] + '%;height:12px;margin-bottom:6px"></div>';
+  }
+  html += '</div>';
+  return html;
+}
+
 async function openSystemPromptPanel(forceDiff) {
   // If called from outside tab system, redirect to tab
   if (typeof activeTab !== 'undefined' && activeTab !== 'sysprompt') {
@@ -110,8 +164,7 @@ async function openSystemPromptPanel(forceDiff) {
   const hasBadge = forceDiff || (badge && badge.style.display !== 'none');
 
   document.getElementById('diff-overlay').classList.add('open');
-  const panel = document.getElementById('diff-text-panel');
-  if (panel) panel.innerHTML = '<div style="color:var(--dim);font-size:11px">Loading...</div>';
+  renderSyspromptSkeletons();
 
   const data = await fetch('/_api/sysprompt/versions').then(r => r.json());
   spAllVersions = data.versions || [];
@@ -276,7 +329,7 @@ async function loadContentForVersion(v) {
   const summary = document.getElementById('diff-summary');
   if (summary) summary.textContent = v.version;
   updateModeIndicator();
-  if (panel) panel.innerHTML = '<div style="color:var(--dim);font-size:11px">Loading...</div>';
+  if (panel) panel.innerHTML = _spContentSkeleton();
   try {
     const data = await fetch(`/_api/sysprompt/diff?a=${encodeURIComponent(v.coreHash)}&b=${encodeURIComponent(v.coreHash)}&agent=${encodeURIComponent(spSelectedAgent)}`).then(r => r.json());
     const block = (data.blockDiff || []).find(b => b.block === 'coreInstructions');
@@ -304,7 +357,7 @@ async function loadDiffForVersion(v) {
   }
   const prev = spVersions[prevIdx];
   if (summary) summary.textContent = `${prev.version} → ${v.version}`;
-  if (panel) panel.innerHTML = '<div style="color:var(--dim);font-size:11px">Loading...</div>';
+  if (panel) panel.innerHTML = _spContentSkeleton();
   try {
     const data = await fetch(`/_api/sysprompt/diff?a=${encodeURIComponent(prev.coreHash)}&b=${encodeURIComponent(v.coreHash)}&agent=${encodeURIComponent(spSelectedAgent)}`).then(r => r.json());
     const block = (data.blockDiff || []).find(b => b.block === 'coreInstructions');

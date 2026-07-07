@@ -11,7 +11,70 @@ function hideCostPage() {
   switchTab('dashboard');
 }
 
+function renderCostSkeletons() {
+  // Left panel: account card skeleton
+  const left = document.getElementById('cp-left');
+  if (left) {
+    const acctCard = document.getElementById('cp-accounts');
+    if (acctCard) {
+      acctCard.style.display = '';
+      const content = document.getElementById('cp-accounts-content');
+      if (content) {
+        content.innerHTML =
+          '<div style="margin-bottom:8px"><span class="skeleton skeleton-text" style="width:60px"></span></div>' +
+          '<div style="display:flex;gap:10px">' +
+            '<div style="flex:1;background:var(--surface);border-radius:6px;padding:10px 12px">' +
+              '<div class="skeleton skeleton-block" style="width:40px;height:10px;margin-bottom:6px"></div>' +
+              '<div class="skeleton skeleton-block" style="width:70px;height:18px;margin-bottom:8px"></div>' +
+              '<div class="skeleton skeleton-block" style="height:5px;border-radius:3px"></div>' +
+            '</div>' +
+            '<div style="flex:1;background:var(--surface);border-radius:6px;padding:10px 12px">' +
+              '<div class="skeleton skeleton-block" style="width:40px;height:10px;margin-bottom:6px"></div>' +
+              '<div class="skeleton skeleton-block" style="width:70px;height:18px;margin-bottom:8px"></div>' +
+              '<div class="skeleton skeleton-block" style="height:5px;border-radius:3px"></div>' +
+            '</div>' +
+          '</div>';
+      }
+    }
+  }
+
+  // Right panel: monthly + daily skeletons
+  const right = document.getElementById('cp-right');
+  if (right) {
+    let html = '';
+    // Monthly skeleton
+    html += '<div class="cost-card" style="margin-bottom:12px">';
+    html += '<div class="cost-card-label">Monthly</div>';
+    html += '<div style="display:flex;flex-direction:column;gap:6px">';
+    for (let i = 0; i < 4; i++) {
+      html += '<div style="display:flex;align-items:center;gap:8px">' +
+        '<span class="skeleton skeleton-text" style="width:28px;height:11px"></span>' +
+        '<div class="skeleton skeleton-block" style="flex:1;height:14px;border-radius:3px;margin-bottom:0"></div>' +
+        '<span class="skeleton skeleton-text" style="width:44px;height:11px"></span>' +
+      '</div>';
+    }
+    html += '</div></div>';
+
+    // Daily heatmap skeleton
+    html += '<div class="cost-card">';
+    html += '<div class="cost-card-label">Daily Cost</div>';
+    html += '<div style="display:flex;flex-direction:column;gap:2px">';
+    for (let i = 0; i < 10; i++) {
+      html += '<div style="display:flex;align-items:center;gap:8px;height:16px">' +
+        '<span class="skeleton skeleton-text" style="width:56px;height:10px"></span>' +
+        '<div class="skeleton skeleton-block" style="flex:1;height:10px;border-radius:3px;margin-bottom:0"></div>' +
+        '<span class="skeleton skeleton-text" style="width:40px;height:10px"></span>' +
+      '</div>';
+    }
+    html += '</div></div>';
+
+    right.innerHTML = html;
+  }
+}
+
 async function loadCostPage() {
+  renderCostSkeletons();
+
   async function fetchWithRetry(url, fallback, maxRetries = 20) {
     for (let i = 0; i < maxRetries; i++) {
       try {
