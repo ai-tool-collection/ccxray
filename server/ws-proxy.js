@@ -16,6 +16,7 @@ const {
   getCodexSessionId,
   getCodexCwd,
   getCodexWorkspaceCwd,
+  fillCodexMetadata,
   getOpenAIAgentTypeFromHeaders,
   parseCodexTurnMetadata,
   extractUsage: extractOpenAIUsage,
@@ -275,7 +276,7 @@ async function recordWebSocketEntry(ctx, result, turn = null) {
   let sysHash = null, toolsHash = null, coreHash = null, agentKey = null, agentLabel = null;
   // Fill-if-absent like withCodexMetadata: explicit body metadata wins over header
   const detectBody = cr && agentType && !(cr.metadata && cr.metadata.agent_type)
-    ? { ...cr, metadata: { ...(cr.metadata || {}), agent_type: agentType } }
+    ? { ...cr, metadata: fillCodexMetadata(cr.metadata, { agentType }) }
     : cr;
   if (cr && cr.instructions != null) {
     sysHash = crypto.createHash('sha256').update(JSON.stringify(cr.instructions)).digest('hex').slice(0, 12);
@@ -425,13 +426,9 @@ function handleWebSocketUpgrade(req, socket, head) {
       const nextSessionId = detectedTurn?.sessionId || ctx.sessionId;
       const nextCwd = getCodexCwd(req.headers, request);
       if (request && (nextSessionId || nextCwd || nextAgentType)) {
-        const metadata = request.metadata && typeof request.metadata === 'object'
-          ? { ...request.metadata }
-          : {};
-        if (nextSessionId && !metadata.session_id) metadata.session_id = nextSessionId;
-        if (nextCwd && !metadata.cwd) metadata.cwd = nextCwd;
-        if (nextAgentType && !metadata.agent_type) metadata.agent_type = nextAgentType;
-        request.metadata = metadata;
+        request.metadata = fillCodexMetadata(request.metadata, {
+          sessionId: nextSessionId, agentType: nextAgentType, cwd: nextCwd,
+        });
       }
       if (nextSessionId && nextSessionId !== ctx.sessionId) {
         store.activeRequests[ctx.sessionId] = Math.max(0, (store.activeRequests[ctx.sessionId] || 1) - 1);
@@ -447,7 +444,10 @@ function handleWebSocketUpgrade(req, socket, head) {
         ctx.agentType = nextAgentType;
         store.sessionMeta[ctx.sessionId].agentType = nextAgentType;
       }
-      ctx.sessionInferred = detectedTurn?.inferred || !getCodexSessionId(req.headers, request);
+      // detectedTurn.inferred already encodes "no session id found" (detectSession
+      // returns inferred:true whenever getCodexSessionId is null), so it fully
+      // captures the previous `|| !getCodexSessionId(...)` fallback.
+      ctx.sessionInferred = detectedTurn?.inferred || false;
       broadcastSessionStatus(ctx.sessionId);
       if (detectedTurn?.isNewSession) store.printSessionBanner(ctx.sessionId);
     }

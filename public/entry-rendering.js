@@ -273,11 +273,9 @@ function addEntry(e) {
   // Update cwd if not yet known or was only a quota-check
   const prevProjectName = getProjectName(sess.cwd);
   let migratedProjectCost = 0;
-  let cwdChanged = false;
   if (entryCwd && (!sess.cwd || sess.cwd === '(quota-check)') && sess.cwd !== entryCwd) {
     migratedProjectCost = sess.totalCost || 0;
     sess.cwd = entryCwd;
-    cwdChanged = true;
   }
   if (model && model !== '?') sess.model = model;
   sess.lastId = entryId;
@@ -319,7 +317,9 @@ function addEntry(e) {
 
   // Project tracking
   const projName = getProjectName(sess.cwd);
-  if (cwdChanged && prevProjectName && prevProjectName !== projName) {
+  // sess.cwd only changes in the migration block above and getProjectName is
+  // pure, so a differing project name is exactly "the cwd was migrated".
+  if (prevProjectName && prevProjectName !== projName) {
     const prevProj = projectsMap.get(prevProjectName);
     if (prevProj) {
       prevProj.sessionIds.delete(sid);
