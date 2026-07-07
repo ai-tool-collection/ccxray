@@ -326,7 +326,10 @@ function _isDashboardAuthenticated(req) {
   const cookieValue = _readSessionCookie(req);
   if (cookieValue && _verifySessionCookieValue(cookieValue)) return true;
   if (verifyUpstreamCredential(req.headers) === 'ok') return true;
-  if (AUTH_TOKEN && (req.headers['authorization'] || '') === `Bearer ${AUTH_TOKEN}`) return true;
+  if (AUTH_TOKEN) {
+    const h = req.headers['authorization'] || '';
+    if (h.startsWith('Bearer ') && compareSecret(h.slice(7), AUTH_TOKEN)) return true;
+  }
   return false;
 }
 
