@@ -177,6 +177,10 @@ async function openSystemPromptPanel(forceDiff) {
   if (!spAgents.length) {
     const panel = document.getElementById('diff-text-panel');
     if (panel) panel.innerHTML = '<div style="color:var(--dim);font-size:11px">No versions found.</div>';
+    const agentList = document.getElementById('sp-agent-list');
+    if (agentList) agentList.innerHTML = '<div class="sp-version-list-title">Agents</div>';
+    const versionList = document.getElementById('sp-version-list');
+    if (versionList) versionList.innerHTML = '<div class="sp-version-list-title">Versions</div>';
     return;
   }
 

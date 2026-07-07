@@ -43,7 +43,7 @@ function renderCostSkeletons() {
   if (right) {
     let html = '';
     // Monthly skeleton
-    html += '<div class="cost-card" style="margin-bottom:12px">';
+    html += '<div id="cp-monthly" class="cost-card" style="margin-bottom:12px">';
     html += '<div class="cost-card-label">Monthly</div>';
     html += '<div style="display:flex;flex-direction:column;gap:6px">';
     for (let i = 0; i < 4; i++) {
@@ -56,7 +56,7 @@ function renderCostSkeletons() {
     html += '</div></div>';
 
     // Daily heatmap skeleton
-    html += '<div class="cost-card">';
+    html += '<div id="cp-daily" class="cost-card">';
     html += '<div class="cost-card-label">Daily Cost</div>';
     html += '<div style="display:flex;flex-direction:column;gap:2px">';
     for (let i = 0; i < 10; i++) {
