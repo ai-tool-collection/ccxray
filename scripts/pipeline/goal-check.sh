@@ -49,7 +49,10 @@ else
 fi
 
 num="$(jq -r '.issue.number' <<<"$data")"
-mapfile -t labels < <(jq -r '.issue.labels[].name' <<<"$data" 2>/dev/null || true)
+labels=()
+while IFS= read -r label; do
+  labels+=("$label")
+done < <(jq -r '.issue.labels[].name' <<<"$data" 2>/dev/null || true)
 has_label() { printf '%s\n' "${labels[@]:-}" | grep -qxF "$1"; }
 
 # 連結該 issue 的 open PR？（branch fix/NNN- 或 body close/fix/resolve #NNN）

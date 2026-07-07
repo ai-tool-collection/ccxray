@@ -30,6 +30,7 @@ const { handleWebSocketUpgrade, drainWebSocketProxy } = require('./ws-proxy');
 const { WIRE_PARSERS, getParser } = require('./wire-parsers');
 const {
   getCodexRawSessionId,
+  getCodexCwd,
   isOpenAISubagent,
 } = require('./wire-parsers/openai');
 
@@ -202,8 +203,8 @@ function getCodexCwdFallback() {
   return hub.lookupClientCwd() || (agentCommand === 'codex' ? process.cwd() : null);
 }
 
-function getOpenAICwd(parsedBody) {
-  return parsedBody?.metadata?.cwd || getCodexCwdFallback();
+function getOpenAICwd(parsedBody, headers) {
+  return getCodexCwd(headers, parsedBody, getCodexCwdFallback());
 }
 
 
@@ -383,7 +384,7 @@ const server = http.createServer((clientReq, clientRes) => {
 
     // Extract and store cwd
     if (parsedBody && reqSessionId) {
-      const cwd = provider === 'openai' ? getOpenAICwd(parsedBody) : store.extractCwd(parsedBody);
+      const cwd = provider === 'openai' ? getOpenAICwd(parsedBody, clientReq.headers) : store.extractCwd(parsedBody);
       if (cwd) {
         if (!store.sessionMeta[reqSessionId]) store.sessionMeta[reqSessionId] = {};
         store.sessionMeta[reqSessionId].provider = provider;

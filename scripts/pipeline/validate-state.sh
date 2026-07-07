@@ -87,7 +87,10 @@ icount="$(jq '.issues | length' <<<"$data")"
 for ((i=0; i<icount; i++)); do
   num="$(jq -r ".issues[$i].number" <<<"$data")"
   body="$(jq -r ".issues[$i].body // \"\"" <<<"$data")"
-  mapfile -t lbls < <(jq -r ".issues[$i].labels[].name" <<<"$data" 2>/dev/null || true)
+  lbls=()
+  while IFS= read -r label; do
+    lbls+=("$label")
+  done < <(jq -r ".issues[$i].labels[].name" <<<"$data" 2>/dev/null || true)
 
   # 現有 pipeline:* label → 狀態集合
   status=(); pipe_labels=()
