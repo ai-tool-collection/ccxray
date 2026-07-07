@@ -132,6 +132,7 @@ function renderAccounts(blockData) {
   const configured = blockData.claudeStatuslineConfigured;
 
   if (accounts.length === 0 && configured !== false) {
+    el.innerHTML = '';
     card.style.display = 'none';
     return;
   }
