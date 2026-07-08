@@ -423,6 +423,7 @@ function renderMonthlySummary(monthlyResp) {
   }
 
   const allMonths = monthlyResp.monthly || [];
+  // INVARIANT: early-return must clear innerHTML — see docs/decisions/0004-skeleton-lifecycle.md
   if (!allMonths.length) { container.innerHTML = ''; return; }
   const accounts = collectAccounts(_costPageCache?.dailyData || []);
 
