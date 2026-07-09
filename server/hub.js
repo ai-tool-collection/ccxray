@@ -228,7 +228,7 @@ function forkHub(port, opts = {}) {
   ensureHubDir();
   truncateHubLog();
 
-  const fd = fs.openSync(HUB_LOG_PATH, 'a');
+  const fd = fs.openSync(HUB_LOG_PATH, 'a', 0o600);
   const hubScript = path.resolve(__dirname, 'index.js');
   const args = ['--port', String(port), '--hub-mode'];
   const env = { ...process.env };
