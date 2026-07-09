@@ -146,16 +146,14 @@ describe('SSE per-IP cap', () => {
 // ── HTTP server timeout values ────────────────────────────────────────
 
 describe('HTTP server timeout assignments', () => {
-  it('headersTimeout=60000, keepAliveTimeout=5000, requestTimeout=0', () => {
-    // Mirror the assignments from server/index.js to confirm the values compile
-    // and are what the spec calls for.
+  it('headersTimeout=60000, keepAliveTimeout=5000, requestTimeout=300000', () => {
     const srv = http.createServer(() => {});
     srv.headersTimeout = 60_000;
     srv.keepAliveTimeout = 5_000;
-    srv.requestTimeout = 0;
+    srv.requestTimeout = 300_000;
 
     assert.equal(srv.headersTimeout, 60_000);
     assert.equal(srv.keepAliveTimeout, 5_000);
-    assert.equal(srv.requestTimeout, 0);
+    assert.equal(srv.requestTimeout, 300_000);
   });
 });
