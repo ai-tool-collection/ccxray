@@ -311,11 +311,7 @@ function addEntry(e) {
   if (entryId && window.entryById) {
     window.entryById.set(entryId, { id: entryId, sessionId: sid, cwd: entryCwd, receivedAt: e.receivedAt || null, displayNum });
   }
-  if (turnCost != null) {
-    sess.totalCost += turnCost;
-    if (isSubagent) sess.subCost = (sess.subCost || 0) + turnCost;
-    else sess.mainCost = (sess.mainCost || 0) + turnCost;
-  }
+  if (turnCost != null) sess.totalCost += turnCost;
   if (!isSubagent && e.title) { const t = cleanTitle(e.title); if (t) sess.lastAssistantText = t; }
   if (!sess.toolCalls) sess.toolCalls = {};
   Object.entries(e.toolCalls || {}).forEach(([name, cnt]) => {

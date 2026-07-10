@@ -1456,11 +1456,15 @@ function _wfDrawOverviewCursor(canvas) {
 }
 
 // ── Agent Card ────────────────────────────────────────────────────────────
-// Session-wide rollup fields (mainCost/subCost/inputTokens/outputTokens/compactCount/
-// cacheBreaks/idleMs/toolFailTurns/toolCallTurns) live on the sessionsMap session object,
+// Session-wide rollup fields (inputTokens/outputTokens/compactCount/cacheBreaks/
+// idleMs/toolFailTurns/toolCallTurns) live on the sessionsMap session object,
 // accumulated per-entry in entry-rendering.js addEntry(). Only meaningful for the
 // orchestrator lane — a single lane has no view of "other lanes" so these are session,
 // not lane, aggregates. See docs/designs/follow-live-turn-subagent.md "Overview Panel (L3)".
+// No main/subagent cost split here — isAnthropicSubagent() in store.js can't
+// tell them apart when the subagent request carries the parent's session_id
+// (current Claude Code behavior), so the split would silently misattribute
+// subagent spend as main. Tracked separately; add back once that's fixed.
 function _wfFmtSessTok(n) {
   n = n || 0;
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
@@ -1520,14 +1524,6 @@ function wfRenderAgentCard(lane) {
 
   html += '<div class="wf-ac-section"><div class="wf-ac-section-title">Cost</div>';
   html += '<div class="wf-ac-row"><span>Total</span><span class="wf-ac-val">$' + summary.totalCost.toFixed(4) + '</span></div>';
-  if (sess) {
-    var sessTotalCost = sess.totalCost || 0;
-    var mainCost = sess.mainCost || 0, subCost = sess.subCost || 0;
-    var mainPct = sessTotalCost > 0 ? (mainCost / sessTotalCost * 100).toFixed(0) : '0';
-    var subPct = sessTotalCost > 0 ? (subCost / sessTotalCost * 100).toFixed(0) : '0';
-    html += '<div class="wf-ac-row"><span>Main</span><span class="wf-ac-val">$' + mainCost.toFixed(4) + ' (' + mainPct + '%)</span></div>';
-    html += '<div class="wf-ac-row"><span>Subagent</span><span class="wf-ac-val">$' + subCost.toFixed(4) + ' (' + subPct + '%)</span></div>';
-  }
   html += '</div>';
 
   if (sess && (sess.inputTokens || sess.outputTokens)) {
