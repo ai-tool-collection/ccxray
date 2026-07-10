@@ -364,7 +364,6 @@ function wfBuildState(sessionId) {
     selectedTurnId: null,
     selectedSection: 'timeline',
     laneFocusMode: false,
-    laneHeightManual: false,
   };
 }
 
@@ -735,6 +734,7 @@ function wfRenderTimeline() {
   _wfRenderSvgContent(mainSvg, subSvg, canvas);
   wfSetupInteractions(mainSvg, subSvg);
   wfInitResize(lanesSection, resizeHandle);
+  resizeHandle.classList.toggle('wf-resize-expand', !!wfState.laneFocusMode);
   wfRenderAgentCard(wfState.selectedLane);
   // ponytail: charts now inline in selected lane SVG, no separate header
   wfRenderCurrentSection();
@@ -848,15 +848,14 @@ function _wfOverviewLabelHtml() {
 function _wfRefreshLaneFocusUI() {
   var overviewLabel = document.getElementById('wf-overview-label');
   if (overviewLabel) overviewLabel.innerHTML = _wfOverviewLabelHtml();
-  // Respect a manual drag-resize (wfInitResize) — don't silently overwrite
-  // it on the next toggle/cycle/click, or the resize handle would appear
-  // broken (ux-heuristic-analysis: drags that don't stick read as a bug).
   var lanesSection = document.getElementById('wf-lanes-section');
-  if (lanesSection && !(wfState && wfState.laneHeightManual)) {
+  if (lanesSection) {
     var contentH = WF_PAD + WF_AXIS_H + _wfTotalLanesHeight() + WF_PAD;
     var maxH = window.innerHeight * 0.45;
     lanesSection.style.maxHeight = Math.min(contentH, maxH) + 'px';
   }
+  var resizeHandle = document.getElementById('wf-resize');
+  if (resizeHandle) resizeHandle.classList.toggle('wf-resize-expand', !!(wfState && wfState.laneFocusMode));
   wfDeferRender();
 }
 
@@ -1430,13 +1429,13 @@ function _wfHideTooltip() {
 // ── Resize Handle ─────────────────────────────────────────────────────────
 function wfInitResize(subScroll, handle) {
   handle.onmousedown = function(e) {
+    // Lane-focus mode drives the height from content, not the user — there's
+    // nothing to drag (see wf-resize-expand in style.css). A plain click still
+    // fires below and exits focus mode instead.
+    if (wfState && wfState.laneFocusMode) return;
     e.preventDefault();
     var startY = e.clientY;
     var startH = subScroll.offsetHeight;
-    // Once the user drags, stop auto-computing maxHeight on lane-select
-    // (_wfRefreshLaneFocusUI) — otherwise the next toggle/cycle/click
-    // silently overwrites their resize with no feedback (ux-heuristic-analysis).
-    if (wfState) wfState.laneHeightManual = true;
     var onMove = function(ev) {
       var delta = ev.clientY - startY;
       var newH = Math.max(60, startH + delta);
@@ -1448,6 +1447,9 @@ function wfInitResize(subScroll, handle) {
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+  };
+  handle.onclick = function() {
+    if (wfState && wfState.laneFocusMode) wfToggleLaneFocus();
   };
 }
 
