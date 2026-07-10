@@ -490,6 +490,11 @@ const server = http.createServer((clientReq, clientRes) => {
   });
 });
 
+server.headersTimeout = 60_000;    // 60s — only header phase, safe
+server.keepAliveTimeout = 5_000;   // 5s — idle keep-alive connections
+// ponytail: requestTimeout covers receiving the client request (headers+body), not response streaming — safe for long SSE responses
+server.requestTimeout = 300_000;   // 5min — matches Node default; slow POST body = slowloris, body size cap (#152) handles OOM
+
 server.on('upgrade', (req, socket, head) => {
   handleWebSocketUpgrade(req, socket, head);
 });
