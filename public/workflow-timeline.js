@@ -1496,7 +1496,10 @@ function wfRenderAgentCard(lane) {
   var topTools = Object.entries(toolTotals).sort(function(a, b) { return b[1] - a[1]; }).slice(0, 6);
 
   // Orchestrator lane only: session-wide rollup (see comment above wfRenderAgentCard).
-  var isOrchestrator = !lane.spawnParent;
+  // _wfIsMainLane, not !lane.spawnParent — other non-subagent-flagged lanes (e.g.
+  // Task-tool subagents whose requests carry the parent's session_id, which the
+  // server's isAnthropicSubagent() heuristic doesn't detect) also have spawnParent: null.
+  var isOrchestrator = _wfIsMainLane(lane);
   var sess = (isOrchestrator && wfState && typeof sessionsMap !== 'undefined')
     ? sessionsMap.get(wfState.sessionId) : null;
 

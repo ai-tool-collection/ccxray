@@ -385,7 +385,6 @@ function addEntry(e) {
       gapTitle = cacheMode === 'ephemeral-ttl'
         ? (gapMs < 5 * 60000 ? 'Cache likely warm (< 5m)' : gapMs < 60 * 60000 ? 'Default cache expired (5m–1h)' : 'All cache expired (> 1h)')
         : 'Cached automatically';
-      if (window.ccxraySettings?.cacheTtlMs && gapMs > window.ccxraySettings.cacheTtlMs) sess.cacheBreaks = (sess.cacheBreaks || 0) + 1;
     }
   }
 
