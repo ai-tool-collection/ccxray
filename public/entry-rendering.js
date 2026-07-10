@@ -1,5 +1,10 @@
 // ── Entry rendering ──
 let newTurnCount = 0;
+// agentKey values that don't reliably mean "not main" — both are catch-all
+// defaults from extractAgentType()'s regex fallback for unrecognized prompts
+// (server/system-prompt.js), which could be a genuinely new main-agent
+// variant, not necessarily a subagent (codex review round 3).
+const AGENT_KEY_UNRELIABLE = { unknown: 1, agent: 1 };
 
 function cleanTitle(raw) {
   if (!raw) return null;
@@ -63,16 +68,23 @@ function showSubagentPill(count, errCount, sinceNum) {
   pill.title = title;
   pill.onclick = function() {
     scrollTurnsToBottom();
-    const s = sessionsMap.get(selectedSessionId);
-    if (s) { s.subPillCount = 0; s.subPillErrCount = 0; }
     hideSubagentPill();
   };
   colTurns.appendChild(pill);
 }
 
-function hideSubagentPill() {
+// sid defaults to selectedSessionId, but callers leaving a session (e.g.
+// selectSession switching to a different one) must pass the OLD id
+// explicitly — by the time they call this, selectedSessionId may already
+// point at the new session. Without resetting the counters (not just
+// removing the DOM node), the next qualifying subagent arrival on the
+// abandoned session recreates the pill with the stale prior count/errors
+// (codex review round 3).
+function hideSubagentPill(sid) {
   const pill = document.getElementById('sub-turn-pill');
   if (pill) pill.remove();
+  const s = sessionsMap.get(sid || selectedSessionId);
+  if (s) { s.subPillCount = 0; s.subPillErrCount = 0; }
 }
 
 function renderMessages(messages, perMessage) {
@@ -314,7 +326,16 @@ function addEntry(e) {
   // isSubagent is false for exactly the common subagent case. agentKey isn't
   // fooled by that (same authoritative signal wfInferLanes already uses in
   // workflow-timeline.js, loaded before this file — WF_MAIN_AGENT_KEYS).
-  const isSubagent = e.agentKey
+  //
+  // Only trust agentKey to force isSubagent=true for keys we're actually
+  // confident are non-main — never for AGENT_KEY_UNRELIABLE ('unknown', the
+  // extractAgentType() catch-all default; 'agent', its regex-fallback default
+  // when role extraction fails). Those come from the SAME regex fallback that
+  // handles genuinely new/unrecognized prompts (server/system-prompt.js) —
+  // a future main-agent variant could hit it too, and forcing it to subagent
+  // would silently break auto-follow for legitimate main content (codex
+  // review round 3). For those, fall back to the raw flag as before.
+  const isSubagent = e.agentKey && !AGENT_KEY_UNRELIABLE[e.agentKey]
     ? (typeof WF_MAIN_AGENT_KEYS !== 'undefined' ? !WF_MAIN_AGENT_KEYS[e.agentKey] : !!e.isSubagent)
     : (e.isSubagent || false);
   const isRetry = !isSubagent && !isHttpStatusOk(e.status) && !(usage && usage.output_tokens > 0);

@@ -2133,9 +2133,13 @@ function formatCurrentStepBreadcrumb() {
 function selectSession(id) {
   setFocus('sessions');
   if (id === selectedSessionId) return;
+  const prevSessionId = selectedSessionId;
   selectedSessionId = id;
   if (typeof hideNewTurnPill === 'function') hideNewTurnPill();
-  if (typeof hideSubagentPill === 'function') hideSubagentPill();
+  // Pass the OLD session id — selectedSessionId already points at the new
+  // one above, but the pill/counters being cleared belong to the session
+  // being left (codex review round 3).
+  if (typeof hideSubagentPill === 'function') hideSubagentPill(prevSessionId);
   selectedTurnIdx = -1;
   selectedSection = null;
   clearSelectedStepSelection();
