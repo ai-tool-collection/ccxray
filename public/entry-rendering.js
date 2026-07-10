@@ -311,12 +311,20 @@ function addEntry(e) {
   if (entryId && window.entryById) {
     window.entryById.set(entryId, { id: entryId, sessionId: sid, cwd: entryCwd, receivedAt: e.receivedAt || null, displayNum });
   }
-  if (turnCost != null) sess.totalCost += turnCost;
+  if (turnCost != null) {
+    sess.totalCost += turnCost;
+    if (isSubagent) sess.subCost = (sess.subCost || 0) + turnCost;
+    else sess.mainCost = (sess.mainCost || 0) + turnCost;
+  }
   if (!isSubagent && e.title) { const t = cleanTitle(e.title); if (t) sess.lastAssistantText = t; }
   if (!sess.toolCalls) sess.toolCalls = {};
   Object.entries(e.toolCalls || {}).forEach(([name, cnt]) => {
     sess.toolCalls[name] = (sess.toolCalls[name] || 0) + cnt;
   });
+  if (Object.keys(e.toolCalls || {}).length > 0) {
+    sess.toolCallTurns = (sess.toolCallTurns || 0) + 1;
+    if (e.toolFail) sess.toolFailTurns = (sess.toolFailTurns || 0) + 1;
+  }
   // During batch load, suppress per-entry DOM rerenders (post-batch does one final pass).
   if (!_loading) {
     const sessEl = document.getElementById('sess-' + sid.slice(0, 8));
@@ -348,6 +356,9 @@ function addEntry(e) {
   const ctxInput       = usage ? (usage.input_tokens || 0) : 0;
   const ctxUsed = ctxCacheCreate + ctxCacheRead + ctxInput;
 
+  sess.inputTokens = (sess.inputTokens || 0) + (usage ? (usage.input_tokens || 0) : 0);
+  sess.outputTokens = (sess.outputTokens || 0) + (usage ? (usage.output_tokens || 0) : 0);
+
   // Update session context alert badge + cache stats for main turns
   if (!isSubagent && ctxUsed > 0) {
     sess.latestMainCtxPct = Math.min(100, ctxUsed / (e.maxContext || DEFAULT_MAX_CTX) * 100);
@@ -378,6 +389,12 @@ function addEntry(e) {
     }
   }
 
+  const cacheTtlMs = window.ccxraySettings?.cacheTtlMs;
+  if (gapMs !== null && cacheTtlMs && gapMs > cacheTtlMs) {
+    sess.cacheBreaks = (sess.cacheBreaks || 0) + 1;
+    sess.idleMs = (sess.idleMs || 0) + gapMs;
+  }
+
   // Compression detection: compare message count AND context tokens vs previous main turn.
   // True compaction = msgCount drops significantly (messages got summarized/removed).
   // Token-only drops can happen from cache eviction or normal conversation flow.
@@ -394,6 +411,7 @@ function addEntry(e) {
       }
     }
   }
+  if (isCompacted) sess.compactCount = (sess.compactCount || 0) + 1;
 
   allEntries.push({
     tokens: tok, usage, ts: e.ts, model, maxContext: e.maxContext, cost: turnCost, sessionId: sid,

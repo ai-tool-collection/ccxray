@@ -1456,6 +1456,32 @@ function _wfDrawOverviewCursor(canvas) {
 }
 
 // ── Agent Card ────────────────────────────────────────────────────────────
+// Session-wide rollup fields (mainCost/subCost/inputTokens/outputTokens/compactCount/
+// cacheBreaks/idleMs/toolFailTurns/toolCallTurns) live on the sessionsMap session object,
+// accumulated per-entry in entry-rendering.js addEntry(). Only meaningful for the
+// orchestrator lane — a single lane has no view of "other lanes" so these are session,
+// not lane, aggregates. See docs/designs/follow-live-turn-subagent.md "Overview Panel (L3)".
+function _wfFmtSessTok(n) {
+  n = n || 0;
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(0) + 'K';
+  return String(n);
+}
+function _wfFmtSessDur(ms) {
+  if (ms == null || !isFinite(ms) || ms < 0) return '-';
+  if (ms < 3600000) return Math.round(ms / 60000) + 'm';
+  if (ms < 86400000) return (ms / 3600000).toFixed(1) + 'h';
+  return (ms / 86400000).toFixed(1) + 'd';
+}
+// Parse an entry-id timestamp ("2026-03-08T17-47-13-000") to epoch ms.
+// Same 4-line parse as formatRelativeTime in miller-columns.js — not reused
+// directly since that helper returns a formatted string, not raw ms.
+function _wfParseIdMs(id) {
+  if (!id || id.length < 19) return null;
+  var ts = new Date(id.slice(0, 10) + 'T' + id.slice(11, 19).replace(/-/g, ':')).getTime();
+  return isFinite(ts) ? ts : null;
+}
+
 function wfRenderAgentCard(lane) {
     var agentPanel = document.getElementById('wf-agent-card-panel');
   if (!lane || !agentPanel) return;
@@ -1469,25 +1495,68 @@ function wfRenderAgentCard(lane) {
   }
   var topTools = Object.entries(toolTotals).sort(function(a, b) { return b[1] - a[1]; }).slice(0, 6);
 
+  // Orchestrator lane only: session-wide rollup (see comment above wfRenderAgentCard).
+  var isOrchestrator = !lane.spawnParent;
+  var sess = (isOrchestrator && wfState && typeof sessionsMap !== 'undefined')
+    ? sessionsMap.get(wfState.sessionId) : null;
+
   var html = '<div class="wf-agent-card" style="border-left:2px solid ' + color + '">';
   html += '<div class="wf-ac-name">' + wfGlyphHtml(wfLaneShape(lane), 10, color) + ' ' + wfEsc(lane.name) + ' <span class="wf-ac-model" style="background:' + color + '22;color:' + color + '">' + wfEsc(wfShortModel(lane.model)) + '</span></div>';
   html += '<div class="wf-ac-meta">' + summary.turnCount + ' turns · ' + wfFmtDur(summary.duration) + ' · ' + (lane.spawnParent ? 'subagent' : 'orchestrator') + '</div>';
 
   html += '<div class="wf-ac-section"><div class="wf-ac-section-title">Context</div>';
   html += '<div class="wf-ac-row"><span>Peak</span><span class="wf-ac-val">' + summary.peakCtx.toFixed(1) + '%</span></div>';
-  html += '<div class="wf-ac-row"><span>Window</span><span class="wf-ac-val">' + Math.round((lane.ctxWindow || 0) / 1000) + 'K</span></div></div>';
+  html += '<div class="wf-ac-row"><span>Window</span><span class="wf-ac-val">' + Math.round((lane.ctxWindow || 0) / 1000) + 'K</span></div>';
+  if (sess) html += '<div class="wf-ac-row"><span>Compacts</span><span class="wf-ac-val">' + (sess.compactCount || 0) + '</span></div>';
+  html += '</div>';
 
   html += '<div class="wf-ac-section"><div class="wf-ac-section-title">Cache</div>';
-  html += '<div class="wf-ac-row"><span>Hit rate</span><span class="wf-ac-val">' + summary.avgCache.toFixed(1) + '%</span></div></div>';
+  html += '<div class="wf-ac-row"><span>Hit rate</span><span class="wf-ac-val">' + summary.avgCache.toFixed(1) + '%</span></div>';
+  if (sess) html += '<div class="wf-ac-row"><span>Breaks</span><span class="wf-ac-val">' + (sess.cacheBreaks || 0) + '</span></div>';
+  html += '</div>';
 
   html += '<div class="wf-ac-section"><div class="wf-ac-section-title">Cost</div>';
-  html += '<div class="wf-ac-row"><span>Total</span><span class="wf-ac-val">$' + summary.totalCost.toFixed(4) + '</span></div></div>';
+  html += '<div class="wf-ac-row"><span>Total</span><span class="wf-ac-val">$' + summary.totalCost.toFixed(4) + '</span></div>';
+  if (sess) {
+    var sessTotalCost = sess.totalCost || 0;
+    var mainCost = sess.mainCost || 0, subCost = sess.subCost || 0;
+    var mainPct = sessTotalCost > 0 ? (mainCost / sessTotalCost * 100).toFixed(0) : '0';
+    var subPct = sessTotalCost > 0 ? (subCost / sessTotalCost * 100).toFixed(0) : '0';
+    html += '<div class="wf-ac-row"><span>Main</span><span class="wf-ac-val">$' + mainCost.toFixed(4) + ' (' + mainPct + '%)</span></div>';
+    html += '<div class="wf-ac-row"><span>Subagent</span><span class="wf-ac-val">$' + subCost.toFixed(4) + ' (' + subPct + '%)</span></div>';
+  }
+  html += '</div>';
+
+  if (sess && (sess.inputTokens || sess.outputTokens)) {
+    var inTok = sess.inputTokens || 0, outTok = sess.outputTokens || 0;
+    var ioRatio = outTok > 0 ? (inTok / outTok).toFixed(1) + ':1' : '-';
+    html += '<div class="wf-ac-section"><div class="wf-ac-section-title">Tokens</div>';
+    html += '<div class="wf-ac-row"><span>Input</span><span class="wf-ac-val">' + _wfFmtSessTok(inTok) + '</span></div>';
+    html += '<div class="wf-ac-row"><span>Output</span><span class="wf-ac-val">' + _wfFmtSessTok(outTok) + '</span></div>';
+    html += '<div class="wf-ac-row"><span>I/O ratio</span><span class="wf-ac-val">' + ioRatio + '</span></div>';
+    html += '</div>';
+  }
 
   if (topTools.length) {
     html += '<div class="wf-ac-section"><div class="wf-ac-section-title">Tools</div>';
     for (var ti = 0; ti < topTools.length; ti++) {
       html += '<div class="wf-ac-row"><span class="wf-ac-tool">' + wfEsc(topTools[ti][0]) + '</span><span class="wf-ac-tool-count">' + topTools[ti][1] + '</span></div>';
     }
+    if (sess && (sess.toolCallTurns || 0) > 0) {
+      var failRate = (sess.toolFailTurns || 0) / sess.toolCallTurns * 100;
+      html += '<div class="wf-ac-row"><span>Failure rate</span><span class="wf-ac-val">' + failRate.toFixed(1) + '%</span></div>';
+    }
+    html += '</div>';
+  }
+
+  if (sess) {
+    var startMs = _wfParseIdMs(sess.firstId);
+    var durationMs = (startMs != null && sess.lastReceivedAt) ? (sess.lastReceivedAt - startMs) : null;
+    var activeMs = durationMs != null ? Math.max(0, durationMs - (sess.idleMs || 0)) : null;
+    html += '<div class="wf-ac-section"><div class="wf-ac-section-title">Time</div>';
+    html += '<div class="wf-ac-row"><span>Started</span><span class="wf-ac-val">' + (sess.firstId ? wfEsc(formatEntryDate(sess.firstId)) : '-') + '</span></div>';
+    html += '<div class="wf-ac-row"><span>Duration</span><span class="wf-ac-val">' + _wfFmtSessDur(durationMs) + '</span></div>';
+    html += '<div class="wf-ac-row"><span>Active</span><span class="wf-ac-val">' + _wfFmtSessDur(activeMs) + '</span></div>';
     html += '</div>';
   }
 
