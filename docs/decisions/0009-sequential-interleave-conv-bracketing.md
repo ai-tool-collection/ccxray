@@ -109,7 +109,17 @@ the authoritative resolver — pre-existing gap, unchanged here). What the
 sorted candidate list fixes is the seq tracker's own order sensitivity:
 arrival order can no longer poison the trunk, and when the nested
 early-arriver is a *foreign* conv, the R1 bracket close now also heals the
-turn list live via retro-flip.
+turn list live via retro-flip. One case needs more than the sorted list:
+an earlier-starting turn arriving after an R1 bracket already **closed**
+can overturn the closed excursion — the trunk itself changes (B0-A-B-A
+truth discovered late), and the closed turns have left the tracker list,
+so no incremental step can reopen them. The swimlane heals by falling back
+to a full `wfBuildState` rebuild whenever the tracker reports an
+inserted-before-tail arrival (`_wfSeqRebuild`, view state migrated;
+bounded — only overlap-inversion arrivals trigger it). The turn list
+deliberately does NOT overturn closed excursions: its numbering stays
+forward-only per this same boundary, batch remains the authority (codex
+P2, round 5).
 
 **Bad — rewind-across-compaction**: /rewind restoring a pre-compaction
 checkpoint makes the old conv "return", so the compacted run in between

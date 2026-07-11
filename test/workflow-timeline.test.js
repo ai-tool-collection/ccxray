@@ -1326,8 +1326,10 @@ describe('#230 seq tracker arrival-order independence (codex P2)', () => {
     var a2 = mkSeq('a2', 62000, 5, 'convA', 12);
     ctx.allEntries = [b1];
     ctx.wfState = ctx.wfBuildState('s1');
-    ctx.wfAddEntry(a1);
-    ctx.wfAddEntry(a2);
+    // real caller contract: entry-rendering pushes to allEntries BEFORE
+    // calling wfAddEntry (the reorder-rebuild path reads allEntries)
+    ctx.allEntries.push(a1); ctx.wfAddEntry(a1);
+    ctx.allEntries.push(a2); ctx.wfAddEntry(a2);
     assert.equal(mainIds(ctx.wfState.lanes), 'a1,a2', 'trunk must be conv A (chronologically first), not the first-arrived conv B');
     assert.equal(nonMainIds(ctx.wfState.lanes), 'b1');
     // and the batch rebuild agrees on classification
@@ -1351,7 +1353,7 @@ describe('#230 seq tracker arrival-order independence (codex P2)', () => {
       var f = fixture();
       c.allEntries = [f[order[0]]];
       c.wfState = c.wfBuildState('s1');
-      for (var i = 1; i < order.length; i++) c.wfAddEntry(f[order[i]]);
+      for (var i = 1; i < order.length; i++) { c.allEntries.push(f[order[i]]); c.wfAddEntry(f[order[i]]); }
       return c.wfState.lanes;
     }
     var completion = liveFeed(['b1', 'b2', 'a1', 'a2', 'a3']); // nested b's finish first
@@ -1509,5 +1511,54 @@ describe('#230 frontier TTL (codex P2 round 4)', () => {
       'a 16-minute-later dip is an edit/rewind, not a fork continuation');
     var forkLane = lanes.find(function(l) { return (l.key || '').indexOf('parallel-') === 0; });
     assert.equal(forkLane.turns.map(function(t) { return t.id; }).join(','), 's1');
+  });
+});
+
+// ── #230 codex P2 (round 5): closed excursions can be overturned via rebuild ─
+// Live arrival A-B-A closes the B bracket (B retro-moved). Then B0 — same
+// conv as B, starts earliest, spans A's turn — arrives late: chronological
+// truth is B0-A-B-A, trunk is conv B, and the excursion is A. Closed turns
+// left the tracker list, so the live path falls back to a full wfBuildState
+// rebuild whenever an arrival lands before the list tail.
+describe('#230 late-arrival overturns closed excursion (codex P2 round 5)', () => {
+  function mkSeq(id, at, elapsed, conv, msg, opts) {
+    return mkEntry(id, 's1', 'claude-opus-4-6', at, elapsed, Object.assign(
+      { agentKey: 'orchestrator', agentLabel: 'Orchestrator', convId: conv, msgCount: msg }, opts || {}));
+  }
+  function sig(lanes) {
+    return lanes.filter(function(l) { return l.turns.length; })
+      .map(function(l) { return l.turns.map(function(t) { return t.id; }).sort().join(','); })
+      .sort().join('|');
+  }
+
+  it('span-all same-conv turn arriving after the bracket closed: live == batch (fail-on-old)', () => {
+    const ctx = loadWfModule();
+    var B0 = mkSeq('B0', 1000, 136, 'convB', 8);    // 1000..137000, arrives LAST
+    var A1 = mkSeq('A1', 130000, 5, 'convA', 10);   // nested inside B0's span
+    var B1 = mkSeq('B1', 140000, 5, 'convB', 12);
+    var A2 = mkSeq('A2', 150000, 5, 'convA', 12);
+    ctx.allEntries = [A1];
+    ctx.wfState = ctx.wfBuildState('s1');
+    ctx.allEntries.push(B1); ctx.wfAddEntry(B1);
+    ctx.allEntries.push(A2); ctx.wfAddEntry(A2);
+    // A-B-A prefix: B1 was retro-moved out of main
+    assert.equal(ctx.wfState.lanes[0].turns.map(function(t) { return t.id; }).join(','), 'A1,A2');
+    // user view state that the rebuild must migrate
+    ctx.wfState.selectedTurnId = 'A2';
+    ctx.wfState.laneFocusMode = true;
+    ctx.wfState.viewT0 = 130000; ctx.wfState.viewT1 = 140000;
+    ctx.allEntries.push(B0);
+    var res = ctx.wfAddEntry(B0);
+    assert.equal(res.lanesChanged, true);
+    // chronological truth: trunk = conv B; A1 is the excursion (overlap with
+    // B0); B1 rejoins main; A2 (trunk-advance pending tail) stays main
+    assert.equal(ctx.wfState.lanes[0].turns.map(function(t) { return t.id; }).join(','), 'B0,B1,A2');
+    var batch = loadWfModule().wfInferLanes([A1, B1, A2, B0], []);
+    assert.equal(sig(ctx.wfState.lanes), sig(batch), 'live after rebuild must equal the batch pass');
+    // migrated view state survives the wholesale wfState swap
+    assert.equal(ctx.wfState.selectedTurnId, 'A2');
+    assert.equal(ctx.wfState.laneFocusMode, true);
+    assert.equal(ctx.wfState.viewT0, 130000);
+    assert.equal(ctx.wfState.viewT1, 140000);
   });
 });

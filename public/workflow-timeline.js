@@ -350,6 +350,12 @@ function wfSeqFeedMain(tracker, turn) {
       return res;
     }
   }
+  // Inserted before existing turns ⇒ chronological truth was reordered:
+  // already-closed excursions may need overturning (the trunk itself can
+  // change), but closed turns have left this list — no incremental step
+  // can reopen them. The live caller uses this flag to fall back to a
+  // full batch rebuild (codex P2, round 5).
+  res.reordered = lo < list.length;
   list.splice(lo, 0, turn);
   res.closed = _wfSeqCloseBrackets(tracker);
   return res;
@@ -772,6 +778,15 @@ function wfAddEntry(entry) {
       wfSeqFeedSplit(wfState._seqTracker, entry);
     } else {
       seqVerdict = wfSeqFeedMain(wfState._seqTracker, entry);
+      // codex P2 round 5: an earlier-starting turn arriving late can
+      // invalidate ALREADY-CLOSED excursions — the chronological truth can
+      // reorder the trunk itself (B0-A-B-A where B was already retro-moved
+      // on the A-B-A prefix). Closed turns left the tracker list, so no
+      // incremental step can reopen them: rebuild the whole state from
+      // allEntries (the batch pass is the authority). Bounded: fires only
+      // on inserted-before-tail arrivals (overlap inversion) — occasional
+      // even in fork-heavy sessions.
+      if (seqVerdict.reordered) return _wfSeqRebuild(oldTMax);
       if (seqVerdict.place === 'excursion') {
         needsSub = true;
         key = _wfSubLaneKey('parallel-' + wfShortModel(entry.model), entry);
@@ -817,6 +832,32 @@ function wfAddEntry(entry) {
 
   _wfFollowTail(oldTMax);
   return { lanesChanged: wfState.lanes.length !== prevCount };
+}
+
+// Full-state rebuild for the live path (#230 codex P2 round 5): a
+// late-arriving turn that starts earlier than already-processed turns can
+// overturn closed excursions, so recompute everything from allEntries via
+// wfBuildState (the entry is already in allEntries — entry-rendering pushes
+// before calling wfAddEntry) and migrate the user's view state onto the
+// fresh wfState. Turn-list (entry-rendering) classification stays
+// forward-only by design — same eventual-consistency boundary as ADR 0008's
+// reverse overlap, batch is the authority.
+function _wfSeqRebuild(oldTMax) {
+  var old = wfState;
+  var fresh = wfBuildState(old.sessionId);
+  if (!fresh) return { lanesChanged: false };
+  fresh.viewT0 = old.viewT0;
+  fresh.viewT1 = old.viewT1;
+  fresh.selectedTurnId = old.selectedTurnId;
+  fresh.selectedSection = old.selectedSection;
+  fresh.laneFocusMode = old.laneFocusMode;
+  fresh.laneHeightManual = old.laneHeightManual;
+  if (old.selectedLane) {
+    fresh.selectedLane = fresh.lanes.find(function(l) { return l.key === old.selectedLane.key; }) || fresh.lanes[0];
+  }
+  wfState = fresh;
+  _wfFollowTail(oldTMax);
+  return { lanesChanged: true };
 }
 
 // Retro-move a closed R1 bracket (#230) out of the live main lane, using the
