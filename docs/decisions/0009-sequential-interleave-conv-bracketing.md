@@ -55,7 +55,12 @@ per-turn signals — the ADR 0005 shape, like `AGENT_KEY_UNRELIABLE`:
   a frontier already split out of main (same conv, `tailMsg ≤ msg ≤
   tailMsg + 2`, starting at/after the tail ends — Δ=2 is one exchange, the
   natural msgCount step; owner-approved 2026-07-11). No frontier → rewind/
-  edit → stays main.
+  edit → stays main. Frontiers are tracked **per conversation**
+  (`Map(convId → [frontier…])`, one element per concurrent same-conv
+  track), unbounded by design: a shared FIFO cap would evict still-active
+  frontiers once enough split turns pass — fan-out sessions or one
+  chatty fork would silently disable R2 for the evicted conv (codex P2,
+  round 3).
 - **Batch = live by construction**: the tracker re-runs the full trunk walk
   on every feed, so the live path equals the batch pass on every prefix.
   In `wfInferLanes` the overlap sweep (ADR 0008) and the seq pass iterate

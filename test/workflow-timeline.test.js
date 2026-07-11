@@ -1407,3 +1407,52 @@ describe('#230 lane naming: Fork vs Teammate', () => {
     assert.equal(ctx._wfLaneDispName(lanes[0], 0, mainConvs), 'main');
   });
 });
+
+// ── #230 codex P2 (round 3): per-conv frontiers — no FIFO eviction ──────────
+// tails used to be a single 16-entry FIFO: after 16 split turns, an older
+// but still-active fork frontier was evicted and its sequential
+// continuation could no longer satisfy R2, silently staying in main.
+describe('#230 seq tracker per-conv frontiers (codex P2 round 3)', () => {
+  function mkSeq(id, at, elapsed, conv, msg, opts) {
+    return mkEntry(id, 's1', 'claude-opus-4-6', at, elapsed, Object.assign(
+      { agentKey: 'orchestrator', agentLabel: 'Orchestrator', convId: conv, msgCount: msg }, opts || {}));
+  }
+
+  it('fork frontier survives 17 intervening split turns of other convs (fail-on-old)', () => {
+    const ctx = loadWfModule();
+    var entries = [
+      mkSeq('m1', 1000, 5, 'convA', 53),
+      mkSeq('m2', 10000, 60, 'convA', 55),   // 10000..70000
+      mkSeq('f1', 20000, 5, 'convA', 51),    // overlap-split → frontier for convA
+    ];
+    // 17 agent-keyed split turns, each its own conv — the old shared FIFO
+    // (cap 16) evicted convA's frontier here
+    for (var i = 1; i <= 17; i++) {
+      entries.push(mkSeq('w' + i, 25000 + i * 1000, 0.5, 'w' + i, 3,
+        { agentKey: 'web-search', agentLabel: 'Web Search' }));
+    }
+    entries.push(mkSeq('f2', 71000, 5, 'convA', 51));  // sequential fork continuation
+    entries.push(mkSeq('m3', 80000, 5, 'convA', 57));
+    var lanes = ctx.wfInferLanes(entries, []);
+    var forkLane = lanes.find(function(l) { return (l.key || '').indexOf('parallel-') === 0; });
+    assert.equal(forkLane.turns.map(function(t) { return t.id; }).join(','), 'f1,f2',
+      'the dip must still stitch onto its frontier after 17 unrelated split turns');
+    assert.equal(lanes[0].turns.map(function(t) { return t.id; }).join(','), 'm1,m2,m3');
+  });
+
+  it('same-conv concurrent forks keep separate frontiers; continuations stitch their own track', () => {
+    const ctx = loadWfModule();
+    var tr = ctx.wfCreateSeqTracker();
+    ctx.wfSeqFeedMain(tr, { id: 'm1', convId: 'A', msgCount: 55, receivedAt: 1000, elapsed: 5 });
+    ctx.wfSeqFeedSplit(tr, { convId: 'A', msgCount: 51, receivedAt: 20000, elapsed: 5 });  // track F1
+    ctx.wfSeqFeedSplit(tr, { convId: 'A', msgCount: 45, receivedAt: 21000, elapsed: 5 });  // track F2
+    var fr = tr.tails.get('A');
+    assert.equal(fr.length, 2, 'two concurrent tracks → two frontiers');
+    var r1 = ctx.wfSeqFeedMain(tr, { id: 'c1', convId: 'A', msgCount: 53, receivedAt: 30000, elapsed: 5 });
+    assert.equal(r1.place, 'excursion', 'F1 continuation stitches');
+    var r2 = ctx.wfSeqFeedMain(tr, { id: 'c2', convId: 'A', msgCount: 45, receivedAt: 31000, elapsed: 5 });
+    assert.equal(r2.place, 'excursion', 'F2 continuation stitches');
+    // each continuation advanced its own frontier — no cross-stealing
+    assert.equal(fr.map(function(f) { return f.msg; }).sort().join(','), '45,53');
+  });
+});

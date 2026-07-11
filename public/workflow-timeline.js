@@ -260,17 +260,42 @@ function wfCreateSeqTracker() {
   // order, never arrival order: a foreign-conv turn arriving first would
   // otherwise become the trunk and no bracket would ever close (codex P2,
   // round 1).
-  return { list: [], tails: [] };
+  // tails: Map(convId → [ { msg, end }, ... ]) — one frontier per
+  // concurrent track of that conv (same-conv forks run in parallel). No
+  // global cap: conv count and per-conv concurrency are naturally bounded
+  // within a session, and a shared FIFO would evict still-active frontiers
+  // once enough split turns pass, silently disabling R2 for the evicted
+  // conv (codex P2, round 3).
+  return { list: [], tails: new Map() };
+}
+
+// Best-fit continuation frontier: msg within [f.msg, f.msg+2] and the
+// frontier ends at/before this turn starts; among fits, the latest-ending
+// one (mirrors the parallel-lane best-fit).
+function _wfSeqBestFrontier(frontiers, msg, ts) {
+  var best = null;
+  for (var i = 0; i < frontiers.length; i++) {
+    var f = frontiers[i];
+    if (f.msg > 0 && f.msg <= msg && msg <= f.msg + 2 && f.end <= ts && (!best || f.end > best.end)) best = f;
+  }
+  return best;
 }
 
 // Evidence feed: a turn already split out of main (agent-keyed lane,
-// overlap overflow, or a closed R1 bracket). Its (conv, msgCount, end)
-// frontier is what R2 stitches later same-conv dips onto.
+// overlap overflow, or a closed R1 bracket). Its (msg, end) frontier is
+// what R2 stitches later same-conv dips onto. A split turn that continues
+// an existing frontier advances it; otherwise it opens a new concurrent
+// track for its conv.
 function wfSeqFeedSplit(tracker, turn) {
   if (!tracker || !turn.convId || !(turn.msgCount > 0)) return;
   var ts = Number(turn.receivedAt) || 0;
-  tracker.tails.push({ conv: turn.convId, msg: turn.msgCount, end: ts + (parseFloat(turn.elapsed) || 0) * 1000 });
-  if (tracker.tails.length > 16) tracker.tails.shift();
+  var msg = turn.msgCount;
+  var end = ts + (parseFloat(turn.elapsed) || 0) * 1000;
+  var frontiers = tracker.tails.get(turn.convId);
+  if (!frontiers) { tracker.tails.set(turn.convId, [{ msg: msg, end: end }]); return; }
+  var best = _wfSeqBestFrontier(frontiers, msg, ts);
+  if (best) { best.msg = msg; best.end = end; }
+  else frontiers.push({ msg: msg, end: end });
 }
 
 // Main-candidate feed. Returns { place: 'main'|'excursion', closed }.
@@ -302,14 +327,13 @@ function wfSeqFeedMain(tracker, turn) {
     if (list[i].convId === conv) prevSame = list[i];
   }
   if (prevSame && msg > 0 && msg < (prevSame.msgCount || 0)) {
-    for (var j = tracker.tails.length - 1; j >= 0; j--) {
-      var t = tracker.tails[j];
-      if (t.conv === conv && t.msg <= msg && msg <= t.msg + 2 && t.end <= ts) {
-        t.msg = msg; // frontier advances with the stitched turn
-        t.end = ts + (parseFloat(turn.elapsed) || 0) * 1000;
-        res.place = 'excursion';
-        return res;
-      }
+    var frontiers = tracker.tails.get(conv);
+    var fit = frontiers ? _wfSeqBestFrontier(frontiers, msg, ts) : null;
+    if (fit) {
+      fit.msg = msg; // frontier advances with the stitched turn
+      fit.end = ts + (parseFloat(turn.elapsed) || 0) * 1000;
+      res.place = 'excursion';
+      return res;
     }
   }
   list.splice(lo, 0, turn);
