@@ -167,3 +167,33 @@ describe('#230 codex P2: entry-rendering arrival-order independence', () => {
     assert.equal(sess.subCount, 1);
   });
 });
+
+describe('#230 codex P2 round 6: reordered arrival recomputes the turn list seq layer', () => {
+  it('overturned closed excursion flips back to main; displayNums match batch classification (fail-on-old)', () => {
+    const ctx = loadDashboardContext();
+    // completion order: A1, B1, A2 close the B bracket (B1 → s1), then B0 —
+    // same conv as B1, starts earliest, spans A1 — arrives last
+    ctx.addEntry(mkTurn(130000, 5, 'convA', 10));   // A1
+    ctx.addEntry(mkTurn(140000, 5, 'convB', 12));   // B1
+    ctx.addEntry(mkTurn(150000, 5, 'convA', 12));   // A2 → bracket closes
+    assert.equal(ctx.allEntries[1].isSubagent, true, 'precondition: B1 retro-flipped by A-B-A');
+    assert.equal(ctx.allEntries[1].displayNum, 's1');
+    ctx.addEntry(mkTurn(1000, 136, 'convB', 8));    // B0: 1000..137000, reordered arrival
+    // chronological truth B0-A1-B1-A2: trunk = conv B, A1 is the excursion,
+    // B1 flips BACK to main, A2 stays main (trunk-advance pending tail)
+    assert.equal(ctx.allEntries.map(e => e.isSubagent).join(','), 'true,false,false,false');
+    assert.equal(ctx.allEntries.map(e => e.displayNum).join(','), 's1,1,2,3');
+    const sess = ctx.sessionsMap.get(SID);
+    assert.equal(sess.mainCount, 3);
+    assert.equal(sess.subCount, 1);
+    // AC5: the turn list and the swimlane agree on every turn
+    const sessEntries = ctx.allEntries.filter(e => e.sessionId === SID);
+    const lanes = ctx.wfInferLanes(sessEntries, []);
+    const mainIds = new Set(lanes[0].turns.map(t => t.id));
+    for (const en of sessEntries) {
+      assert.equal(!en.isSubagent, mainIds.has(en.id),
+        'entry ' + en.id + ': turn list isSubagent=' + en.isSubagent +
+        ' vs swimlane ' + (mainIds.has(en.id) ? 'main' : 'sub-lane'));
+    }
+  });
+});
