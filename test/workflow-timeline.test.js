@@ -1485,3 +1485,29 @@ describe('#230 append-only tail points (re-audit regression)', () => {
     assert.equal(forkLane.turns.map(function(t) { return t.id; }).join(','), 's1,s2,d1');
   });
 });
+
+// ── #230 codex P2 (round 4): frontier TTL — stale branch points retire ──────
+// Real stitch gaps: p50=22s, p90=3min, every verified-good stitch ≤2min
+// (439-session audit). A dip landing on a branch point from an hour ago is
+// an edit/rewind collision, not a fork continuation.
+describe('#230 frontier TTL (codex P2 round 4)', () => {
+  function mkSeq(id, at, elapsed, conv, msg, opts) {
+    return mkEntry(id, 's1', 'claude-opus-4-6', at, elapsed, Object.assign(
+      { agentKey: 'orchestrator', agentLabel: 'Orchestrator', convId: conv, msgCount: msg }, opts || {}));
+  }
+
+  it('a dip 16 minutes after the frontier ended does not stitch — stays in main (fail-on-old)', () => {
+    const ctx = loadWfModule();
+    var lanes = ctx.wfInferLanes([
+      mkSeq('m1', 1000, 5, 'convA', 53),
+      mkSeq('m2', 10000, 60, 'convA', 55),                 // 10000..70000
+      mkSeq('s1', 20000, 5, 'convA', 51),                  // overlap-split → frontier ends 25000
+      mkSeq('d1', 25000 + 16 * 60 * 1000, 5, 'convA', 51), // 16min later: rewind-shaped
+      mkSeq('m3', 25000 + 17 * 60 * 1000, 5, 'convA', 57),
+    ], []);
+    assert.equal(lanes[0].turns.map(function(t) { return t.id; }).join(','), 'm1,m2,d1,m3',
+      'a 16-minute-later dip is an edit/rewind, not a fork continuation');
+    var forkLane = lanes.find(function(l) { return (l.key || '').indexOf('parallel-') === 0; });
+    assert.equal(forkLane.turns.map(function(t) { return t.id; }).join(','), 's1');
+  });
+});

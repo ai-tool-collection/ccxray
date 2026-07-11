@@ -271,14 +271,26 @@ function wfCreateSeqTracker() {
   return { list: [], tails: new Map() };
 }
 
-// Best-fit continuation frontier: msg within [f.msg, f.msg+2] and the
-// frontier ends at/before this turn starts; among fits, the latest-ending
-// one (mirrors the parallel-lane best-fit).
+// R2 frontier time-to-live: a dip only stitches onto a frontier whose
+// track ended within this window. Measurement basis (439-session audit,
+// 2026-07-11, owner-approved): real stitch gaps p50=22s, p90=3min, every
+// verified-good stitch ≤2min; all 6 sampled >10min fits were edit/rewind
+// shapes, not fork continuations. 15min keeps ~30× headroom over the real
+// distribution while structurally closing hour-scale rewind collisions
+// with stale branch points (codex P2, round 4).
+var WF_SEQ_FRONTIER_TTL_MS = 15 * 60 * 1000;
+
+// Best-fit continuation frontier: msg within [f.msg, f.msg+2], the
+// frontier ends at/before this turn starts AND within the TTL window;
+// among fits, the latest-ending one (mirrors the parallel-lane best-fit).
+// Retired points stay in the Map — eligibility is decided at lookup.
 function _wfSeqBestFrontier(frontiers, msg, ts) {
   var best = null;
   for (var i = 0; i < frontiers.length; i++) {
     var f = frontiers[i];
-    if (f.msg > 0 && f.msg <= msg && msg <= f.msg + 2 && f.end <= ts && (!best || f.end > best.end)) best = f;
+    if (f.msg > 0 && f.msg <= msg && msg <= f.msg + 2 && f.end <= ts &&
+        ts - f.end <= WF_SEQ_FRONTIER_TTL_MS &&
+        (!best || f.end > best.end)) best = f;
   }
   return best;
 }

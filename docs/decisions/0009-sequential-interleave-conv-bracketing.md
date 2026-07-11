@@ -63,7 +63,13 @@ per-turn signals — the ADR 0005 shape, like `AGENT_KEY_UNRELIABLE`:
   concurrent track's sequential continuation still needs — the merge
   variant regressed the 439-session re-audit from 3 to 8 jumpreturn
   residues (2026-07-11). Only an R2 stitch advances a point, because the
-  dip consumed it. Memory is O(split turns) per session.
+  dip consumed it. Memory is O(split turns) per session. Points **retire
+  after 15 minutes** (`WF_SEQ_FRONTIER_TTL_MS`, judged at lookup — never
+  removed from the Map): measured over the 439-session audit, real stitch
+  gaps are p50=22s / p90=3min and every verified-good stitch is ≤2min,
+  while all 6 sampled >10min fits were edit/rewind shapes — 15min keeps
+  ~30× headroom yet structurally closes hour-scale rewind collisions with
+  stale branch points (codex P2 round 4; owner-approved 2026-07-11).
 - **Batch = live by construction**: the tracker re-runs the full trunk walk
   on every feed, so the live path equals the batch pass on every prefix.
   In `wfInferLanes` the overlap sweep (ADR 0008) and the seq pass iterate
