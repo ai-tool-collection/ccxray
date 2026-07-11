@@ -1456,3 +1456,32 @@ describe('#230 seq tracker per-conv frontiers (codex P2 round 3)', () => {
     assert.equal(fr.map(function(f) { return f.msg; }).sort().join(','), '45,53');
   });
 });
+
+// ── #230 re-audit regression: tail points are append-only, never merged ─────
+// A fork branches concurrent tracks from the same historical msgCount. The
+// merge variant (069246a) folded a later "continuation" split (53) into the
+// branch point (51), erasing it — the other track's sequential continuation
+// (dip 51) could no longer stitch and stayed in main (439-session re-audit:
+// jumpreturn residue 3→8, sessions f38af1fd/a5d66419/67f906d9).
+describe('#230 append-only tail points (re-audit regression)', () => {
+  function mkSeq(id, at, elapsed, conv, msg, opts) {
+    return mkEntry(id, 's1', 'claude-opus-4-6', at, elapsed, Object.assign(
+      { agentKey: 'orchestrator', agentLabel: 'Orchestrator', convId: conv, msgCount: msg }, opts || {}));
+  }
+
+  it('historical branch point survives a later continuation split (fail-on-old)', () => {
+    const ctx = loadWfModule();
+    var lanes = ctx.wfInferLanes([
+      mkSeq('m1', 1000, 5, 'convA', 53),
+      mkSeq('m2', 10000, 60, 'convA', 55),   // 10000..70000
+      mkSeq('s1', 20000, 5, 'convA', 51),    // overlap-split: branch point 51
+      mkSeq('s2', 30000, 6, 'convA', 53),    // overlap-split: same-track continuation
+      mkSeq('d1', 71000, 5, 'convA', 51),    // other track's sequential continuation
+      mkSeq('m3', 80000, 5, 'convA', 57),
+    ], []);
+    assert.equal(lanes[0].turns.map(function(t) { return t.id; }).join(','), 'm1,m2,m3',
+      'dip 51 must stitch onto the preserved branch point, not stay in main');
+    var forkLane = lanes.find(function(l) { return (l.key || '').indexOf('parallel-') === 0; });
+    assert.equal(forkLane.turns.map(function(t) { return t.id; }).join(','), 's1,s2,d1');
+  });
+});

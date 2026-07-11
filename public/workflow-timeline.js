@@ -260,12 +260,14 @@ function wfCreateSeqTracker() {
   // order, never arrival order: a foreign-conv turn arriving first would
   // otherwise become the trunk and no bracket would ever close (codex P2,
   // round 1).
-  // tails: Map(convId → [ { msg, end }, ... ]) — one frontier per
-  // concurrent track of that conv (same-conv forks run in parallel). No
-  // global cap: conv count and per-conv concurrency are naturally bounded
-  // within a session, and a shared FIFO would evict still-active frontiers
-  // once enough split turns pass, silently disabling R2 for the evicted
-  // conv (codex P2, round 3).
+  // tails: Map(convId → [ { msg, end }, ... ]) — APPEND-ONLY tail points,
+  // one per split turn of that conv. Per-conv so no shared FIFO can evict
+  // a still-active conv's evidence (codex P2, round 3); append-only so a
+  // historical branch point survives later splits that "continue" it —
+  // merging erased the fork point another concurrent track's sequential
+  // continuation still needed (439-session re-audit regression,
+  // 2026-07-11: jumpreturn residue 3→8). No cap: memory is O(split turns)
+  // per session — trivial.
   return { list: [], tails: new Map() };
 }
 
@@ -282,20 +284,20 @@ function _wfSeqBestFrontier(frontiers, msg, ts) {
 }
 
 // Evidence feed: a turn already split out of main (agent-keyed lane,
-// overlap overflow, or a closed R1 bracket). Its (msg, end) frontier is
-// what R2 stitches later same-conv dips onto. A split turn that continues
-// an existing frontier advances it; otherwise it opens a new concurrent
-// track for its conv.
+// overlap overflow, or a closed R1 bracket). Its (msg, end) becomes an
+// append-only tail point for its conv — R2 stitches later same-conv dips
+// onto the best-fitting point. NEVER merged: a fork can branch several
+// concurrent tracks from the same historical msgCount, and folding a
+// "continuation" split into an earlier point erases the branch point that
+// another track's sequential continuation still needs. Only an R2 stitch
+// advances a point — the dip consumed it, so its old value has no further
+// consumer.
 function wfSeqFeedSplit(tracker, turn) {
   if (!tracker || !turn.convId || !(turn.msgCount > 0)) return;
   var ts = Number(turn.receivedAt) || 0;
-  var msg = turn.msgCount;
-  var end = ts + (parseFloat(turn.elapsed) || 0) * 1000;
   var frontiers = tracker.tails.get(turn.convId);
-  if (!frontiers) { tracker.tails.set(turn.convId, [{ msg: msg, end: end }]); return; }
-  var best = _wfSeqBestFrontier(frontiers, msg, ts);
-  if (best) { best.msg = msg; best.end = end; }
-  else frontiers.push({ msg: msg, end: end });
+  if (!frontiers) tracker.tails.set(turn.convId, frontiers = []);
+  frontiers.push({ msg: turn.msgCount, end: ts + (parseFloat(turn.elapsed) || 0) * 1000 });
 }
 
 // Main-candidate feed. Returns { place: 'main'|'excursion', closed }.
