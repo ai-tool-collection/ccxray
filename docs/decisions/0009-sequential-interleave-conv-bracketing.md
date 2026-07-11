@@ -41,7 +41,12 @@ both rules once; `wfInferLanes` (batch), `wfAddEntry` (live), and
 per-turn signals — the ADR 0005 shape, like `AGENT_KEY_UNRELIABLE`:
 
 - **R1 — convId run bracketing with trunk-advance**: main-candidate turns
-  form convId runs in arrival order. Foreign-conv runs are *provisionally
+  form convId runs in **start order** — the tracker keeps its candidate
+  list sorted by `(receivedAt, id)` internally, because entries arrive in
+  completion order: a nested turn can finish before the longer turn that
+  started first, and arrival-order runs would let a foreign-conv turn
+  arriving first become the trunk, wedging every bracket open for the rest
+  of the session (codex P2, round 1). Foreign-conv runs are *provisionally
   main*; when the trunk conv reappears, everything in between is an
   excursion (retro-moved out). A trunk that never returns = compaction —
   the pending runs stay main. `isCompacted` is never consulted.
@@ -82,6 +87,15 @@ Root fix remains #222's wire-level identity ask.
 the trunk conv returns (retro-move on bracket close; the turn list
 renumbers via `_seqRetroFlip`). Same acceptance as #229's reverse
 retro-move.
+
+**Boundary — live reverse-overlap stays ADR 0008 territory**: the turn
+list's forward-only overlap check still records an early-arriving nested
+*same-conv* turn as main until the next batch rebuild (the sorted sweep is
+the authoritative resolver — pre-existing gap, unchanged here). What the
+sorted candidate list fixes is the seq tracker's own order sensitivity:
+arrival order can no longer poison the trunk, and when the nested
+early-arriver is a *foreign* conv, the R1 bracket close now also heals the
+turn list live via retro-flip.
 
 **Bad — rewind-across-compaction**: /rewind restoring a pre-compaction
 checkpoint makes the old conv "return", so the compacted run in between

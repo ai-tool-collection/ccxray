@@ -254,7 +254,13 @@ function _wfSubLaneKey(base, entry) {
 // tracker in both files, and it never consults isCompacted — see
 // docs/decisions/0009-sequential-interleave-conv-bracketing.md
 function wfCreateSeqTracker() {
-  return { runs: [], tails: [] };
+  // list: main-candidate turns kept sorted by (receivedAt, id) — entries
+  // arrive in COMPLETION order (a nested turn can finish before the longer
+  // turn that started first), so run structure must derive from start
+  // order, never arrival order: a foreign-conv turn arriving first would
+  // otherwise become the trunk and no bracket would ever close (codex P2,
+  // round 1).
+  return { list: [], tails: [] };
 }
 
 // Evidence feed: a turn already split out of main (agent-keyed lane,
@@ -277,14 +283,23 @@ function wfSeqFeedMain(tracker, turn) {
   var conv = turn.convId, msg = turn.msgCount || 0;
   var ts = Number(turn.receivedAt) || 0;
   if (!conv || !ts) return res; // inert: never a boundary, never moved
+  // Sorted insertion point by (receivedAt, id): deterministic under the
+  // arrival-order ≠ start-order inversions of nested turns (codex P2).
+  var list = tracker.list;
+  var lo = 0, hi = list.length;
+  while (lo < hi) {
+    var mid = (lo + hi) >> 1;
+    var mts = Number(list[mid].receivedAt) || 0;
+    if (mts < ts || (mts === ts && String(list[mid].id) <= String(turn.id))) lo = mid + 1;
+    else hi = mid;
+  }
   // R2 first: a dip that stitches onto a split-out frontier is NOT a trunk
-  // return — it must not extend a run or close a bracket.
+  // return — it must not join the list or close a bracket. prevSame is the
+  // chronologically previous same-conv turn (scan back from the insertion
+  // point), never the last-ARRIVED one.
   var prevSame = null;
-  for (var i = tracker.runs.length - 1; i >= 0 && !prevSame; i--) {
-    if (tracker.runs[i].conv === conv) {
-      var rts = tracker.runs[i].turns;
-      prevSame = rts[rts.length - 1];
-    }
+  for (var i = lo - 1; i >= 0 && !prevSame; i--) {
+    if (list[i].convId === conv) prevSame = list[i];
   }
   if (prevSame && msg > 0 && msg < (prevSame.msgCount || 0)) {
     for (var j = tracker.tails.length - 1; j >= 0; j--) {
@@ -297,20 +312,27 @@ function wfSeqFeedMain(tracker, turn) {
       }
     }
   }
-  var last = tracker.runs[tracker.runs.length - 1];
-  if (last && last.conv === conv) last.turns.push(turn);
-  else tracker.runs.push({ conv: conv, turns: [turn] });
+  list.splice(lo, 0, turn);
   res.closed = _wfSeqCloseBrackets(tracker);
   return res;
 }
 
-// Re-run the trunk walk over the accumulated runs. Any run bracketed by a
-// reappearance of an earlier conv is an excursion; leftover pending runs
-// mean that trunk conv never returned — trunk advances (compaction) and
-// they stay main. Because the whole walk reruns on every feed, the live
-// path equals the batch pass on every prefix by construction.
+// Rebuild convId runs from the (receivedAt, id)-sorted candidate list and
+// re-run the trunk walk. Any run bracketed by a reappearance of an earlier
+// conv is an excursion; leftover pending runs mean that trunk conv never
+// returned — trunk advances (compaction) and they stay main. Because runs
+// derive from the sorted list (never arrival order) and the walk reruns on
+// every feed, the live path converges to the batch pass regardless of the
+// order entries complete in.
 function _wfSeqCloseBrackets(tracker) {
-  var runs = tracker.runs;
+  var list = tracker.list;
+  if (list.length < 3) return null;
+  var runs = [];
+  for (var li = 0; li < list.length; li++) {
+    var last = runs[runs.length - 1];
+    if (last && last.conv === list[li].convId) last.turns.push(list[li]);
+    else runs.push({ conv: list[li].convId, turns: [list[li]] });
+  }
   if (runs.length < 3) return null;
   var excursed = new Set();
   var work = runs;
@@ -326,20 +348,15 @@ function _wfSeqCloseBrackets(tracker) {
     work = pending;
   }
   if (!excursed.size) return null;
-  var out = [], turns = [];
-  for (var r = 0; r < runs.length; r++) {
-    if (excursed.has(runs[r])) {
-      for (var e = 0; e < runs[r].turns.length; e++) {
-        turns.push(runs[r].turns[e]);
-        wfSeqFeedSplit(tracker, runs[r].turns[e]); // excursed turns become frontiers
-      }
-      continue;
+  var turns = [];
+  excursed.forEach(function(r) {
+    for (var e = 0; e < r.turns.length; e++) {
+      turns.push(r.turns[e]);
+      wfSeqFeedSplit(tracker, r.turns[e]); // excursed turns become frontiers
     }
-    var lastOut = out[out.length - 1];
-    if (lastOut && lastOut.conv === runs[r].conv) lastOut.turns = lastOut.turns.concat(runs[r].turns);
-    else out.push(runs[r]);
-  }
-  tracker.runs = out;
+  });
+  var turnSet = new Set(turns);
+  tracker.list = list.filter(function(t) { return !turnSet.has(t); });
   turns.sort(function(a, b) { return (Number(a.receivedAt) || 0) - (Number(b.receivedAt) || 0); });
   return turns;
 }

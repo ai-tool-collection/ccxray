@@ -1297,3 +1297,72 @@ describe('#230 sequential interleave (ADR 0009)', () => {
     assert.equal(lanes[0].turns.length, 3);
   });
 });
+
+// ── #230 codex P2 (round 1): arrival order must not poison the seq tracker ──
+// Entries arrive in COMPLETION order. A nested turn (starts later, finishes
+// first) arrives before the long turn that contains it — if the tracker
+// derived run structure from arrival order, a foreign-conv turn arriving
+// first would become the trunk and no bracket would ever close.
+describe('#230 seq tracker arrival-order independence (codex P2)', () => {
+  function mkSeq(id, at, elapsed, conv, msg, opts) {
+    return mkEntry(id, 's1', 'claude-opus-4-6', at, elapsed, Object.assign(
+      { agentKey: 'orchestrator', agentLabel: 'Orchestrator', convId: conv, msgCount: msg }, opts || {}));
+  }
+  function mainIds(lanes) {
+    return lanes[0].turns.map(function(t) { return t.id; }).sort().join(',');
+  }
+  function nonMainIds(lanes) {
+    var out = [];
+    for (var i = 1; i < lanes.length; i++)
+      for (var j = 0; j < lanes[i].turns.length; j++) out.push(lanes[i].turns[j].id);
+    return out.sort().join(',');
+  }
+
+  it('early-arriving nested foreign conv cannot become the trunk (fail-on-old)', () => {
+    const ctx = loadWfModule();
+    // b1 is nested inside a1's span and completes first → arrives first
+    var b1 = mkSeq('b1', 13000, 5, 'convB', 4, { model: 'claude-sonnet-5' });
+    var a1 = mkSeq('a1', 1000, 60, 'convA', 10); // 1000..61000, arrives second
+    var a2 = mkSeq('a2', 62000, 5, 'convA', 12);
+    ctx.allEntries = [b1];
+    ctx.wfState = ctx.wfBuildState('s1');
+    ctx.wfAddEntry(a1);
+    ctx.wfAddEntry(a2);
+    assert.equal(mainIds(ctx.wfState.lanes), 'a1,a2', 'trunk must be conv A (chronologically first), not the first-arrived conv B');
+    assert.equal(nonMainIds(ctx.wfState.lanes), 'b1');
+    // and the batch rebuild agrees on classification
+    var batch = ctx.wfInferLanes([b1, a1, a2], []);
+    assert.equal(mainIds(batch), 'a1,a2');
+    assert.equal(nonMainIds(batch), 'b1');
+  });
+
+  it('classification is arrival-order independent: completion-order == chronological == batch', () => {
+    function fixture() {
+      return {
+        a1: mkSeq('a1', 1000, 60, 'convA', 10),  // 1000..61000
+        b1: mkSeq('b1', 13000, 5, 'convB', 4, { model: 'claude-sonnet-5' }),
+        b2: mkSeq('b2', 19000, 5, 'convB', 6, { model: 'claude-sonnet-5' }),
+        a2: mkSeq('a2', 62000, 5, 'convA', 12),
+        a3: mkSeq('a3', 68000, 5, 'convA', 14),
+      };
+    }
+    function liveFeed(order) {
+      const c = loadWfModule();
+      var f = fixture();
+      c.allEntries = [f[order[0]]];
+      c.wfState = c.wfBuildState('s1');
+      for (var i = 1; i < order.length; i++) c.wfAddEntry(f[order[i]]);
+      return c.wfState.lanes;
+    }
+    var completion = liveFeed(['b1', 'b2', 'a1', 'a2', 'a3']); // nested b's finish first
+    var chrono = liveFeed(['a1', 'b1', 'b2', 'a2', 'a3']);
+    const cb = loadWfModule();
+    var f = fixture();
+    var batch = cb.wfInferLanes([f.a1, f.b1, f.b2, f.a2, f.a3], []);
+    assert.equal(mainIds(completion), 'a1,a2,a3');
+    assert.equal(mainIds(chrono), mainIds(completion));
+    assert.equal(mainIds(batch), mainIds(completion));
+    assert.equal(nonMainIds(chrono), nonMainIds(completion));
+    assert.equal(nonMainIds(batch), nonMainIds(completion));
+  });
+});

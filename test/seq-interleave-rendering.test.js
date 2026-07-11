@@ -151,3 +151,19 @@ describe('#230 entry-rendering sequential interleave (ADR 0005/0009)', () => {
     }
   });
 });
+
+describe('#230 codex P2: entry-rendering arrival-order independence', () => {
+  it('early-arriving nested foreign conv is retro-flipped when the real trunk returns (fail-on-old)', () => {
+    const ctx = loadDashboardContext();
+    // completion order: nested teammate turn b1 arrives before the long a1
+    ctx.addEntry(mkTurn(13000, 5, 'convB', 4, { model: 'claude-sonnet-5' }));  // b1: 13000..18000
+    ctx.addEntry(mkTurn(1000, 60, 'convA', 10));                               // a1: 1000..61000, arrives second
+    ctx.addEntry(mkTurn(62000, 5, 'convA', 12));                               // a2 → trunk A returns
+    assert.equal(ctx.allEntries.map(e => e.isSubagent).join(','), 'true,false,false',
+      'the first-arrived foreign-conv turn must not poison the trunk');
+    assert.equal(ctx.allEntries.map(e => e.displayNum).join(','), 's1,1,2');
+    const sess = ctx.sessionsMap.get(SID);
+    assert.equal(sess.mainCount, 2);
+    assert.equal(sess.subCount, 1);
+  });
+});
