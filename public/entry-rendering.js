@@ -258,6 +258,37 @@ function getCriticalMarker(stopReason, httpStatus, ctxPct) {
 }
 
 
+// #230 R1 retro: a closed bracket means turns previously numbered as main
+// were actually a sequential excursion (teammate/fan-out). Flip them to
+// subagent and renumber the whole session — numbering is arrival-ordered,
+// so every displayNum after the flip point shifts. DOM cards are patched in
+// place (class + number); the swimlane does its own retro (_wfSeqRetroMove).
+// sess._recentMainSpans may retain a flipped turn's span for up to 5 turns —
+// accepted transient (spans only feed the overlap check).
+function _seqRetroFlip(sid, sess, closedTurns) {
+  const closedIds = new Set(closedTurns.map(t => t.id));
+  let mainN = 0, subN = 0, retryN = 0;
+  for (let i = 0; i < allEntries.length; i++) {
+    const en = allEntries[i];
+    if (en.sessionId !== sid) continue;
+    if (closedIds.has(en.id)) en.isSubagent = true;
+    const num = en.isRetry ? 'r' + (++retryN) : en.isSubagent ? 's' + (++subN) : String(++mainN);
+    if (en.displayNum === num) continue;
+    en.displayNum = num;
+    if (window.entryById && window.entryById.has(en.id)) window.entryById.get(en.id).displayNum = num;
+    if (!_loading) {
+      const card = colTurns.querySelector('.turn-item[data-entry-idx="' + i + '"]');
+      if (card) {
+        card.classList.toggle('turn-sub', !!en.isSubagent);
+        card.dataset.sessNum = num;
+        const numEl = card.querySelector('.turn-num');
+        if (numEl) numEl.textContent = en.isSubagent ? '↳' + num : '#' + num;
+      }
+    }
+  }
+  sess.mainCount = mainN; sess.subCount = subN; sess.retryCount = retryN;
+}
+
 function addEntry(e) {
   if (entryCount === 0) colTurns.innerHTML = '<div class="col-sticky-header"><div class="col-title" style="display:flex;align-items:center">Turns<span id="scroll-toggle" onclick="toggleFollowLive()" style="cursor:pointer;font-size:10px;margin-left:auto"><span class="scroll-on active">ON</span> <span class="scroll-off">OFF</span></span></div><div id="session-tool-bar" style="display:none"></div><div id="ctx-legend"><span><span class="ctx-legend-dot" style="background:var(--color-cache-read)"></span>cache read</span><span><span class="ctx-legend-dot" style="background:var(--color-cache-write)"></span>cache write</span><span><span class="ctx-legend-dot" style="background:var(--color-input)"></span>input</span></div><div id="session-sparkline"></div></div>';
   const idx = entryCount++;
@@ -350,6 +381,27 @@ function addEntry(e) {
         isSubagent = true; break;
       }
     }
+  }
+  // #230 sequential interleave: agentKey and overlap can't see a sequential
+  // teammate/fork. The shared tracker (workflow-timeline.js, loaded first)
+  // classifies: R2 same-conv msgCount dips that continue a split-out
+  // frontier flip to subagent HERE, before numbering; R1 foreign-conv runs
+  // stay provisionally main and are retro-flipped by _seqRetroFlip when the
+  // trunk conv returns. Retries carry the original request's msgCount —
+  // they are neither frontier evidence nor main candidates.
+  // INVARIANT: same tracker semantics as wfInferLanes/wfAddEntry — see
+  // docs/decisions/0009-sequential-interleave-conv-bracketing.md
+  let seqVerdict = null;
+  if (typeof wfCreateSeqTracker === 'function' && !isRetry) {
+    if (!sess._seqTracker) sess._seqTracker = wfCreateSeqTracker();
+    const seqTurn = { id: entryId, convId: e.convId || null, msgCount, receivedAt: e.receivedAt, elapsed: e.elapsed };
+    if (isSubagent) {
+      wfSeqFeedSplit(sess._seqTracker, seqTurn);
+    } else {
+      seqVerdict = wfSeqFeedMain(sess._seqTracker, seqTurn);
+      if (seqVerdict.place === 'excursion') isSubagent = true;
+    }
+    if (seqVerdict && seqVerdict.closed) _seqRetroFlip(sid, sess, seqVerdict.closed);
   }
   sess.count++;
   if (isRetry) { sess.retryCount = (sess.retryCount || 0) + 1; }
