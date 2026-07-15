@@ -13,8 +13,8 @@ function wfStepsRoot() {
 // ── Constants ─────────────────────────────────────────────────────────────
 // #144/#149: per-agent identity palette (docs/wf-color-identity/DESIGN.md).
 // `main` pinned; hashed off lane.key. 7 hues × 7 shapes = 50 combos.
-// CVD-verified: magenta (#d742a5) + indigo (#4242d7) clear all 9 reserved.
-const WF_LANE_COLORS = { main: '#42a3fd', hashed: ['#ffdbaa', '#dc7d96', '#a1a716', '#45f8ef', '#d1d843', '#d742a5', '#4242d7'] };
+// #233: all 8 colors ≥3:1 WCAG contrast on both dark (#0d1117) and light (#ffffff).
+const WF_LANE_COLORS = { main: '#3b82c4', hashed: ['#d07028', '#c24878', '#6d8f1c', '#1f9990', '#9a8818', '#9838a0', '#5060d4'] };
 const WF_LABEL_W = 240, WF_LANE_GAP = 4;
 // v8 ctx-split (#121): 44px ctx% bars + 8px cost track + event tracks (8px collapsed / 4×8px expanded)
 const WF_BAR_H = 44, WF_COST_TRACK_H = 8, WF_EV_H = 8, WF_EV_H_SEL = 32;
