@@ -96,3 +96,25 @@ ADR processes fewer candidates for sessions with teammates. Fork turns
 (same coreHash as main) are unaffected — they still transit main and remain
 fully subject to the overlap invariant this ADR establishes; ADR 0010 is
 explicitly scoped to not touch fork handling.
+
+## Amended by #261 (2026-07-17)
+
+The invariant "no lane can contain two temporally-overlapping turns" is
+relaxed for same-convId parallel lanes: within a `parallel-<model>:<convId>`
+lane, temporal overlap IS allowed — the lane represents a resource pool
+(identity channel), not a concurrency track.
+
+Expert consensus (Tufte, Munzner, van der Aalst): without wire-level
+instance IDs, splitting same-convId turns into numbered lanes fabricates
+identity from timing artifacts. A single 75s overlap creating permanent
+`#1`/`#2` lanes has a lie factor of ~260× (Tufte); represents a wrong
+abstraction level (Munzner); and violates case-notion requirements
+(van der Aalst).
+
+Turns **without** `convId` (legacy data, no identity signal) retain the
+strict no-overlap split — the old behavior is the correct fallback when
+identity is unknown.
+
+The three mutation sites (`wfInferLanes`, `wfAddEntry`,
+`_wfSeqRetroMove`) now check `turn.convId` before creating `#N` lanes:
+present → reuse `fam[0]`; absent → old split behavior.
