@@ -1951,3 +1951,183 @@ describe('#236 lane eligibility', () => {
     assert.equal(ctx._wfIsLaneEligible({ status: 404, msgCount: 12 }), true, 'errored turn that DID carry messages is eligible');
   });
 });
+
+describe('#238 mixed-model labels', () => {
+  it('mixed-model lane: label derived from lane.turns shows dominant + minority', () => {
+    const ctx = loadWfModule();
+    var entries = [
+      mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 2, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+      mkEntry('t2', 's1', 'claude-opus-4-6', 5000, 2, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+      mkEntry('t3', 's1', 'claude-fable-5', 9000, 2, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+      mkEntry('t4', 's1', 'claude-fable-5', 13000, 2, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+      mkEntry('t5', 's1', 'claude-opus-4-6', 17000, 2, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+    ];
+    var lanes = ctx.wfInferLanes(entries, []);
+    assert.equal(lanes.length, 1, 'legal /model switches stay in one main lane');
+    var lane = lanes[0];
+    assert.equal(lane.model, 'claude-opus-4-6', 'majority-vote lane.model is unchanged (3 opus vs 2 fable)');
+    var lbl = ctx._wfLaneModelLabel(lane);
+    assert.equal(lbl.text, 'opus-4-6 +fable-5');
+    assert.ok(lbl.title.indexOf('opus-4-6') !== -1 && lbl.title.indexOf('fable-5') !== -1, 'title lists both models');
+  });
+
+  it('single-model lane label is unchanged (no +)', () => {
+    const ctx = loadWfModule();
+    var entries = [
+      mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 5, {}),
+      mkEntry('t2', 's1', 'claude-opus-4-6', 6000, 3, {}),
+    ];
+    var lanes = ctx.wfInferLanes(entries, []);
+    var lbl = ctx._wfLaneModelLabel(lanes[0]);
+    assert.equal(lbl.text, 'opus-4-6');
+    assert.equal(lbl.title, 'opus-4-6');
+    assert.ok(lbl.text.indexOf('+') === -1, 'no + hint for a single-model lane');
+  });
+
+  it('three+ models collapse to "+N" instead of listing every minority model', () => {
+    const ctx = loadWfModule();
+    var entries = [
+      mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 2, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+      mkEntry('t2', 's1', 'claude-opus-4-6', 5000, 2, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+      mkEntry('t3', 's1', 'claude-opus-4-6', 9000, 2, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+      mkEntry('t4', 's1', 'claude-fable-5', 13000, 2, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+      mkEntry('t5', 's1', 'claude-fable-5', 17000, 2, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+      mkEntry('t6', 's1', 'claude-sonnet-4-6', 21000, 2, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+    ];
+    var lanes = ctx.wfInferLanes(entries, []);
+    assert.equal(lanes.length, 1);
+    var lbl = ctx._wfLaneModelLabel(lanes[0]);
+    assert.equal(lbl.text, 'opus-4-6 +2');
+  });
+
+  it('live path lanes never throw the label helper, even for a lane the batch tally never saw', () => {
+    const ctx = loadWfModule();
+    ctx.allEntries = [mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 5, {})];
+    ctx.wfState = ctx.wfBuildState('s1');
+    ctx.wfAddEntry(mkEntry('t2', 's1', 'claude-fable-5', 6000, 2, { isSubagent: true }));
+    // No .models field exists anymore (derived from lane.turns at call time),
+    // so a fresh subagent lane the live path mints has no maintained state to
+    // fall behind — the helper must still resolve cleanly off lane.turns.
+    for (var i = 0; i < ctx.wfState.lanes.length; i++) {
+      var lbl = ctx._wfLaneModelLabel(ctx.wfState.lanes[i]);
+      assert.equal(typeof lbl.text, 'string');
+      assert.ok(lbl.text.length > 0);
+    }
+  });
+
+  it('#238 part 2: R2 seq-stitch is tagged, ADR 0008 overlap split is not (batch, fail-on-old)', () => {
+    const ctx = loadWfModule();
+    function mkSeq(id, at, elapsed, conv, msg, opts) {
+      return mkEntry(id, 's1', 'claude-opus-4-6', at, elapsed, Object.assign(
+        { agentKey: 'orchestrator', agentLabel: 'Orchestrator', convId: conv, msgCount: msg }, opts || {}));
+    }
+    var lanes = ctx.wfInferLanes([
+      mkSeq('m1', 1000, 5, 'convA', 53),
+      mkSeq('m2', 10000, 60, 'convA', 55),   // long main turn 10000..70000
+      mkSeq('f1', 20000, 5, 'convA', 51),    // starts inside m2 -> ADR 0008 overlap split, NOT seq-stitched
+      mkSeq('f2', 71000, 5, 'convA', 51),    // after m2 ends -> ADR 0009 R2 dip stitch, IS seq-stitched
+      mkSeq('m3', 80000, 5, 'convA', 57),
+    ], []);
+    assert.equal(lanes.length, 2);
+    var main = lanes[0], sub = lanes[1];
+    assert.equal(sub.turns.map(function(t) { return t.id; }).join(','), 'f1,f2');
+    assert.ok(!sub.turns[0]._wfSeqStitched, 'f1 is an overlap split, not seq-stitched');
+    assert.equal(sub.turns[1]._wfSeqStitched, true, 'f2 is the R2 dip stitch');
+    for (var mi = 0; mi < main.turns.length; mi++) {
+      assert.ok(!main.turns[mi]._wfSeqStitched, 'main turns are never seq-stitched');
+    }
+  });
+
+  it('#238 part 2: live path agrees with batch on the same seq-stitch tag', () => {
+    const ctx = loadWfModule();
+    function mkSeq(id, at, elapsed, conv, msg, opts) {
+      return mkEntry(id, 's1', 'claude-opus-4-6', at, elapsed, Object.assign(
+        { agentKey: 'orchestrator', agentLabel: 'Orchestrator', convId: conv, msgCount: msg }, opts || {}));
+    }
+    ctx.allEntries = [mkSeq('m1', 1000, 5, 'convA', 53)];
+    ctx.wfState = ctx.wfBuildState('s1');
+    ctx.wfAddEntry(mkSeq('m2', 10000, 60, 'convA', 55));
+    ctx.wfAddEntry(mkSeq('f1', 20000, 5, 'convA', 51));
+    ctx.wfAddEntry(mkSeq('f2', 71000, 5, 'convA', 51));
+    ctx.wfAddEntry(mkSeq('m3', 80000, 5, 'convA', 57));
+    var sub = ctx.wfState.lanes.find(function(l) { return l.key !== 'main' && l.turns.length; });
+    assert.ok(sub, 'a sub-lane must exist');
+    assert.equal(sub.turns.map(function(t) { return t.id; }).join(','), 'f1,f2');
+    assert.ok(!sub.turns[0]._wfSeqStitched, 'live: f1 overlap split, not seq-stitched');
+    assert.equal(sub.turns[1]._wfSeqStitched, true, 'live: f2 seq-stitched, matches batch');
+  });
+
+  it('#238 P1: live-appended new model on main lane updates the label with no rebuild', () => {
+    const ctx = loadWfModule();
+    ctx.allEntries = [mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 5, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' })];
+    ctx.wfState = ctx.wfBuildState('s1');
+    var lane = ctx.wfState.lanes[0];
+    assert.equal(lane.key, 'main');
+    assert.equal(ctx._wfLaneModelLabel(lane).text, 'opus-4-6', 'starts single-model');
+    var newEntry = mkEntry('t2', 's1', 'claude-fable-5', 6000, 2, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' });
+    ctx.allEntries.push(newEntry);
+    ctx.wfAddEntry(newEntry);
+    assert.ok(ctx.wfState.lanes[0].turns.some(function(t) { return t.id === 't2'; }), 'new turn landed in main');
+    // Derived straight from lane.turns — the live append is reflected without
+    // any separate "keep the derived field current" step (the P1 bug class).
+    var lbl = ctx._wfLaneModelLabel(ctx.wfState.lanes[0]);
+    assert.equal(lbl.text, 'opus-4-6 +fable-5', 'label reflects the live model switch');
+  });
+
+  it('#238 codex P2#1: dominance ordering agrees between batch and live (count-dominant, not first-seen)', () => {
+    const ctx = loadWfModule();
+    // Opus arrives first but Fable ends up with more turns — the label's
+    // head must be the count-dominant model (fable-5) in both paths, not
+    // whichever model happened to appear first (the P1 live-append bug
+    // used first-seen order instead of count).
+    var batchEntries = [
+      mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 2, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+      mkEntry('t2', 's1', 'claude-fable-5', 5000, 2, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+      mkEntry('t3', 's1', 'claude-fable-5', 9000, 2, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+    ];
+    var batchLanes = ctx.wfInferLanes(batchEntries, []);
+    assert.equal(batchLanes.length, 1);
+    var batchLbl = ctx._wfLaneModelLabel(batchLanes[0]);
+
+    const ctx2 = loadWfModule();
+    ctx2.allEntries = [mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 2, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' })];
+    ctx2.wfState = ctx2.wfBuildState('s1');
+    [mkEntry('t2', 's1', 'claude-fable-5', 5000, 2, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' }),
+     mkEntry('t3', 's1', 'claude-fable-5', 9000, 2, { agentKey: 'orchestrator', agentLabel: 'Orchestrator' })].forEach(function(e) {
+      ctx2.allEntries.push(e);
+      ctx2.wfAddEntry(e);
+    });
+    var liveLbl = ctx2._wfLaneModelLabel(ctx2.wfState.lanes[0]);
+
+    assert.equal(batchLbl.text, 'fable-5 +opus-4-6', 'batch: count-dominant (fable x2) leads');
+    assert.equal(liveLbl.text, batchLbl.text, 'live matches batch — same derivation, same result');
+  });
+
+  it('#238 codex P2#2: derive-from-turns invariant — label reflects exactly what is in lane.turns', () => {
+    const ctx = loadWfModule();
+    var lane = { turns: [mkEntry('t1', 's1', 'claude-opus-4-6', 1000, 2, {})], model: 'claude-opus-4-6' };
+    assert.equal(ctx._wfLaneModelLabel(lane).text, 'opus-4-6', 'label matches the single turn present');
+    var foreign = mkEntry('t2', 's1', 'claude-fable-5', 2000, 2, {});
+    lane.turns.push(foreign);
+    assert.equal(ctx._wfLaneModelLabel(lane).text, 'opus-4-6 +fable-5', 'adding a turn of model X makes the label include X');
+    // Simulate _wfSeqRetroMove / an overlap split removing a turn from a lane
+    // (main.models used to keep the stale model after this — the P2 bug).
+    lane.turns = lane.turns.filter(function(t) { return t !== foreign; });
+    assert.equal(ctx._wfLaneModelLabel(lane).text, 'opus-4-6', 'removing the turn drops it from the label immediately');
+  });
+
+  it('#238 P2: stale _wfSeqStitched tag is cleared even for turns routed straight to an identity sublane', () => {
+    const ctx = loadWfModule();
+    var m1 = mkEntry('m1', 's1', 'claude-opus-4-6', 1000, 5,
+      { agentKey: 'orchestrator', agentLabel: 'Orchestrator', coreHash: '85771', convId: 'ebffe2' });
+    var t1 = mkEntry('t1', 's1', 'claude-sonnet-5', 2000, 3,
+      { agentKey: 'orchestrator', agentLabel: 'Orchestrator', coreHash: 'e6aa4', convId: '56a5def0' });
+    t1._wfSeqStitched = true; // stale tag from a prior wfInferLanes build
+    var lanes = ctx.wfInferLanes([m1, t1], []);
+    var teamLane = lanes.find(function(l) { return l.key === 'agent-orchestrator:56a5def0'; });
+    assert.ok(teamLane, 'expected the teammate to land in its coreHash identity lane, not main');
+    assert.equal(teamLane.turns[0].id, 't1');
+    assert.equal(teamLane.turns[0]._wfSeqStitched, false,
+      't1 never enters mainLane.turns, so a mainLane-scoped reset would miss it (fails on old code)');
+  });
+});

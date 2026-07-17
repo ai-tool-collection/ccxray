@@ -432,6 +432,15 @@ function wfInferLanes(entries, childEntries, seqTracker) {
   if (!entries.length && !childEntries.length) return [];
   if (!seqTracker) seqTracker = wfCreateSeqTracker();
 
+  // #238 part 2: reset across ALL input turns before lane partitioning — a
+  // turn tagged _wfSeqStitched on a prior build can route straight into an
+  // identity sublane (coreHash change) on this build and never enter
+  // mainLane.turns, so a reset scoped to mainLane.turns alone would miss it
+  // and leave a stale tag on its tooltip. Display-only — never read by the
+  // routing logic below.
+  for (var _ri = 0; _ri < entries.length; _ri++) entries[_ri]._wfSeqStitched = false;
+  for (var _rj = 0; _rj < childEntries.length; _rj++) childEntries[_rj]._wfSeqStitched = false;
+
   var laneMap = new Map();
   var mainLane = { name: 'main', key: 'main', turns: [], model: null, ctxWindow: 0, spawnParent: null };
   laneMap.set('main', mainLane);
@@ -568,7 +577,11 @@ function wfInferLanes(entries, childEntries, seqTracker) {
     for (var qi = 0; qi < seqStream.length; qi++) {
       if (seqStream[qi].split) { wfSeqFeedSplit(roundTracker, seqStream[qi].t); continue; }
       var verdict = wfSeqFeedMain(roundTracker, seqStream[qi].t);
-      if (verdict.place === 'excursion') excursed.push(seqStream[qi].t);
+      // #238 part 2: tag the R2-stitch verdict (never verdict.closed, which is
+      // R1 bracket-close — a different mechanism, see wfSeqFeedMain's doc
+      // comment) so the hover tooltip can distinguish a seq-stitch from an
+      // ADR 0008 temporal-overlap split. Display-only; doesn't affect placement.
+      if (verdict.place === 'excursion') { seqStream[qi].t._wfSeqStitched = true; excursed.push(seqStream[qi].t); }
       if (verdict.closed) for (var vc = 0; vc < verdict.closed.length; vc++) excursed.push(verdict.closed[vc]);
     }
     if (!excursed.length) {
@@ -681,6 +694,11 @@ function wfInferLanes(entries, childEntries, seqTracker) {
         ac[ak].n++;
       }
     }
+    // #238: a lane can legally hold multiple models (mid-session /model
+    // switches survive ADR 0008/0009 lane placement). Dominant model still
+    // drives color/placement; the full breakdown for the label is derived
+    // from lane.turns at render time by _wfLaneModelLabel (no maintained
+    // copy — see that function's comment).
     lane.model = Object.entries(mc).sort(function(a, b) { return b[1] - a[1]; })[0][0];
     lane.ctxWindow = lane.turns[0].maxContext || lane.ctxWindow;
     var topA = Object.entries(ac).sort(function(a, b) { return b[1].n - a[1].n; })[0];
@@ -918,6 +936,9 @@ function wfAddEntry(entry) {
       if (seqVerdict.place === 'excursion') {
         needsSub = true;
         key = _wfSubLaneKey('parallel-' + wfShortModel(entry.model), entry);
+        // #238 part 2: same R2-stitch signal as wfInferLanes' post-pass —
+        // display-only, doesn't affect placement (already decided above).
+        entry._wfSeqStitched = true;
       }
     }
   }
@@ -1165,6 +1186,34 @@ function _wfLaneDispName(lane, laneIdx, mainConvs) {
   return (lane.agentLabel || lane.name) + (lane.convId ? ' ' + lane.convId.slice(0, 4) : '');
 }
 
+// #238: a lane can hold multiple models (legal /model switches). Show the
+// dominant + a "+extra" hint instead of hiding the minority model(s).
+// No maintained lane.models copy — derive the breakdown from lane.turns
+// (the source of truth) on every call, so batch and live can never drift:
+// a live append is picked up on the very next render, and a turn moved out
+// of the lane (e.g. _wfSeqRetroMove) stops contributing immediately.
+function _wfLaneModelLabel(lane) {
+  var turns = lane.turns || [];
+  var mc = {}, order = [];
+  for (var i = 0; i < turns.length; i++) {
+    var m = turns[i].model;
+    if (!m) continue;
+    if (mc[m] === undefined) { mc[m] = 0; order.push(m); }
+    mc[m]++;
+  }
+  // dominant-first by count; stable tie-break = first-seen (order[]) so the
+  // result is deterministic and matches wfInferLanes' Object.entries+sort.
+  var ms = order.slice().sort(function(a, b) { return mc[b] - mc[a]; });
+  if (!ms.length) ms = lane.model ? [lane.model] : [];
+  var head = wfShortModel(ms[0]);
+  if (ms.length <= 1) return { text: head, title: head };
+  var rest = ms.slice(1).map(wfShortModel);
+  // two models → "opus-4-6 +fable-5"; three+ → "opus-4-6 +2"
+  var text = ms.length === 2 ? head + ' +' + rest[0] : head + ' +' + rest.length;
+  var title = ms.map(wfShortModel).join(', ');
+  return { text: text, title: title };
+}
+
 function wfRenderLaneSvg(lane, laneIdx, W, xFn, mainConvs) {
   var isSel = wfState.selectedLane?.key === lane.key;
   var laneH = isSel ? WF_LANE_H_SEL : WF_LANE_H;
@@ -1185,10 +1234,14 @@ function wfRenderLaneSvg(lane, laneIdx, W, xFn, mainConvs) {
   var prefix = isSel ? '▶ ' : '';
   var ctxK = Math.round((lane.ctxWindow || 0) / 1000);
   var dispName = _wfLaneDispName(lane, laneIdx, mainConvs);
-  var fullTitle = wfEsc(lane.name + ' · ' + (lane.agentLabel || '?') + ' · ' + (lane.model || '?') + ' · ' + ctxK + 'K');
+  var modelLbl = _wfLaneModelLabel(lane);
+  var fullTitle = wfEsc(lane.name + ' · ' + (lane.agentLabel || '?') + ' · ' + (modelLbl.title || '?') + ' · ' + ctxK + 'K');
   svg += '<text x="8" y="12" fill="var(--text)" style="font-size:11px;font-family:' + WF_MONO + '"><title>' + fullTitle + '</title>' + wfEsc(prefix + dispName) + '</text>';
   svg += wfGlyphSvg(wfLaneShape(lane), 14, 23, 6, wfLaneColor(lane));
-  svg += '<text x="20" y="26" fill="var(--dim)" style="font-size:10px;font-family:' + WF_MONO + '"><tspan fill="' + wfLaneColor(lane) + '">' + wfEsc(wfShortModel(lane.model)) + '</tspan>' + wfEsc(' · ' + ctxK + 'K') + '</text>';
+  // #238 P3: <title> on the model text itself — hovering the abbreviated
+  // "opus-4-6 +2" form must reveal the full model list, same as the name
+  // text above; the fullTitle <title> only covers the name row's box.
+  svg += '<text x="20" y="26" fill="var(--dim)" style="font-size:10px;font-family:' + WF_MONO + '"><title>' + wfEsc(modelLbl.title) + '</title><tspan fill="' + wfLaneColor(lane) + '">' + wfEsc(modelLbl.text) + '</tspan>' + wfEsc(' · ' + ctxK + 'K') + '</text>';
   // sysprompt versions: distinct coreHash in first-seen order; chip click = jump
   // to the turn where that version first appeared; ↗ opens the System Prompt page
   // Hashes go into innerHTML data attributes — accept hex only (index.ndjson
@@ -2123,7 +2176,7 @@ function _wfShowTooltip(e, t, lane) {
     ? ' <span class="wf-tt-lock">🔒#' + wfEsc(String(lock.lane.turns[lock.tidx].displayNum || lock.tidx + 1)) + '</span>' : '';
   var row = function(l, v) { return '<div class="r"><span class="l">' + l + '</span><span class="v">' + v + '</span></div>'; };
   _wfTooltipEl.innerHTML =
-    row('#' + wfEsc(String(t.displayNum || '?')), wfEsc(wfShortModel(t.model)) + lockLbl)
+    row('#' + wfEsc(String(t.displayNum || '?')), wfEsc(wfShortModel(t.model)) + (t._wfSeqStitched ? ' · seq-stitched' : '') + lockLbl)
     + row('Context', '<span class="' + zoneCls + '">' + pct.toFixed(1) + '%</span> (' + zone + ')')
     + row('Cache', _wfFmtTok(cr) + ' read / ' + _wfFmtTok(cc) + ' write')
     + row('Cost', '$' + (t.cost || 0).toFixed(4) + outlier)
@@ -2316,7 +2369,8 @@ function wfRenderAgentCard(lane) {
   var topTools = Object.entries(toolTotals).sort(function(a, b) { return b[1] - a[1]; }).slice(0, 6);
 
   var html = '<div class="wf-agent-card" style="border-left:2px solid ' + color + '">';
-  html += '<div class="wf-ac-name">' + wfGlyphHtml(wfLaneShape(lane), 10, color) + ' ' + wfEsc(lane.name) + ' <span class="wf-ac-model" style="background:' + color + '22;color:' + color + '">' + wfEsc(wfShortModel(lane.model)) + '</span></div>';
+  var acModelLbl = _wfLaneModelLabel(lane);
+  html += '<div class="wf-ac-name">' + wfGlyphHtml(wfLaneShape(lane), 10, color) + ' ' + wfEsc(lane.name) + ' <span class="wf-ac-model" title="' + wfEsc(acModelLbl.title) + '" style="background:' + color + '22;color:' + color + '">' + wfEsc(acModelLbl.text) + '</span></div>';
   // INVARIANT: main/subagent label must use _wfIsMainLane, not lane.spawnParent
   // — see docs/decisions/0007-wf-is-main-lane-not-spawn-parent.md
   html += '<div class="wf-ac-meta">' + summary.turnCount + ' turns · ' + wfFmtDur(summary.duration) + ' · ' + (isOrchestrator ? 'orchestrator' : 'subagent') + '</div>';
