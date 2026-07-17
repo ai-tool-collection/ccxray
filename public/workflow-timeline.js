@@ -231,6 +231,25 @@ function _wfSubLaneKey(base, entry) {
   return entry.convId ? base + ':' + entry.convId : base;
 }
 
+// INVARIANT: lane eligibility (#236) — a lane asserts "an agent exists here",
+// so only real conversation turns (a request that carried messages) may
+// mint/join a lane. Retries and 0-msg error probes are diagnostic signals,
+// routed to the main lane's fault track instead. Do NOT broaden: a legit turn
+// has an OK status (first clause false); a codex/legacy entry with status 200
+// and no msgCount stays eligible; isSubagent alone must not exclude (real
+// subagents are conversation turns). Gated at wfInferLanes (batch) and
+// wfAddEntry (live).
+function _wfIsLaneEligible(e) {
+  if (e.isRetry) return false;                                   // non-2xx, no output — a retry, not a turn
+  // 0-msg error probe (404 not_found etc.): errored AND carried no messages.
+  // Keys on status+msgCount, NOT model — entry-rendering.js normalizes a
+  // missing model to the truthy sentinel '?', so a `!e.model` check silently
+  // no-ops (the real 0-msg 404 arrives with model === '?'). Do NOT exclude on
+  // msgCount===0 alone: legacy/codex entries may lack msgCount but are OK (200).
+  if ((typeof isHttpStatusOk === 'function' ? !isHttpStatusOk(e.status) : false) && (Number(e.msgCount) || 0) === 0) return false;
+  return true;
+}
+
 // ── Sequential-interleave tracker (#230) ──────────────────────────────────
 // Temporal overlap (ADR 0008) only catches PARALLEL agents. A sequential
 // teammate — dispatched while main idles, zero time overlap — leaves two
@@ -428,15 +447,25 @@ function wfInferLanes(entries, childEntries, seqTracker) {
   var _mchEarliest = Infinity;
   for (var _mci = 0; _mci < entries.length; _mci++) {
     var _mce = entries[_mci];
+    // INVARIANT: lane eligibility (#236) — diagnostic entries (retries, 0-msg
+    // probes) must never establish main identity: a retry's coreHash landing
+    // here first would misroute the real turn to agent-orchestrator:*.
+    if (!_wfIsLaneEligible(_mce)) continue;
     if (_mce.agentKey && WF_MAIN_AGENT_KEYS[_mce.agentKey] && _mce.coreHash) {
       var _mct = Number(_mce.receivedAt) || Infinity;
       if (_mct < _mchEarliest) { mainCoreHash = _mce.coreHash; _mchEarliest = _mct; }
     }
   }
   var mainConvIds = new Set();
+  var faultEntries = [];
 
   for (var i = 0; i < entries.length; i++) {
     var e = entries[i];
+    // INVARIANT: lane eligibility (#236) — non-conversation entries (retries,
+    // 0-msg error probes) must NOT enter the agent-topology channel. Route to
+    // the fault track and skip ALL classification + seq machinery, so they
+    // can't corrupt convId bracketing or msgCount stitching. See _wfIsLaneEligible.
+    if (!_wfIsLaneEligible(e)) { faultEntries.push(e); continue; }
     var sub = false;
 
     // INVARIANT: gate on AGENT_KEY_UNRELIABLE — see docs/decisions/0005-agent-key-unreliable-shared-contract.md
@@ -608,6 +637,11 @@ function wfInferLanes(entries, childEntries, seqTracker) {
     var childBySid = new Map();
     for (var ci = 0; ci < childEntries.length; ci++) {
       var ce = childEntries[ci];
+      // INVARIANT: lane eligibility (#236) — a child session's retry/probe is
+      // diagnostic too. Route it to the same main fault track (mirrors the
+      // live path, where the wfAddEntry gate fires before child-lane routing)
+      // so it never mints/populates a child-* lane. See _wfIsLaneEligible.
+      if (!_wfIsLaneEligible(ce)) { faultEntries.push(ce); continue; }
       var sid = ce.sessionId;
       if (!childBySid.has(sid)) childBySid.set(sid, []);
       childBySid.get(sid).push(ce);
@@ -652,6 +686,11 @@ function wfInferLanes(entries, childEntries, seqTracker) {
     var topA = Object.entries(ac).sort(function(a, b) { return b[1].n - a[1].n; })[0];
     if (topA) { lane.agentKey = topA[0]; lane.agentLabel = topA[1].label; }
   }
+
+  // #236: fault entries (retries, 0-msg probes) travel with the main lane so
+  // the fault track can render them. Authoritative rebuild — overwrite any
+  // pre-existing list.
+  mainLane.faultEntries = faultEntries;
 
   return result;
 }
@@ -762,6 +801,22 @@ function wfAddEntry(entry) {
   var oldTMax = wfState.tMax;
   if (ts && ts < wfState.tMin) wfState.tMin = ts;
   if (end > wfState.tMax) wfState.tMax = end;
+
+  // INVARIANT: lane eligibility (#236) — mirror wfInferLanes' batch gate.
+  // Retries usually never reach here (entry-rendering.js gates the wf update
+  // on !isRetry) but a 0-msg 404 probe (isSubagent, not isRetry) does — route
+  // it to the main lane's fault track and return WITHOUT placing it in a lane
+  // or feeding the seq tracker. See _wfIsLaneEligible.
+  if (!_wfIsLaneEligible(entry)) {
+    if (wfState.lanes[0]) {
+      (wfState.lanes[0].faultEntries || (wfState.lanes[0].faultEntries = [])).push(entry);
+    }
+    // tMax advanced above; keep the tail in view like the normal path, else the
+    // new fault marker exceeds viewT1 (filtered out) and later turns misread the
+    // advanced tMax as a user scroll-back.
+    _wfFollowTail(oldTMax);
+    return { lanesChanged: false };
+  }
 
   // childSids is snapshotted at build time; a child session that spawns while
   // the view is already live isn't in it yet. Refresh from the live sessionsMap
@@ -1258,6 +1313,23 @@ function wfRenderLaneSvg(lane, laneIdx, W, xFn, mainConvs) {
       perTrackN[isSel ? info.ti : 0]++;
     }
   }
+
+  // #236: fault entries (retries, 0-msg probes) never mint a lane — they ride
+  // the main lane's fault track (ti 0) as diagnostic markers. Same track row
+  // in both collapsed and selected views; geometry unchanged (ADR 0006). Pass
+  // tidx -1 so the turn-hover highlight sync never matches a fault marker.
+  if (lane.faultEntries && lane.faultEntries.length) {
+    for (var fj = 0; fj < lane.faultEntries.length; fj++) {
+      var fe = lane.faultEntries[fj];
+      var fts = Number(fe.receivedAt) || 0;
+      if (fts < wfState.viewT0 || fts > wfState.viewT1) continue;
+      var fx = Math.max(WF_LABEL_W, xFn(fts));
+      var fInfo = fe.isRetry ? WF_EV_INFO['retry'] : WF_EV_INFO['error'];
+      var fDetail = String(fe.status || '') + ' · ' + (fe.id || '');
+      svg += '<g><title>' + wfEsc(fDetail) + '</title>' + wfDotSvg(fInfo.shape, fInfo.color, fx, evY, -1) + '</g>';
+    }
+  }
+
   if (isSel) {
     for (var li2 = 0; li2 < WF_TRACKS.length; li2++) {
       svg += '<text x="' + (WF_LABEL_W - 6) + '" y="' + (evY + li2 * WF_EV_H + 7) + '" text-anchor="end" fill="' + WF_TRACKS[li2].color + '" opacity="0.8" style="font-size:9px;font-family:' + WF_MONO + '">' + WF_TRACKS[li2].label + '</text>';
