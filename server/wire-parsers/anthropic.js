@@ -168,6 +168,10 @@ function turnStepCount(parsedBody) {
   return count;
 }
 
+function attributionTurnStep(parsedBody) {
+  return helpers.computeTurnStep(parsedBody?.messages);
+}
+
 module.exports = {
   isNoiseRequest,
   extractUsage,
@@ -181,4 +185,5 @@ module.exports = {
   toolsHash,
   getCwd,
   turnStepCount,
+  attributionTurnStep,
 };

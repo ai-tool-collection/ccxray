@@ -296,6 +296,10 @@ function turnStepCount(parsedBody) {
   return input.filter(item => item.type === 'function_call' || item.type === 'function_call_output').length;
 }
 
+function attributionTurnStep(_parsedBody) {
+  return { turn: 0, step: 0 };
+}
+
 module.exports = {
   // WIRE_PARSERS interface
   isNoiseRequest,
@@ -311,6 +315,7 @@ module.exports = {
   toolsHash,
   getCwd,
   turnStepCount,
+  attributionTurnStep,
   // Low-level exports for ws-proxy.js compatibility
   getCodexRawSessionId,
   getCodexCwd,
