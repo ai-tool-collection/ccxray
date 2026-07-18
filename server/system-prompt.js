@@ -89,6 +89,7 @@ function extractAgentType(sys) {
   return { key: 'agent', label: 'Agent' };
 }
 
+// EXCEPTION(#158): shared dispatch — provider arg routes to format-specific agent type extraction logic
 function extractPromptAgentType(provider, req) {
   if (provider === 'openai') {
     const explicit = req?.metadata?.agent_type || req?.metadata?.agentType || req?.metadata?.agent;

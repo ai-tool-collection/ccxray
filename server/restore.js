@@ -42,6 +42,7 @@ function loadEntryReqRes(entry) {
     if (entry._writePromise) await entry._writePromise.catch(() => {});
     try {
       const stripped = JSON.parse(await config.storage.read(entry.id, '_req.json'));
+      // EXCEPTION(#158): data-layer — reads persisted provider to choose load path (openai=raw, anthropic=delta+sys+tools)
       if (entry.provider === 'openai' || stripped.provider === 'openai') {
         entry.req = stripped;
       } else {
@@ -101,6 +102,7 @@ function loadEntryReqRes(entry) {
       const raw = await config.storage.read(entry.id, '_res.json');
       let resData;
       try { resData = JSON.parse(raw); } catch { resData = raw; }
+      // EXCEPTION(#158): data-layer — persisted provider determines response normalization format
       if (entry.provider === 'openai') {
         const normalized = normalizeOpenAIResponseSummary(entry, resData);
         Object.assign(entry, normalized.summary);
@@ -193,6 +195,7 @@ async function restoreFromLogs() {
       meta.totalEntryCount = oversizedSessions.get(meta.sessionId);
     }
 
+    // EXCEPTION(#158): data-layer — index-line provider gates re-parse of incomplete openai metadata
     if (meta.provider === 'openai' && (!meta.model || !meta.stopReason || !meta.usage || !meta.isSSE)) {
       try {
         const raw = await config.storage.read(meta.id, '_res.json');
@@ -208,6 +211,7 @@ async function restoreFromLogs() {
     // this, the dashboard would show "600K / 200K (clamped to 100%)" for
     // entries that predate the inferMaxContext fix. Math.max keeps previously
     // correct 1M values when current usage happens to fit inside 200K.
+    // EXCEPTION(#158): data-layer — anthropic-specific maxContext inference from persisted usage
     if (meta.provider === 'anthropic') {
       const inferred = config.inferMaxContext(meta.model, null, meta.usage);
       // #211: a stored value is only trusted over the re-inference for
@@ -319,6 +323,7 @@ async function buildVersionIndex() {
   try { sharedFiles = await config.storage.listShared(); } catch { return null; }
   const sysHashToAgentKey = new Map();
 
+  // EXCEPTION(#158): data-layer — stored filename prefix (sys_ vs openai_instructions_) determines parse format
   for (const filename of sharedFiles) {
     if (!filename.startsWith('sys_') && !filename.startsWith('openai_instructions_')) continue;
     try {

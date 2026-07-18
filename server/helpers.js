@@ -156,6 +156,7 @@ function parseSkillsFromMessages(messages) {
 
 function analyzeContext(body) {
   if (!body) return null;
+  // EXCEPTION(#158): body-shape detection — no explicit provider in context; detects format by field presence
   if (body.provider === 'openai' || body.instructions != null || body.input != null) {
     const instructionsTokens = safeCountTokens(
       body.instructions == null

@@ -83,6 +83,7 @@ function isUpgradeRequest(req) {
   return String(req.headers.upgrade || '').toLowerCase() === 'websocket';
 }
 
+// EXCEPTION(#158): infrastructure — route detection on upstream object before any parser exists
 function isOpenAIWebSocket(req, upstream) {
   const pathname = (req.url || '').split('?')[0];
   return upstream?.provider === 'openai' && OPENAI_WS_PATHS.has(pathname) && isUpgradeRequest(req);

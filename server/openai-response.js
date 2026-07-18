@@ -46,6 +46,7 @@ function getOpenAIInputSummary(input) {
   return null;
 }
 
+// EXCEPTION(#158): shared utility — dispatches on explicit provider arg for response metadata shape
 function buildResponseMetadata(provider, resData, proxyRes) {
   if (provider === 'openai') {
     const response = extractOpenAIResponse(resData);
