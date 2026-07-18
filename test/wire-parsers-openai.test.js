@@ -192,9 +192,9 @@ describe('wire-parsers/openai', () => {
       assert.equal(openai.rawSessionId({}, { metadata: { session_id: 'body-sess' } }), 'body-sess');
     });
 
-    it('returns null when no session info', () => {
-      assert.equal(openai.rawSessionId({}, {}), null);
-      assert.equal(openai.rawSessionId({}, null), null);
+    it('returns codex-raw fallback when no session info', () => {
+      assert.equal(openai.rawSessionId({}, {}), 'codex-raw');
+      assert.equal(openai.rawSessionId({}, null), 'codex-raw');
     });
   });
 
@@ -219,14 +219,15 @@ describe('wire-parsers/openai', () => {
   describe('toolsHash', () => {
     it('computes 12-char hex hash from tools array', () => {
       const body = loadFixture('turn1_req.json');
-      const hash = openai.toolsHash(body);
-      assert.equal(typeof hash, 'string');
-      assert.equal(hash.length, 12);
+      const result = openai.toolsHash(body);
+      assert.equal(typeof result.hash, 'string');
+      assert.equal(result.hash.length, 12);
+      assert.equal(result.filePrefix, 'openai_tools_');
     });
 
-    it('returns null when no tools', () => {
-      assert.equal(openai.toolsHash({}), null);
-      assert.equal(openai.toolsHash({ tools: null }), null);
+    it('returns null hash when no tools', () => {
+      assert.equal(openai.toolsHash({}).hash, null);
+      assert.equal(openai.toolsHash({ tools: null }).hash, null);
     });
   });
 

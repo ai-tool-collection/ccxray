@@ -114,14 +114,15 @@ describe('wire-parsers/anthropic', () => {
   describe('toolsHash', () => {
     it('computes 12-char hex hash from tools array', () => {
       const body = loadFixture('turn1_req.json');
-      const hash = anthropic.toolsHash(body);
-      assert.equal(typeof hash, 'string');
-      assert.equal(hash.length, 12);
+      const result = anthropic.toolsHash(body);
+      assert.equal(typeof result.hash, 'string');
+      assert.equal(result.hash.length, 12);
+      assert.equal(result.filePrefix, 'tools_');
     });
 
-    it('returns null when no tools', () => {
-      assert.equal(anthropic.toolsHash({}), null);
-      assert.equal(anthropic.toolsHash({ tools: null }), null);
+    it('returns null hash when no tools', () => {
+      assert.equal(anthropic.toolsHash({}).hash, null);
+      assert.equal(anthropic.toolsHash({ tools: null }).hash, null);
     });
   });
 

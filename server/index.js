@@ -28,11 +28,7 @@ const { extractPromptAgentType } = require('./system-prompt');
 const providers = require('./providers');
 const { handleWebSocketUpgrade, drainWebSocketProxy } = require('./ws-proxy');
 const { WIRE_PARSERS, getParser } = require('./wire-parsers');
-const {
-  getCodexRawSessionId,
-  getCodexCwd,
-  isOpenAISubagent,
-} = require('./wire-parsers/openai');
+// wire-parsers/openai low-level helpers no longer needed in index.js after Phase 2 migration
 
 // ── CLI: parse flags and detect provider launchers ──
 const portIdx = process.argv.indexOf('--port');
@@ -212,10 +208,6 @@ function getCodexCwdFallback() {
   return hub.lookupClientCwd() || (agentCommand === 'codex' ? process.cwd() : null);
 }
 
-function getOpenAICwd(parsedBody, headers) {
-  return getCodexCwd(headers, parsedBody, getCodexCwdFallback());
-}
-
 
 // ── Server ──────────────────────────────────────────────────────────
 const server = http.createServer((clientReq, clientRes) => {
@@ -312,41 +304,34 @@ const server = http.createServer((clientReq, clientRes) => {
     let coreHash = null;
     let agentKey = null, agentLabel = null;
     if (parsedBody) {
-      sysHash = provider === 'openai'
-        ? (parsedBody.instructions != null
-          ? crypto.createHash('sha256').update(JSON.stringify(parsedBody.instructions)).digest('hex').slice(0, 12)
-          : null)
-        : (parsedBody.system
-          ? crypto.createHash('sha256').update(JSON.stringify(parsedBody.system)).digest('hex').slice(0, 12)
-          : null);
-      toolsHash = parsedBody.tools
-        ? crypto.createHash('sha256').update(JSON.stringify(parsedBody.tools)).digest('hex').slice(0, 12)
-        : null;
+      const sysPH = parser.systemPromptHash(parsedBody);
+      sysHash = sysPH.hash;
+      const toolsPH = parser.toolsHash(parsedBody);
+      toolsHash = toolsPH.hash;
 
-      if (provider === 'anthropic') {
-        if (sysHash) config.storage.writeSharedIfAbsent(`sys_${sysHash}.json`, JSON.stringify(parsedBody.system))
-          .catch(e => console.error('Write sys failed:', e.message));
-        if (toolsHash) config.storage.writeSharedIfAbsent(`tools_${toolsHash}.json`, JSON.stringify(parsedBody.tools))
+      if (sysHash) {
+        config.storage.writeSharedIfAbsent(`${sysPH.filePrefix}${sysHash}.json`, JSON.stringify(sysPH.content))
+          .catch(e => console.error('Write sys/instructions failed:', e.message));
+      }
+      if (toolsHash) {
+        config.storage.writeSharedIfAbsent(`${toolsPH.filePrefix}${toolsHash}.json`, JSON.stringify(parsedBody.tools))
           .catch(e => console.error('Write tools failed:', e.message));
-      } else if (provider === 'openai') {
-        if (sysHash) {
-          config.storage.writeSharedIfAbsent(`openai_instructions_${sysHash}.json`, JSON.stringify(parsedBody.instructions))
-            .catch(e => console.error('Write OpenAI instructions failed:', e.message));
-          const promptInfo = getParser('openai')?.registerPromptVersion?.({
-            parsedBody, sysHash, sharedFile: `openai_instructions_${sysHash}.json`,
-          }) || null;
-          if (promptInfo) {
-            config.storage.writeSharedIfAbsent(`openai_prompt_meta_${sysHash}.json`, JSON.stringify({
-              agentKey: promptInfo.agentKey,
-              agentLabel: promptInfo.agentLabel,
-            })).catch(e => console.error('Write OpenAI prompt metadata failed:', e.message));
-          }
-          coreHash = promptInfo?.coreHash || null;
-          agentKey = promptInfo?.agentKey || null;
-          agentLabel = promptInfo?.agentLabel || null;
+      }
+
+      // registerPromptVersion for openai: also writes prompt metadata + extracts agent identity
+      if (provider === 'openai' && sysHash) {
+        const promptInfo = parser.registerPromptVersion?.({
+          parsedBody, sysHash, sharedFile: `${sysPH.filePrefix}${sysHash}.json`,
+        }) || null;
+        if (promptInfo) {
+          config.storage.writeSharedIfAbsent(`openai_prompt_meta_${sysHash}.json`, JSON.stringify({
+            agentKey: promptInfo.agentKey,
+            agentLabel: promptInfo.agentLabel,
+          })).catch(e => console.error('Write OpenAI prompt metadata failed:', e.message));
         }
-        if (toolsHash) config.storage.writeSharedIfAbsent(`openai_tools_${toolsHash}.json`, JSON.stringify(parsedBody.tools))
-          .catch(e => console.error('Write OpenAI tools failed:', e.message));
+        coreHash = promptInfo?.coreHash || null;
+        agentKey = promptInfo?.agentKey || null;
+        agentLabel = promptInfo?.agentLabel || null;
       }
 
       const currMessages = Array.isArray(parsedBody.messages) ? parsedBody.messages : [];
@@ -404,18 +389,24 @@ const server = http.createServer((clientReq, clientRes) => {
       : null;
     const { sessionId: reqSessionId, isNewSession, inferred: sessionInferred } = parsedBody
       ? detectedSession
-      : { sessionId: provider === 'openai' ? getCodexRawSessionId() : store.getCurrentSessionId(), isNewSession: false };
+      : { sessionId: parser.rawSessionId(clientReq.headers, null) || store.getCurrentSessionId(), isNewSession: false };
 
     // Cross-session parent linkage — MUST run before cwd assignment AND
     // activeRequests increment (#223: cwd was set first, causing
     // linkParentSession to bail on meta.cwd for subagents with their own
     // session_id on their very first turn).
-    const isSubagentHint = provider === 'openai' ? isOpenAISubagent(clientReq.headers, parsedBody) : undefined;
+    // Intentional provider branch: isSubagentHint is a wire-level override for
+    // linkParentSession's heuristic. Only openai has an explicit wire signal
+    // (x-openai-subagent header); anthropic uses undefined to let the heuristic decide.
+    const isSubagentHint = provider === 'openai' ? parser.isSubagent(parsedBody, clientReq.headers) : undefined;
     if (reqSessionId) store.linkParentSession(reqSessionId, parsedBody, isSubagentHint);
 
     // Extract and store cwd (after linkParentSession — see #223)
+    // openai getCwd has a runtime fallback (hub client cwd / process.cwd) that
+    // depends on index.js state — applied after the adapter's wire-level extraction.
     if (parsedBody && reqSessionId) {
-      const cwd = provider === 'openai' ? getOpenAICwd(parsedBody, clientReq.headers) : store.extractCwd(parsedBody);
+      const cwd = parser.getCwd(parsedBody, clientReq.headers)
+        || (provider === 'openai' ? getCodexCwdFallback() : null);
       if (cwd) {
         if (!store.sessionMeta[reqSessionId]) store.sessionMeta[reqSessionId] = {};
         store.sessionMeta[reqSessionId].provider = provider;
@@ -424,8 +415,9 @@ const server = http.createServer((clientReq, clientRes) => {
     }
 
     // Detect new cc_version for live requests; compute coreHash for all qualifying requests
+    // (openai path runs registerPromptVersion above during sysHash persistence)
     if (parsedBody && provider === 'anthropic') {
-      const anthropicPromptInfo = getParser('anthropic')?.registerPromptVersion?.({ parsedBody, sysHash }) || null;
+      const anthropicPromptInfo = parser.registerPromptVersion?.({ parsedBody, sysHash }) || null;
       if (anthropicPromptInfo) {
         coreHash = anthropicPromptInfo.coreHash;
         agentKey = anthropicPromptInfo.agentKey || null;

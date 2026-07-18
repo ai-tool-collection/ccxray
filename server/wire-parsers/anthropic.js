@@ -147,8 +147,9 @@ function systemPromptHash(parsedBody) {
 }
 
 function toolsHash(parsedBody) {
-  if (!parsedBody?.tools) return null;
-  return crypto.createHash('sha256').update(JSON.stringify(parsedBody.tools)).digest('hex').slice(0, 12);
+  if (!parsedBody?.tools) return { hash: null, filePrefix: 'tools_' };
+  const hash = crypto.createHash('sha256').update(JSON.stringify(parsedBody.tools)).digest('hex').slice(0, 12);
+  return { hash, filePrefix: 'tools_' };
 }
 
 function getCwd(parsedBody, _headers) {

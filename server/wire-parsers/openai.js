@@ -270,7 +270,7 @@ function isSubagent(parsedBody, headers) {
 }
 
 function rawSessionId(headers, parsedBody) {
-  return getCodexSessionId(headers, parsedBody);
+  return getCodexSessionId(headers, parsedBody) || getCodexRawSessionId();
 }
 
 function systemPromptHash(parsedBody) {
@@ -281,8 +281,9 @@ function systemPromptHash(parsedBody) {
 }
 
 function toolsHash(parsedBody) {
-  if (!parsedBody?.tools) return null;
-  return crypto.createHash('sha256').update(JSON.stringify(parsedBody.tools)).digest('hex').slice(0, 12);
+  if (!parsedBody?.tools) return { hash: null, filePrefix: 'openai_tools_' };
+  const hash = crypto.createHash('sha256').update(JSON.stringify(parsedBody.tools)).digest('hex').slice(0, 12);
+  return { hash, filePrefix: 'openai_tools_' };
 }
 
 function getCwd(parsedBody, headers) {
