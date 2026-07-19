@@ -22,9 +22,11 @@ function isClaudeStatuslineConfigured() {
 
 function hasClaudeTraffic() {
   for (const meta of Object.values(store.sessionMeta)) {
+    // EXCEPTION(#158): data-layer — filters sessions by persisted provider for cost display
     if (meta.provider === 'anthropic') return true;
   }
   for (const entry of store.entries) {
+    // EXCEPTION(#158): data-layer — filters entries by persisted provider for cost display
     if (!entry.provider || entry.provider === 'anthropic') return true;
   }
   return false;

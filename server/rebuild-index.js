@@ -86,6 +86,7 @@ async function reconstructReq(id, storage, cache, seen = new Set()) {
   // SKIP them (counted unrecoverable) rather than emit a mislabeled Anthropic
   // line — a safe skip beats silent degradation. A real Anthropic turn always
   // carries a `messages` array (anchor or delta slice).
+  // EXCEPTION(#158): data-layer — persisted format detection; only anthropic logs are rebuildable offline
   if (stripped.provider === 'openai' || Array.isArray(stripped.input)
       || stripped.transport != null || stripped.capture === 'transport-only'
       || !Array.isArray(stripped.messages)) {

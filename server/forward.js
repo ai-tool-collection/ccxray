@@ -416,9 +416,10 @@ function forwardRequest(ctx) {
   // This guarantees intercepted-then-rejected requests never advance the
   // per-session sequence number that the dashboard's displayNum mirrors.
   // Counter classification uses isAnthropicSubagent to match dashboard's isSubagent.
+  const parser = getParser(provider);
   if (!ctx.skipEntry && parsedBody) {
     const meta = reqSessionId ? (store.sessionMeta[reqSessionId] || (store.sessionMeta[reqSessionId] = {})) : null;
-    const isSubagent = provider === 'anthropic' && store.isAnthropicSubagent(parsedBody);
+    const isSubagent = parser.isSubagent(parsedBody, clientReq.headers);
     if (meta) {
       if (isSubagent) meta.subCount = (meta.subCount || 0) + 1;
       else meta.mainCount = (meta.mainCount || 0) + 1;
@@ -431,9 +432,7 @@ function forwardRequest(ctx) {
       cwdForPrefix = hub.lookupClientCwd();
     }
     const isOrphan = isSubagent && ctx.sessionInferred && !cwdForPrefix && (!reqSessionId || reqSessionId === 'direct-api');
-    const turnStep = provider === 'anthropic'
-      ? helpers.computeTurnStep(parsedBody.messages)
-      : { turn: 0, step: 0 };
+    const turnStep = parser.attributionTurnStep(parsedBody);
     ctx.attribPrefix = helpers.renderAttributionPrefix({
       sessionId: reqSessionId,
       cwd: cwdForPrefix,
@@ -461,6 +460,7 @@ function forwardRequest(ctx) {
   // original receipt-time write (never Promise.all — the original must not land
   // last and restore stale bytes); loadEntryReqRes awaits entry._writePromise,
   // which bundles ctx.reqWritePromise, so the read path observes the rewrite.
+  // EXCEPTION(#158): anthropic-only — openai intercept operates on WS frames, not HTTP body
   if (ctx.bodyModified && provider === 'anthropic' && !ctx.skipEntry) {
     // Set edited state + as-sent hashes synchronously so the entry built in the
     // response handler (and its index line) reference the edited content
@@ -554,6 +554,7 @@ function forwardRequest(ctx) {
 
 function handleSSEResponse(ctx, proxyRes, clientRes) {
   const provider = ctx.upstream?.provider || 'anthropic';
+  // EXCEPTION(#158): transport-level dispatch — anthropic SSE vs openai SSE have different event schemas
   if (provider === 'openai') {
     handleOpenAISSE(ctx, proxyRes, clientRes);
     return;
@@ -914,6 +915,7 @@ function handleNonSSEResponse(ctx, proxyRes, clientRes) {
     const sessionId = reqSessionId;
     let openAIEvents = null;
     let openAIResponse = null;
+    // EXCEPTION(#158): openai HTTP responses arrive as raw SSE text needing parse; anthropic SSE is handled in handleSSEResponse
     if (provider === 'openai' && typeof resData === 'string') {
       openAIEvents = parseSSEText(resData, Date.now());
       if (openAIEvents) {
@@ -925,6 +927,7 @@ function handleNonSSEResponse(ctx, proxyRes, clientRes) {
       .catch(e => console.error('Write res.json failed:', e.message));
 
     let entry;
+    // EXCEPTION(#158): entry assembly differs by provider (ctx shape + pre-computation); both delegate to parser.buildEntryFields
     if (provider === 'openai') {
       entry = {
         id, ts: ctx.ts, method: ctx.clientReq.method, url: stripAuthParams(ctx.clientReq.url),

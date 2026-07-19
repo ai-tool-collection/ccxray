@@ -166,6 +166,7 @@ function getUpstreamForRequestAndHeaders(urlPath, headers = {}) {
     return UPSTREAMS.openaiChatGPT;
   }
   const upstream = getUpstreamForRequest(urlPath);
+  // EXCEPTION(#158): infrastructure — upstream routing for ChatGPT OAuth before parser dispatch
   if (upstream.provider === 'openai' && headers['chatgpt-account-id']) {
     return UPSTREAMS.openaiChatGPT;
   }
