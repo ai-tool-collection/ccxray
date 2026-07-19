@@ -22,6 +22,7 @@ Every site that mutates `entries[]` must keep `entryIndex` in sync:
 | Live push (HTTP) | `server/forward.js` (×3 sites) | `.set(entry.id, entry)` |
 | Live push (WS) | `server/ws-proxy.js` (×1 site) | `.set(entry.id, entry)` |
 | Restore on startup | `server/restore.js` | `.set(entry.id, entry)` |
+| Import (startup/rescan) | `server/importer.js` (×1 site) | `.set(entry.id, entry)` |
 | Trim (eviction) | `server/store.js` `trimEntries()` | `.delete(entry.id)` |
 | API read | `server/routes/api.js` | `.get(id)` (read-only) |
 
