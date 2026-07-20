@@ -415,9 +415,7 @@ function addEntry(e) {
   if (e.resumeCommand) sess.resumeCommand = e.resumeCommand;
   // Update cwd if not yet known or was only a quota-check
   const prevProjectName = getProjectName(sess.cwd);
-  let migratedProjectCost = 0;
   if (entryCwd && (!sess.cwd || sess.cwd === '(quota-check)') && sess.cwd !== entryCwd) {
-    migratedProjectCost = sess.totalCost || 0;
     sess.cwd = entryCwd;
   }
   if (model && model !== '?') sess.model = model;
@@ -504,12 +502,8 @@ function addEntry(e) {
     }
     if (seqVerdict && seqVerdict.closed) _seqRetroFlip(sid, sess, seqVerdict.closed);
   }
-  sess.count++;
-  if (isRetry) { sess.retryCount = (sess.retryCount || 0) + 1; }
-  else if (isSubagent) sess.subCount++;
-  else {
-    sess.mainCount++;
-    // Track recent main turn [start, end] spans for temporal overlap detection (#222)
+  // Track recent main turn [start, end] spans for temporal overlap detection (#222)
+  if (!isSubagent && !isRetry) {
     const startMs = Number(e.receivedAt) || 0;
     const endMs = startMs + (parseFloat(e.elapsed) || 0) * 1000;
     if (startMs > 0 && endMs > startMs) {
@@ -518,11 +512,6 @@ function addEntry(e) {
       if (sess._recentMainSpans.length > 5) sess._recentMainSpans.shift();
     }
   }
-  const displayNum = isRetry ? ('r' + (sess.retryCount || 0)) : isSubagent ? ('s' + sess.subCount) : String(sess.mainCount);
-  if (entryId && window.entryById) {
-    window.entryById.set(entryId, { id: entryId, sessionId: sid, cwd: entryCwd, receivedAt: e.receivedAt || null, displayNum });
-  }
-  if (turnCost != null) sess.totalCost += turnCost;
   if (!isSubagent && e.title) {
     const t = cleanTitle(e.title);
     if (t) {
@@ -533,24 +522,6 @@ function addEntry(e) {
       }
     }
   }
-  if (!sess.toolCalls) sess.toolCalls = {};
-  Object.entries(e.toolCalls || {}).forEach(([name, cnt]) => {
-    sess.toolCalls[name] = (sess.toolCalls[name] || 0) + cnt;
-  });
-  if (Object.keys(e.toolCalls || {}).length > 0) {
-    sess.toolCallTurns = (sess.toolCallTurns || 0) + 1;
-    if (e.toolFail) sess.toolFailTurns = (sess.toolFailTurns || 0) + 1;
-  }
-  // During batch load, suppress per-entry DOM rerenders (post-batch does one final pass).
-  if (!_loading) {
-    const sessEl = document.getElementById('sess-' + sid.slice(0, 8));
-    if (sessEl) {
-      sessEl.innerHTML = renderSessionItem(sess, sid, sessEl);
-      const firstSession = colSessions.querySelector('.session-item');
-      if (firstSession && firstSession !== sessEl) colSessions.insertBefore(sessEl, firstSession);
-    }
-  }
-
   // Project tracking
   const projName = getProjectName(sess.cwd);
   // sess.cwd only changes in the migration block above and getProjectName is
@@ -559,7 +530,6 @@ function addEntry(e) {
     const prevProj = projectsMap.get(prevProjectName);
     if (prevProj) {
       prevProj.sessionIds.delete(sid);
-      if (migratedProjectCost) prevProj.totalCost = Math.max(0, prevProj.totalCost - migratedProjectCost);
       if (prevProj.sessionIds.size === 0 && prevProjectName !== selectedProjectName) projectsMap.delete(prevProjectName);
     }
   }
@@ -570,8 +540,6 @@ function addEntry(e) {
   proj.sessionIds.add(sid);
   proj.lastId = entryId;
   proj.lastSeenAt = Date.now();
-  if (migratedProjectCost) proj.totalCost += migratedProjectCost;
-  if (turnCost != null) proj.totalCost += turnCost;
   if (!_loading) renderProjectsCol();
 
   const statusClass = isHttpStatusOk(e.status) ? 'status-ok' : 'status-err';
@@ -582,9 +550,6 @@ function addEntry(e) {
   const ctxCacheRead   = usage ? (usage.cache_read_input_tokens || 0) : 0;
   const ctxInput       = usage ? (usage.input_tokens || 0) : 0;
   const ctxUsed = computeCtxUsed(usage);
-
-  sess.inputTokens = (sess.inputTokens || 0) + (usage ? (usage.input_tokens || 0) : 0);
-  sess.outputTokens = (sess.outputTokens || 0) + (usage ? (usage.output_tokens || 0) : 0);
 
   // Update session context alert badge + cache stats for main turns
   if (!isSubagent && ctxUsed > 0) {
@@ -647,7 +612,7 @@ function addEntry(e) {
     status: e.status, elapsed: e.elapsed, method: e.method, id: e.id,
     // GUARD (_seqFlipped ownership): true iff the seq layer flipped THIS
     // arrival (R2 stitch / reordered recompute) — see _seqApplyFlips guard
-    isSubagent, isRetry, _seqFlipped: seqFlipped, sessionInferred: e.sessionInferred || false, displayNum, ctxUsed, isCompacted, receivedAt: e.receivedAt || null,
+    isSubagent, isRetry, _seqFlipped: seqFlipped, sessionInferred: e.sessionInferred || false, displayNum: null, ctxUsed, isCompacted, receivedAt: e.receivedAt || null,
     thinkingDuration: e.thinkingDuration || null,
     duplicateToolCalls: e.duplicateToolCalls || null,
     hasCredential: e.hasCredential || false,
@@ -664,6 +629,59 @@ function addEntry(e) {
     agent: e.agent || null,
     cwd: e.cwd || null,
   });
+
+  // #308: derive session/project stats from entries
+  // #308: three stat-update paths, all producing correct displayNum counts.
+  // Live (hot): full recompute from allEntries (idempotent, O(n) per entry).
+  // Batch: increment counts for displayNum; defer full recompute to post-batch.
+  // Cold: increment all stats (entries not in allEntries; full recompute on activation).
+  if (!_loading && !sess._cold) {
+    recomputeSessionStats(sid);
+    recomputeProjectCost(projName);
+    if (prevProjectName && prevProjectName !== projName) recomputeProjectCost(prevProjectName);
+  } else {
+    // Incremental counts — needed for displayNum during batch/cold
+    sess.count++;
+    if (isRetry) sess.retryCount = (sess.retryCount || 0) + 1;
+    else if (isSubagent) sess.subCount++;
+    else sess.mainCount++;
+    if (sess._cold) {
+      // ponytail: cold session — full stats increment; recompute on activation
+      if (turnCost != null) sess.totalCost += turnCost;
+      if (usage) {
+        sess.inputTokens = (sess.inputTokens || 0) + (usage.input_tokens || 0);
+        sess.outputTokens = (sess.outputTokens || 0) + (usage.output_tokens || 0);
+      }
+      if (e.toolCalls && Object.keys(e.toolCalls).length > 0) {
+        if (!sess.toolCalls) sess.toolCalls = {};
+        for (const [name, cnt] of Object.entries(e.toolCalls)) sess.toolCalls[name] = (sess.toolCalls[name] || 0) + cnt;
+        sess.toolCallTurns = (sess.toolCallTurns || 0) + 1;
+        if (e.toolFail) sess.toolFailTurns = (sess.toolFailTurns || 0) + 1;
+      }
+      if (!_loading && !window._coldActivating) {
+        recomputeProjectCost(projName);
+        if (prevProjectName && prevProjectName !== projName) recomputeProjectCost(prevProjectName);
+      }
+    }
+    if (_loading) {
+      if (!_dirtySessions) _dirtySessions = new Set();
+      _dirtySessions.add(sid);
+    }
+  }
+  const displayNum = isRetry ? ('r' + sess.retryCount) : isSubagent ? ('s' + sess.subCount) : String(sess.mainCount);
+  allEntries[allEntries.length - 1].displayNum = displayNum;
+  if (entryId && window.entryById) {
+    window.entryById.set(entryId, { id: entryId, sessionId: sid, cwd: entryCwd, receivedAt: e.receivedAt || null, displayNum });
+  }
+  // Re-render session card after stats are fresh (suppressed during batch)
+  if (!_loading) {
+    const sessEl = document.getElementById('sess-' + sid.slice(0, 8));
+    if (sessEl) {
+      sessEl.innerHTML = renderSessionItem(sess, sid, sessEl);
+      const firstSession = colSessions.querySelector('.session-item');
+      if (firstSession && firstSession !== sessEl) colSessions.insertBefore(sessEl, firstSession);
+    }
+  }
 
   // Workflow timeline: incremental update for live entries (direct or child session).
   // Retries reach wfAddEntry too (no !isRetry gate here): its eligibility gate
@@ -970,10 +988,11 @@ function mergeColdSessions(sessions) {
     }
     var proj = projectsMap.get(projName);
     proj.sessionIds.add(s.sid);
-    if (s.totalCost) proj.totalCost += s.totalCost;
     if (s.lastId && s.lastId > (proj.lastId || '')) proj.lastId = s.lastId;
     if (s.lastReceivedAt && s.lastReceivedAt > (proj.lastSeenAt || 0)) proj.lastSeenAt = s.lastReceivedAt;
   }
+  // #308: derive project costs from session costs (idempotent)
+  for (const [name] of projectsMap) recomputeProjectCost(name);
 }
 
 // Initialize badge on load
@@ -1157,6 +1176,7 @@ function _formatDeepLinkFailure(reason) {
 // Stars load in parallel with entries; rerender after both resolve so the
 // initial column paint already shows the correct star/derived badges.
 var _loading = true;
+var _dirtySessions = null; // #308: batch-deferred recompute
 window._entriesLoading = true;
 window._entriesLoadingProjectName = _pendingDeepLink.p || null;
 window._entriesLoadingSessionPrefix = _pendingDeepLink.s || null;
@@ -1323,6 +1343,16 @@ Promise.all([_entriesReady, _starsReady, _sessionsReady]).then(async ([data, , s
   window._entriesLoadingProjectName = null;
   window._entriesLoadingSessionPrefix = null;
   window._entriesLoadingText = '';
+  // #308: batch-deferred recompute — one pass per dirty session, O(n) total
+  if (_dirtySessions) {
+    for (const sid of _dirtySessions) {
+      const s = sessionsMap.get(sid);
+      if (s && s._cold) continue; // entries not in allEntries — keep sessions.json values
+      recomputeSessionStats(sid);
+    }
+    _dirtySessions = null;
+    for (const [name] of projectsMap) recomputeProjectCost(name);
+  }
   const colSessEl = document.getElementById('col-sessions');
   if (colSessEl) {
     const sortedSids = [...sessionsMap.entries()]
@@ -1340,10 +1370,31 @@ Promise.all([_entriesReady, _starsReady, _sessionsReady]).then(async ([data, , s
   _measureLoad('entries-hydrate', 'entries-json', 'entries-restored');
 
   _loading = false;
+
+  // #308 dev-mode idempotency check: recompute twice, assert identical stats
+  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+    for (const [sid, sess] of sessionsMap) {
+      if (sess._cold) continue;
+      recomputeSessionStats(sid);
+      const snap = { count: sess.count, mainCount: sess.mainCount, subCount: sess.subCount, retryCount: sess.retryCount, totalCost: sess.totalCost, inputTokens: sess.inputTokens, outputTokens: sess.outputTokens, toolCallTurns: sess.toolCallTurns };
+      recomputeSessionStats(sid);
+      for (const k of Object.keys(snap)) {
+        if (snap[k] !== sess[k]) console.warn('[#308 drift]', sid, k, 'snap:', snap[k], 'recomputed:', sess[k]);
+      }
+    }
+  }
+
   if (_hasDeepLink) {
     if (!_deepLinkApplied) await applyDeepLink();
   } else if (sessionsMap.size) {
     initAutoSelect();
+  }
+  // #308: re-render selected session card after recompute (deep link may have
+  // selected a session whose stats were recomputed but card not yet refreshed)
+  if (selectedSessionId) {
+    const sessEl = document.getElementById('sess-' + selectedSessionId.slice(0, 8));
+    const sess = sessionsMap.get(selectedSessionId);
+    if (sessEl && sess) sessEl.innerHTML = renderSessionItem(sess, selectedSessionId, sessEl);
   }
   applySessionFilter();
   setFocus(focusedCol);
