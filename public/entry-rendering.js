@@ -1144,7 +1144,10 @@ const _sessionsReady = (async function _fetchSessionsWhenReady() {
     const r = await fetch('/_api/sessions', { cache: 'no-store' }).catch(() => null);
     if (!r) return { sessions: [] };
     const d = await r.json();
-    if (!d.restore || !d.restore.restoring) return d;
+    // Wait until restore is fully complete — not just !restoring (initial
+    // state is restoring:false,complete:false before setRestoreState runs)
+    if (d.restore && d.restore.complete) return d;
+    if (!d.restore) return d;
     await new Promise(r => setTimeout(r, 500));
   }
 })();
